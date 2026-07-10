@@ -1,0 +1,29 @@
+# Acoustic capture configuration.
+# All tunables live here so the code never hardcodes device/threshold values
+# (see CLAUDE-COMMON.md: never hardcode hardware addresses/params in driver files).
+
+audio:
+  # null = use the system default input device.
+  # Set to an integer device index or an exact device name string to override
+  # (run `python -m acoustic.live_monitor --list-devices` to see options).
+  device: null
+  sample_rate: 44100
+  channels: 1
+  # Analysis block size fed into the RMS trigger check. Smaller = faster
+  # trigger response but noisier RMS estimate.
+  block_size_ms: 30
+
+trigger:
+  # Linear RMS threshold, range 0.0-1.0 (float32 samples). Not dBFS.
+  # This is a throwaway starting value for a laptop mic with unknown gain —
+  # run --calibrate first and watch the printed RMS levels to pick a real one.
+  rms_threshold: 0.02
+  # How much audio before the threshold crossing to keep, so the captured
+  # clip includes the attack transient and not just the tail.
+  pre_trigger_ms: 200
+  # Total length of the captured clip, including the pre-trigger portion.
+  capture_duration_s: 1.5
+  # Minimum time after a capture starts before a new trigger is allowed.
+  # Prevents one sound event from being re-captured multiple times as its
+  # decay tail crosses the threshold repeatedly.
+  cooldown_s: 1.0

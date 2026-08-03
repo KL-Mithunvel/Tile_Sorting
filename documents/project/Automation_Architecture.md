@@ -160,6 +160,9 @@ The master does not need to receive full camera frames, raw audio waveforms, or 
 
 ### 5.1 Master Computer
 
+**Decision (2026-07-10):** the master is the user's own PC (this development machine),
+not a separate dedicated box, for the current build phase.
+
 The master computer can be a laptop, desktop PC, Raspberry Pi 5, mini PC, or industrial PC.
 
 For the prototype, a normal PC or laptop is recommended because it provides:
@@ -190,6 +193,10 @@ Responsibilities of the master:
 ### 5.2 Camera Station Node
 
 The camera node performs visual inspection.
+
+**Decision (2026-07-10):** planned as an **Arduino UNO Q**. Open — may be swapped to a
+Raspberry Pi instead; not yet finalized which of camera/acoustic (not both) would move
+to Pi if either does.
 
 Possible hardware:
 
@@ -234,6 +241,12 @@ Example output:
 
 The acoustic node performs hidden-defect inspection using sound.
 
+**Decision (2026-07-10):** planned as an **Arduino UNO Q**, paired with a laser/ToF
+trigger sensor and a ball-drop impactor (see `project_charter.md` §6.2 Decision) — the
+UNO Q triggers the ball release on tile detection, then captures and processes the
+resulting sound locally before sending the result to master. Open — may be swapped to a
+Raspberry Pi instead, same as the camera node.
+
 Possible hardware:
 
 * Raspberry Pi 5 + USB microphone
@@ -260,13 +273,15 @@ Example acoustic sequence:
 ```text
 Tile reaches acoustic station
     ↓
-Tile is stopped or clamped
+Laser / ToF sensor detects tile in position
     ↓
-Tapper hits tile with repeatable force
+UNO Q triggers ball-drop release
+    ↓
+Ball strikes tile with repeatable impact energy
     ↓
 Mic / piezo / DAQ records sound
     ↓
-Audio node processes signal
+Audio node (same UNO Q) processes signal
     ↓
 Acoustic grade is sent to master
 ```
@@ -336,6 +351,9 @@ Example output:
 
 The motion controller should handle the physical movement of the machine.
 
+**Decision (2026-07-10):** planned as an **Arduino Mega**, handling conveyor motor
+control and other real-time actuation on the line.
+
 Possible hardware:
 
 * Arduino Mega
@@ -363,6 +381,14 @@ The motion controller should handle real-time movement. The master PC should not
 ---
 
 ### 5.6 Pick-and-Place Bot Controller
+
+**Decision (2026-08-03): planned as an Arduino UNO Q**, running the machine-control
+layer described in `project_charter.md` §7.4 (master sends high-level, semantic place
+commands — grade/slot, not raw coordinates; this layer translates them into axis motion
+and gripper sequencing). This supersedes the earlier "hardware not yet fixed" status.
+Code for this node lives in `pick_place_node/` at the repo root (App Bricks folder
+convention, see §5.7 below) — currently scaffolding only, no real motion-control code
+yet. Axis count, motor/gripper hardware, and travel limits remain undecided.
 
 The pick-and-place bot receives simple commands from the master.
 
@@ -400,6 +426,43 @@ Example response:
   "status": "completed"
 }
 ```
+
+---
+
+### 5.7 Node Code Delivery Convention (App Bricks)
+
+**Decision (2026-08-03):** every station running on an Arduino UNO Q — currently
+camera, acoustic, and pick-and-place (§5.2, §5.3, §5.6) — gets its own top-level repo
+folder (`camera_node/`, `acoustic_node/`, `pick_place_node/`), each structured to match
+Arduino's own **App Bricks** convention (see Arduino's `app-bricks-examples` repo, e.g.
+`core-and-foundational/02-led-matrix/03-led-matrix-animation-mcu`), so each can be opened
+and run the same way as an app in Arduino App Lab:
+
+```text
+<node>/
+  app.yaml        # App Lab metadata: name, description, icon
+  sketch/         # MCU-side code (sketch.ino, sketch.yaml)
+  python/         # Linux-side code (main.py entry point + the node's Python package)
+```
+
+`acoustic_node/` is the reference implementation: its `python/acoustic/` package is the
+existing tested signal-processing/capture module (moved from the old repo-root
+`acoustic/`, unchanged otherwise — see `acoustic_node/README.md`), while `sketch/` and
+`python/main.py`'s App Lab wiring are new stubs, not yet run against real App Lab or
+hardware. `camera_node/` and `pick_place_node/` are scaffolding only — no real code yet.
+
+**Physical hardware reality:** as of this decision, only one physical UNO Q board exists
+(the lab board described in `.CLAUDE/CLAUDE.md` Deployment Notes). The three-node-folder
+structure is a code/repo-organization decision made ahead of hardware — it does not mean
+three physical boards are in hand yet. `tools/uno_q/` dev tooling still targets that one
+board only.
+
+**Conveyor stays on the Arduino Mega** (§5.5) — not moved to UNO Q or the App Bricks
+convention, since it's not an App-Lab-class board.
+
+**Control network:** unchanged from §12/§23 below — MQTT over wired Ethernet, one topic
+per station per tile. The App Bricks folder convention is about how each node's code is
+organized and developed, not a change to how nodes talk to the master.
 
 ---
 
@@ -1421,6 +1484,7 @@ Conveyor Controller:
 - Stopper actuator
 
 Pick-and-Place Bot:
+- Arduino UNO Q (§5.6), pick_place_node/
 - Receives final destination
 - Picks tile
 - Places tile in correct stack

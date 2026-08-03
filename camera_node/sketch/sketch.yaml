@@ -1,0 +1,3 @@
+# Sketch manifest — STUB. See acoustic_node/sketch/sketch.yaml for the same caveat:
+# exact schema not yet verified against a real App Lab project.
+name: camera_node_sketch

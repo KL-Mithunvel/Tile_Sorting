@@ -322,7 +322,34 @@ The tapping action must be:
 * Applied with similar force every time
 * Isolated from conveyor vibration as much as possible
 
-### Recommended Tapping Mechanism
+### Decision (2026-07-10): Ball-Drop Impactor
+
+The chosen impact mechanism for the current build is a **ball-drop impactor**, not the
+push-pull solenoid striker described below (kept below for background/rationale — the
+repeatability requirements above still apply regardless of which mechanism is used).
+
+Sequence: a laser or ToF sensor detects the tile has arrived at the station → an Arduino
+UNO Q triggers a ball release → the ball falls under gravity and strikes the tile → the
+same UNO Q captures the resulting sound and does the required processing (filtering,
+FFT, feature extraction) → the acoustic grade/result is sent to the master.
+
+Open / not yet decided:
+
+* The release mechanism itself — electromagnet holding the ball, a solenoid-actuated
+  gate, or a servo latch. A solenoid may still be part of the BOM, but as a release
+  actuator rather than a direct striker.
+* Ball material, mass, and drop height — these fix the impact energy (`E = mgh`) and
+  need to be chosen and calibrated together, not independently.
+* Reload/reset mechanism between tiles.
+
+This changes the tapping actuator described in §8.4 (Actuators), and touches every other
+place in this charter that assumes a solenoid directly striking the tile (§17 Safety,
+§19 Prototype Build Plan, §20 BOM, §25 Conclusion). Those sections have not been rewritten
+yet — treat "solenoid hammer" elsewhere in this document as the background/alternative
+mechanism until the ball-drop design is finalized and those sections are reconciled (see
+`TODO.md`).
+
+### Recommended Tapping Mechanism (background)
 
 The preferred prototype solution is a **push-pull solenoid impact mechanism**.
 
@@ -968,7 +995,7 @@ layer translates them to axis motion).
 ### Actuators Required
 
 * Conveyor motor
-* Solenoid hammer
+* Solenoid hammer *(background/alternative — current plan is a ball-drop impactor with the release actuator TBD; see §6.2 Decision)*
 * Pneumatic alignment pusher
 * Sorting diverter or pusher
 * Stacking lift, in advanced version
@@ -1366,6 +1393,27 @@ Use Raspberry Pi for early development and testing. For final production, move r
 ---
 
 ## 14. Data Logging and Dashboard
+
+### Monitoring Architecture (Decision, 2026-07-10)
+
+Monitoring is two-tier, not a single dashboard:
+
+* **Station-local monitor** — each subsystem (camera, acoustic, dimensional) shall have
+  its own display showing what's happening at that station in real time: e.g. the
+  camera station shows the live image + detection overlay, the acoustic station shows
+  the live waveform/FFT, the dimensional station shows live readings. This runs on or
+  next to the station's own compute node.
+* **Master/overall monitor** — a system-wide dashboard on the master showing the full
+  line's status (§14.1 below already specifies this content).
+
+Both views are built from the same per-tile data the master already collects — the
+station-local view is just that station's own slice, shown locally rather than only
+routed through the master.
+
+**Industrial reuse of the data:** the production data this system logs (tile counts per
+grade, defect type breakdown, rejection reasons, throughput) is intended to be useful
+beyond this project — i.e. it should be structured as real production/quality data the
+tile works could act on (matching §14.2 Reports), not just prototype debugging output.
 
 ## 14.1 Dashboard Features
 

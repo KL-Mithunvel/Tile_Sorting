@@ -1,0 +1,5 @@
+# Sketch manifest — STUB. Exact schema not yet verified against a real App Lab
+# project on this project's UNO Q board (see acoustic_node/README.md); filled
+# in with the minimum that mirrored Arduino's own examples, to be corrected
+# once App Lab is actually exercised on hardware.
+name: acoustic_node_sketch

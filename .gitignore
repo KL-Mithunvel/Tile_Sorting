@@ -5,3 +5,6 @@ __pycache__/
 data/
 *.wav
 .idea/
+
+# Device credentials — never commit
+tools/uno_q/secrets.bat

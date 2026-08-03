@@ -1,0 +1,3 @@
+name: Acoustic Tap-Test Node
+description: Laser/ToF-triggered ball-drop impactor + mic capture + FFT feature extraction for hidden-crack detection (project_charter.md §6.2).
+icon: 🔊

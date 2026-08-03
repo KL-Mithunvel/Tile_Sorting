@@ -1,3 +1,4 @@
+
 # Review 1 — Expert Panel Review
 
 **Due: 2026-08-19 (tentative)** · 40 marks · rubric: `../VIT_Project1_Guidelines.md` § Review 1
@@ -22,3 +23,12 @@ Mapping to existing project documents:
 
 Guide approval required in advance — confirm scope and readiness with the guide well
 before 2026-08-19.
+
+## Status: content drafted, several open items
+
+See `Review_1_Content.md` — narrative content per rubric category, drawn from the
+project docs. Explicitly flagged as open/missing there: the literature survey (doesn't
+exist yet), sustainability goals (nothing decided yet, draft starting points offered),
+a real costed BOM (only generic categories exist so far), and Phase 1 results/analysis
+(no lab data collected yet — needs real-mic calibration and tap-testing on labeled tile
+samples before this review).

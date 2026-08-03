@@ -1,0 +1,3 @@
+name: Camera Inspection Node
+description: First station in the line — visual defect detection, tile presence/count announcement to master (project_charter.md §6.1).
+icon: 📷

@@ -9,5 +9,7 @@ This is a physical/guide-signed requirement — it can't be fully satisfied by
 `.CLAUDE/CLAUDE-LOG.md` is a useful source to draw daily entries from when back-filling
 this logbook, since it already records what was done and why per session.
 
-No entries yet — start logging here (or note where the physical/signed logbook is kept,
-if it's maintained outside this repo).
+See `Logbook.md` — back-filled dated entries from `.CLAUDE/CLAUDE-LOG.md` covering all
+work so far (2026-07-08 through 2026-08-03). This is the drafting/reference copy; the
+physical logbook still needs the guide's actual signature per entry (signature column
+left blank here) — treat the physical copy as authoritative once it exists.

@@ -33,6 +33,8 @@ Status legend: **Confirmed** (decided direction) · **Open** (documented but not
 | FR-08 | Each station node shall send only a compact processed result (e.g. `{tile_id, station, grade, confidence}`) to the master — not raw images, audio, or point clouds, during normal operation. | Automation_Architecture.md §4 | Confirmed |
 | FR-09 | A master computer shall aggregate all station results for a given tile, compute the final grade, create/maintain the database entry, and issue the handling command. | Automation_Architecture.md §2, §5; Charter §9.2, §9.4 | Confirmed |
 | FR-10 | Station nodes and the master shall communicate over a common wired network using a shared messaging protocol (MQTT, per current architecture). | Automation_Architecture.md §2 | Confirmed |
+| FR-10a | Compute assignment: master = user's own PC; camera node, acoustic node, and pick-and-place controller = Arduino UNO Q each (camera/acoustic may move to Raspberry Pi — not both, and not yet decided if any will); conveyor/motion control = Arduino Mega. | Automation_Architecture.md §5 (Decisions, 2026-07-10; pick-and-place added 2026-08-03) | Confirmed |
+| FR-22 | Every UNO Q-based station node (camera, acoustic, pick-and-place) shall be organized as an Arduino App Bricks-shaped project (`app.yaml` + `sketch/` + `python/`) at the repo root, so it can be opened/run as an App Lab app. Only one physical UNO Q board exists so far — this is a code-organization decision, not confirmation of multiple physical boards. | Automation_Architecture.md §5.7 (Decision, 2026-08-03) | Confirmed structure; App Lab runtime behavior (`arduino.app_utils.App.run()`) not yet verified on hardware |
 
 ### 1.3 Tile Identity & Tracking
 
@@ -49,6 +51,9 @@ Status legend: **Confirmed** (decided direction) · **Open** (documented but not
 | FR-14 | Sorted/handled tiles shall be moved by a Cartesian gantry performing pick-and-place under machine control, directed by the master's final grade + position. This is the confirmed handling mechanism for both prototype and production — not just a production-phase upgrade. | Charter §7.4 (Decision, 2026-07-10) | Confirmed |
 | FR-18 | The gantry shall be controlled via a custom machine-control layer that accepts high-level, semantic commands from the master (e.g. grade/slot to place at) and translates them into low-level axis motion — not an off-the-shelf CNC/G-code controller (GRBL/Mach3/LinuxCNC or similar). | Charter §7.4 (Control architecture decision, 2026-07-10); §8.2 | Confirmed |
 | FR-15 | Every tile shall be logged to a database with inspection results (image ref, acoustic features, dimensional readings), final grade, timestamp, and running production counts per grade. | Charter §4.9, §9.4 | Confirmed |
+| FR-19 | Each inspection station (camera, acoustic, dimensional) shall have its own local monitor display showing that station's live activity, in addition to a master/overall system dashboard. Both are views over the same per-tile data. | Charter §14 (Monitoring Architecture, 2026-07-10) | Confirmed |
+| FR-20 | Production data logged by the system (tile counts per grade, defect type breakdown, rejection reasons, throughput) shall be structured for real industrial reuse, not just prototype debugging. | Charter §14.2 | Confirmed |
+| FR-21 | The acoustic station shall detect tile arrival via a laser or ToF sensor, which triggers a ball-drop impactor (release mechanism TBD — electromagnet, solenoid gate, or servo latch); the same Arduino UNO Q controlling the trigger shall also capture and process the resulting sound before sending the result to master. This supersedes the push-pull solenoid striker as the working plan (kept as background). | Charter §6.2 (Decision, 2026-07-10) | Confirmed direction; release mechanism, ball mass/drop height, and reset method still open |
 
 ---
 
@@ -70,9 +75,14 @@ Status legend: **Confirmed** (decided direction) · **Open** (documented but not
 
 These are documented decisions still pending — do not treat as resolved:
 
+- **Tile size and weight range is not yet defined anywhere in the project docs.** This blocks concrete sizing of the conveyor width, gantry travel range, gripper design, dimensional-inspection tolerances, and the ball-drop impactor's energy calibration (`E = mgh` depends on knowing what mass/stiffness of tile it's hitting) — all currently designed against generic/example numbers (e.g. the ~300mm figures in `Automation_Architecture.md`'s example JSON are illustrative only, not a spec). Needs an answer from SMTW's actual product range before those can be finalized.
 - **FR-06** — whether dimensional measurement moves fully to camera-based methods, or keeps dedicated ToF/laser hardware for thickness/flatness alongside it.
 - Encoder-based tile tracking (FR-12) is architecturally decided but not yet implemented or tested against a live conveyor.
 - No acoustic threshold, camera defect model, or dimensional tolerance value in this system has been calibrated on production hardware yet (NFR-04) — see `.CLAUDE/CLAUDE.md` Known Technical Debt.
+- FR-21's ball-drop release mechanism, ball mass/drop height, and reset method are all undecided — don't treat the acoustic tapping mechanism as finalized.
+- Charter sections describing the old solenoid-strikes-tile-directly mechanism (§17, §19, §20, §25) have not been reconciled with the ball-drop decision yet.
+- **FR-22** — the App Bricks folder convention (`app.yaml`/`sketch/`/`python/`) has been applied to `acoustic_node/`, `camera_node/`, `pick_place_node/`, but `arduino.app_utils.App.run()`'s actual behavior has never been exercised against the lab UNO Q board — the `python/main.py` files in each node are unverified stubs, not confirmed working App Lab entry points.
+- Pick-and-place axis count, motor/gripper hardware, and gantry travel limits are still undecided (FR-14/FR-18) even though the controller board (UNO Q) is now chosen (FR-10a).
 
 Track implementation status of these against `TODO.md`, not this document — this file is
 the requirement, `TODO.md` is the work to satisfy it.

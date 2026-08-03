@@ -26,6 +26,9 @@ Source material already exists for this: `documents/project/project_charter.md` 
 (Project Idea) and §2 (Problem Statement) directly cover relevance and problem
 identification and can be adapted into the submission form.
 
+Project type classification (per guidelines §1): **prototype design + experimentation &
+analysis**.
+
 Guide approval is required in advance per the college guidelines — confirm the
 submission form and content with the project guide before 2026-07-13.
 

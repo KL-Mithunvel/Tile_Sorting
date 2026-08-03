@@ -25,3 +25,155 @@
 - Left incomplete: no real CAD/electrical/programming content exists yet (scaffolding only); `requirements.md` hasn't been checked section-by-section against the full charter; sustainability-goals content doesn't exist anywhere yet (needed for Review 1); Review 0 form still needs guide + HoD signature on the physical hardcopy and the VTOP update. None of these changes have been committed to git yet — left for the user to review first.
 - Per user follow-up, moved `deliverables/` inside `documents/` (now `documents/deliverables/`) rather than a repo-root sibling — updated all cross-references in `.CLAUDE/CLAUDE.md`, `TODO.md`, and `documents/README.md` accordingly. `documents/deliverables/README.md`'s framing note updated to reflect it's a subfolder distinguished by content type, not a top-level sibling.
 - Started design work per the user's request, beginning with the camera subsystem: captured as decisions in `documents/project/project_charter.md` §6.1 ("Role as First Station"), §7.4, and §8.2, plus `Camera_Sorting_Subsystem.md` and `Automation_Architecture.md` — (1) camera is first in the inspection line and is the node that announces tile presence + visual result to the master, opening that tile's record, and owns the running tile count; (2) camera can supply a secondary belt-speed estimate from frame motion, but the conveyor encoder stays the authoritative tracking reference (open question left unresolved: whether camera doubles as the encoder-zero entry sensor or a separate one still exists); (3) the pick-and-place gantry will run a custom machine-control layer — master issues high-level semantic place commands, a dedicated layer translates to axis motion — explicitly not an off-the-shelf CNC/G-code controller. Added corresponding FR-16/FR-17/FR-18 to `documents/requirements/requirements.md` and follow-up tasks to `TODO.md`.
+- Committed the full documentation restructuring (`22e7ef5`) after the user confirmed it should go in, then asked the user a round of pitfall/risk questions (timeline realism, hardware/tile access, team roles, commit-now) before continuing — answers: aiming for a full multi-station bench demo by Review 1 (2026-08-19), camera dataset + real tile samples already in hand (hardware/rig still to build), team roles not yet split, commit approved and done.
+- Captured the higher-level monitoring architecture and new acoustic/compute hardware decisions the user described: (1) two-tier monitoring — each station (camera/acoustic/dimensional) gets its own local live-status display, plus a master/overall dashboard, both views over the same per-tile data; production data (grade counts, defect breakdown) explicitly meant for real industrial reuse, not just prototype debugging — charter §14 Monitoring Architecture, requirements.md FR-19/FR-20. (2) Acoustic tapping mechanism changed from the charter's original push-pull solenoid striker to a **ball-drop impactor**: a laser/ToF sensor detects the tile, an Arduino UNO Q triggers the ball release, the ball strikes the tile under gravity, and the same UNO Q processes the resulting sound before reporting to master — charter §6.2 Decision (kept the solenoid-striker section as background/rationale rather than deleting it), requirements.md FR-21. Flagged as still open: the release mechanism itself (electromagnet/solenoid-gate/servo), ball mass/drop height, reload method, and that several other charter sections (§17, §19, §20, §25) still describe the old solenoid-strikes-tile-directly design and haven't been reconciled yet. (3) Compute hardware: master = user's own PC (decided); camera node and acoustic node = Arduino UNO Q each, with an open option to swap either (not both) to Raspberry Pi; conveyor/motion control = Arduino Mega (decided); pick-and-place controller board not yet chosen — `Automation_Architecture.md` §5.1–§5.6, requirements.md FR-10a. Added corresponding `TODO.md` items for all the open decisions above.
+- User pasted a export from a separate personal project-tracking assistant (a parallel "SMTW/" note with its own frontmatter, task list, rubrics, and decision log for this same project). Cross-checked it against this repo: mostly consistent (same VIT guidelines, team, dates), and it's already behind this repo's decisions (still lists "individual vs group" and hardware/SBC choice as open, both resolved here). It did surface one real, previously undocumented gap: **tile size/weight range from SMTW has never been obtained**, which blocks concrete conveyor width, gantry travel, gripper sizing, dimensional tolerances, and ball-drop energy calibration — added to `documents/requirements/requirements.md` Open Items, `TODO.md`, and `.CLAUDE/CLAUDE.md` Known Technical Debt. Also added: project type classification ("prototype design + experimentation & analysis") to `deliverables/review_0/README.md`, and a TODO to turn charter §20's generic example BOM into a real costed procurement list now that UNO Q/Mega/master-PC choices are confirmed.
+
+## 2026-08-03 — Multi-UNO Q / Arduino App Bricks restructure + Review 1 content draft
+
+Session started with the user asking to (1) discuss and draft Review 1 content using
+only known technical information, leaving gaps explicit; (2) adopt a new architecture
+direction — every UNO Q station gets its own project, structured so it can be opened in
+Arduino App Lab the same way as Arduino's own example apps (linked
+`app-bricks-examples/.../03-led-matrix-animation-mcu`); (3) update this log with a clear
+record of what was done and when, for reuse in the college logbook submission.
+
+**Requirements clarification (asked before making changes, per user's own "ask me if
+unclear" instruction):**
+- Review 1 output format: user chose **narrative content organized by rubric category**
+  (not a fixed form — Review 1 is an expert-panel review, unlike Review 0's hardcopy
+  form), to be turned into a report/slides later.
+- Physical UNO Q hardware: **only the one existing lab board** (hostname `KLM`,
+  `172.20.10.2`) — the multi-node plan is a software/repo-structure decision made ahead
+  of procuring more boards, not confirmation of new hardware in hand.
+- Node scope for this phase: **camera, acoustic, and pick-and-place** each get their own
+  UNO Q. Measurement/dimensional stays an open hardware decision (unchanged from before).
+  Conveyor stays on the Arduino Mega — the UNO Q assignment is pick-and-place only, not a
+  Mega replacement.
+- Existing `acoustic/` module (dev-laptop-tested, 11 passing unit tests): user chose to
+  **migrate it now** into the new App Bricks-shaped `acoustic_node/`, rather than leaving
+  it at the repo root and building new nodes alongside it.
+
+**Research performed before writing anything:** fetched Arduino's
+`app-bricks-examples` repo (`core-and-foundational/02-led-matrix/03-led-matrix-animation-mcu`)
+via WebFetch to confirm the real folder shape — `app.yaml` (name/description/icon
+metadata), `sketch/` (`sketch.ino`, `sketch.yaml`, and any supporting headers),
+`python/main.py` (imports `arduino.app_utils.App`, calls `App.run()`). GitHub's API was
+rate-limited for direct `git ls-tree`/`contents` calls from this network, so the
+structure was confirmed via the rendered directory listings and raw file fetches
+instead — sufficient to confirm the three-part shape and the `main.py` pattern, but the
+exact `sketch.yaml` schema and what `App.run()` actually orchestrates were **not**
+independently verified against a real App Lab session (recorded as an open item, not
+guessed at further).
+
+**Repo restructuring (mechanical changes, then re-verified against the test suite):**
+- `git mv`'d `acoustic/{__init__.py,config.yaml,capture.py,signal_processing.py,
+  plotting.py,live_monitor.py}` → `acoustic_node/python/acoustic/` unchanged (no code
+  edits — only location changed, since the package's own internal imports are relative
+  to itself). Removed the emptied `acoustic/` directory and its stray `__pycache__`.
+- Added `pytest.ini` (`pythonpath = acoustic_node/python`) so `tests/test_capture.py` and
+  `tests/test_signal_processing.py` keep importing `from acoustic.capture import ...`
+  unchanged, with no test-file edits needed.
+- Added `acoustic_node/app.yaml`, `acoustic_node/python/main.py` (App Lab entry point,
+  explicitly flagged as an unverified stub — not wired to `acoustic/capture.py` yet),
+  `acoustic_node/sketch/sketch.ino` + `sketch.yaml` (empty stubs for the laser/ToF
+  trigger + ball-drop release logic — deliberately not hardcoding pins or mechanism
+  choices, since those are still undecided per `requirements.md` FR-21 Open Items), and
+  `acoustic_node/README.md` explaining what's real (the migrated Python package) vs.
+  stub (everything App-Lab-related) and how to still run it (`cd acoustic_node/python`,
+  same CLI commands as before).
+- Scaffolded `camera_node/` and `pick_place_node/` with the same `app.yaml`/`sketch/`
+  /`python/main.py` shape — both explicitly empty stubs, no real code, since neither
+  module exists yet.
+- **Verification, not just assertion:** discovered the local `.venv` (PyCharm default,
+  distinct from the `venv/` name `.CLAUDE/CLAUDE.md` had documented) only had `pip`
+  installed — `requirements.txt` had never actually been installed into it despite the
+  log's earlier claim of "11 tests, all passing." Installed `requirements.txt`, then ran
+  `pytest tests/ -v` — **all 11 tests pass unchanged** after the move — and smoke-tested
+  `python -m acoustic.live_monitor --list-devices` from the new location to confirm the
+  CLI entry point still works. Flagged the stale `venv/` vs `.venv/` naming mismatch as a
+  new Known Technical Debt item rather than silently fixing/renaming it, since it wasn't
+  part of what was asked.
+- Updated `tools/uno_q/push.bat` (new remote paths under
+  `acoustic_node/python/acoustic/`, now also pushes `pytest.ini`) and
+  `tools/uno_q/README.md` (path references, plus a note that only one physical board
+  exists and `push.bat` only pushes `acoustic_node/` since it's the only node with real
+  code).
+
+**Documentation updates to match:**
+- `Automation_Architecture.md` §5.6: pick-and-place controller changed from "hardware
+  not yet fixed" to **decided — Arduino UNO Q** (2026-08-03). Added new §5.7 "Node Code
+  Delivery Convention (App Bricks)" documenting the `<node>/{app.yaml,sketch/,python/}`
+  shape, which nodes have it, the reference-implementation status of `acoustic_node/`,
+  and an explicit callout that only one physical board exists so far — the three-folder
+  structure is not confirmation of three physical boards. Also noted the control network
+  itself (MQTT over wired Ethernet, §12/§23) is unchanged — the App Bricks convention is
+  about code organization, not the wire protocol between nodes.
+- `documents/requirements/requirements.md`: updated FR-10a (pick-and-place = UNO Q, now
+  fully Confirmed rather than "confirmed except pick-and-place board"); added new FR-22
+  for the App Bricks node convention, status "Confirmed structure; App Lab runtime
+  behavior not yet verified on hardware"; added two Open Items (App Lab unverified;
+  pick-and-place mechanical specifics still undecided even though the controller board
+  is now chosen).
+- `.CLAUDE/CLAUDE.md`: updated Project Overview (entry point path, App Bricks summary),
+  Running the System (commands now run from `acoustic_node/python/`), Architecture (new
+  node-folder table + updated Key Modules paths), Simulation vs Real Mode, Deployment
+  Notes (one-board-vs-three-node-folders distinction), Known Technical Debt (three new
+  items: App Lab unverified, node folders ahead of hardware, `venv`/`.venv` mismatch),
+  and a new Development Rule 5 (new hardware-station code must use the `<station>_node/`
+  App Bricks shape, not a bare repo-root package like the old `acoustic/`).
+- `TODO.md`: moved the acoustic-module and doc-restructuring work into Done with today's
+  date; updated the camera/pick-and-place/acoustic-trigger Not Started items to reflect
+  the new scaffolding (empty stubs now exist, still nothing real); removed the
+  now-resolved "decide pick-and-place hardware" item and replaced it with the narrower
+  remaining question (axis count/motor/gripper/travel limits); added a new item to
+  verify the App Lab entry-point pattern against real hardware; added Review 1 to In
+  Progress.
+- `documents/deliverables/review_1/README.md`: added a "Status: content drafted" section
+  pointing at the new `Review_1_Content.md` and summarizing its open items.
+
+**Review 1 content draft** (`documents/deliverables/review_1/Review_1_Content.md`, new
+file): full narrative content under all five rubric categories (Literature Survey/Need
+Analysis/Objectives incl. Sustainability, Methodology/Technical Design/Feasibility,
+Implementation/Progress/Technical Quality, Results/Analysis/Sustainability Impact,
+Presentation & Communication), pulling directly from the charter, architecture doc,
+requirements spec, and TODO/log — with every genuinely missing piece called out as
+**OPEN — need your input** rather than invented:
+- No literature survey exists anywhere in the project docs — listed candidate research
+  angles (vision-based ceramic defect detection, acoustic/tap-test NDT, ToF/laser
+  dimensional inspection) rather than fabricating citations.
+- No sustainability goals exist anywhere — offered draft starting points (reduced
+  material waste from better grading, reduced manual-labor fatigue exposure, digital
+  quality records) explicitly labeled as not-yet-decided, not asserted as settled.
+- No costed BOM exists — charter §20's BOM is generic/category-level; asked whether to
+  draft real costed numbers now that UNO Q ×3/Mega/master-PC are confirmed, or whether
+  the user is sourcing pricing directly.
+- No Phase 1 results exist — acoustic module has never been calibrated against a real
+  mic noise floor or run against real good/defective tiles yet; flagged this as blocking
+  the Results category entirely until that lab work happens.
+- Surfaced one scope question that materially changes remaining workload: whether a full
+  multi-station bench demo is actually expected by 2026-08-19 (as an earlier session's
+  log records as the stated aim) or whether a strong acoustic-only proof-of-concept plus
+  a clear forward plan is acceptable for this review.
+
+**Left incomplete / needs the user's hands:** literature survey sources, sustainability
+goals sign-off, a real costed BOM, all Phase 1 lab data (mic calibration + tap testing
+on labeled tiles), the Review 1 scope-vs-timeline question above, team role/presentation
+split, and actually opening/testing any of the three node folders in real Arduino App
+Lab against the lab UNO Q board (the App Bricks shape has never been run, only modeled
+on Arduino's published examples). None of this session's changes have been committed to
+git yet.
+
+**Follow-up in the same session — college daily logbook back-filled:** the user asked
+again, explicitly, for a dated log of what was done and when — pointing at
+`documents/deliverables/logbook/`, the actual VIT-guidelines-mandated daily logbook
+(`../VIT_Project1_Guidelines.md` §5), which had been scaffolded back on 2026-07-10 but
+never populated ("No entries yet"). This is a different artifact from this file — this
+log is the technical dev log with design rationale and file-level detail;
+`documents/deliverables/logbook/Logbook.md` needs to be the compact, guide-signable,
+dated activity record the college actually asks for. Created it with one row per work
+session covered above (2026-07-08/09, 2026-07-10, 2026-07-28, 2026-08-03), each with a
+plain-language activity summary, the resulting deliverable, and a blank signature column
+for the guide. Updated `documents/deliverables/logbook/README.md` to point at it, and
+`TODO.md` to reflect that the digital draft exists but still needs the guide's actual
+signature on a physical copy.

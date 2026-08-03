@@ -1,0 +1,3 @@
+name: Pick-and-Place Node
+description: Cartesian gantry machine-control layer — translates master's semantic place commands (grade/slot) into axis motion (project_charter.md §7.4 Decision).
+icon: 🦾

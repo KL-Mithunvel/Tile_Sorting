@@ -177,3 +177,125 @@ plain-language activity summary, the resulting deliverable, and a blank signatur
 for the guide. Updated `documents/deliverables/logbook/README.md` to point at it, and
 `TODO.md` to reflect that the digital draft exists but still needs the guide's actual
 signature on a physical copy.
+
+This session ended with the user asking to commit the accumulated changes. Before doing
+so, reviewed the diff of every modified/new file for anything sensitive and found
+`README.md` (repo root) contained what looked like a live SSH credential
+(`ssh arduino@172.20.10.2` / a password) pasted directly into it — not gitignored, about
+to enter git history. Flagged it to the user rather than committing or silently
+stripping it; user confirmed removing it. Cleared `README.md` back to empty (matching
+its last-committed state) before staging anything — the real credential already lives in
+`tools/uno_q/secrets.bat`, which is gitignored, so nothing was lost. Then staged and
+committed everything reviewed above as commit `9bad0ce`.
+
+## 2026-08-07 — Camera vision pipeline: tile isolation, crack/corner measurement, WiFi dashboard
+
+User asked for the first real `camera_node/` build-out: a GUI dashboard showing how many
+tiles cross the belt and what crack/corner defects each one has, with the camera feed
+streamed over WiFi. Camera hardware isn't ready yet (a separate PC-style webcam will
+eventually connect to the UNO Q). User described the intended defect-detection approach
+directly: isolate the tile from the rest of the frame, then grayscale + an edge algorithm
+to find cracks — tiles are brown earthen terracotta. They also mentioned an earlier
+attempt using an existing crack-recognition example (from Arduino's own App Lab
+examples) hadn't worked well.
+
+**Clarified before writing code:** asked about camera hardware readiness, whether sample
+tile photos existed to tune thresholds against, and GUI tech (web vs. desktop). First
+round answered camera hardware (separate webcam, will connect to the UNO Q, rig not
+ready) but the user wanted to clarify the other two before answering — turned out they
+*do* have sample photos (crack/corner-break/good tiles), just from a different camera
+than the one that'll actually be used, and not accessible on this machine. They also
+reframed the actual need: an earlier model only output a grade classification; what's
+needed is whether a crack exists *and how big it is* — a measurement, not just a
+category. Re-asked with that context: confirmed **classical CV measurement** (grayscale
++ edge detection + contour analysis, matching what the user described) over training a
+new ML/CNN classifier — directly gives a size/severity number and doesn't need much
+training data, unlike a classifier. Photos being inaccessible here meant building with
+explicitly placeholder/provisional thresholds (same pattern as the acoustic module's
+`rms_threshold`), not guessing at "final" values. Dashboard tech (web via Flask) wasn't
+re-asked — decided directly, since "stream via WiFi" and the project's own existing
+recommended stack (charter §21: Flask/Streamlit) both point the same way, and stated the
+assumption in-repo rather than spending another question round on it.
+
+**Built `camera_node/python/camera/`**, mirroring `acoustic_node`'s pure-logic/hardware-
+wrapper split (Development Rule 1):
+- `segmentation.py` — `segment_tile()`: HSV color-range threshold + largest-contour
+  selection isolates the tile from the background. Pure, no I/O.
+- `crack_detection.py` — `detect_cracks()`: grayscale → Gaussian blur → Canny edges →
+  keep only contours that are both long *and* thin (elongated) enough to be a crack
+  rather than surface texture or a compact defect; measures length from the winning
+  contour's `minAreaRect`, grades severity (minor/major) against a length threshold.
+  Pure, no I/O — this is the actual "how big" measurement the user asked for.
+- `corner_detection.py` — `detect_broken_corner()`: ratio of the tile's own contour area
+  to its bounding rectangle's area; a low ratio means a corner is missing, and gives a
+  missing-area measurement. Deliberately does not localize *which* corner — that needs
+  real broken-tile photos to validate against, which aren't available yet; said so
+  explicitly in the docstring rather than guessing.
+- `tile_tracker.py` — `TileTracker`: debounced presence/absence state machine (mirrors
+  `TriggerDetector`'s cooldown/pre-trigger pattern, applied to boolean tile-presence
+  instead of an RMS threshold), counts tiles crossing the frame. This is a local,
+  camera-frame-based count for the station's own dashboard — explicitly documented as
+  *not* the conveyor's authoritative encoder-based tracking (`Automation_Architecture.md`
+  §8), which is a different mechanism for a different problem.
+- `pipeline.py` — `process_tile()`: wires the three detectors into one `TileRecord` +
+  a first-pass rule-based grade (any broken corner or major crack → Reject, minor crack
+  → Grade B, else Grade A) — explicitly the camera station's own local grade, not the
+  master's fused final grade (FR-13).
+- `capture.py` (`WebcamCapture`, thin `cv2.VideoCapture` wrapper) + `worker.py`
+  (`CameraWorker` background thread + `SharedState` thread-safe latest-value store) —
+  the hardware/glue layer. OpenCV has no callback-driven capture like `sounddevice`, so
+  this spins its own thread rather than getting one for free; kept the pure detection
+  modules untouched by that concern.
+- `dashboard.py` + `templates/dashboard.html` — Flask app: `/video_feed` (MJPEG stream),
+  `/api/status` (JSON: tile count + recent tiles with crack/corner detail), `/`
+  (dashboard page: live feed, running count, results table). Serves on `0.0.0.0` so it's
+  reachable from any browser on the same WiFi, not just the camera node itself — this is
+  the camera station's "station-local monitor" (charter §14, FR-19), now implemented.
+- `live_dashboard.py` — CLI entry point, same shape as `acoustic_node`'s
+  `live_monitor.py`.
+- `config.yaml` — every segmentation/detection/dashboard tunable, all commented as
+  provisional placeholders for brown terracotta, not calibrated.
+
+**Verification, not just assertion:** installed `opencv-python-headless` and `Flask`
+into `.venv` (froze into `requirements.txt`, keeping the existing alphabetical/pinned
+style). Wrote 15 new synthetic-image/sequence unit tests
+(`tests/test_camera_segmentation.py`, `test_camera_crack_detection.py`,
+`test_camera_corner_detection.py`, `test_camera_tile_tracker.py`) — e.g. a rectangle
+drawn in a known color to verify segmentation finds the correct bbox/area, a drawn line
+to verify crack length measurement and severity grading, a circle to verify the
+aspect-ratio filter rejects compact (non-crack) blobs, a pentagon with one corner clipped
+to verify broken-corner detection and its missing-area measurement, and boolean presence
+sequences to verify the tile counter debounces noise and counts multiple tiles
+separately. Added `camera_node/python` to `pytest.ini`'s `pythonpath`. Full suite: 26/26
+passing (11 acoustic + 15 camera). Additionally ran a full synthetic end-to-end smoke
+test (image → `segment_tile()` → `process_tile()` → `SharedState` → Flask test client
+hitting `/api/status` and `/`) to confirm the whole pipeline and dashboard wire together
+correctly, not just each piece in isolation — a rectangle with a drawn line correctly
+came back as `crack_detected=True, severity='major', grade='Reject'` through the actual
+API response.
+
+**Documentation updated to match:** `camera_node/README.md` rewritten from the
+"nothing built yet" stub to describe what's real, what's still stub (`sketch/`, the App
+Lab `python/main.py` entry), how to run it, and an explicit "Known limitations" section
+(untuned thresholds, crack "type" = severity not taxonomy, corner detection doesn't
+localize, frame-based count isn't the encoder tracking, streaming video is an
+intentional exception to the "compact results only" master-communication principle).
+`.CLAUDE/CLAUDE.md`: Project Overview, Running the System, Architecture (new camera data
+flow + threading-model subsections, full file table), Key Modules (one entry per camera
+file), Data Files, Platform Constraints, and Known Technical Debt all updated; added
+`*.jpg`/`*.jpeg`/`*.png` to `.gitignore` (gap noticed while writing the Data Files
+section — camera frames/photos would have had nowhere to be excluded once dataset
+saving starts). `documents/requirements/requirements.md`: added FR-23 (measure, don't
+just classify — and why), FR-24 (segmentation), FR-25 (WiFi dashboard implementing
+FR-19), plus three new Open Items reiterating that none of the thresholds are validated
+and the webcam path is untested end-to-end. `TODO.md`: moved the camera build into Done;
+replaced the old "camera module not started" line with the specific remaining work
+(threshold tuning against the user's photos once accessible, real-webcam end-to-end run,
+wiring to the UNO Q once the rig exists, crack-type/corner-localization as future work).
+
+**Left incomplete / needs the user's hands:** every detection threshold needs tuning
+against real tile photos (the user's existing photos weren't accessible on this machine
+— get them here, or hand them over, before trusting any crack/corner result); the whole
+pipeline has never run against a real webcam, only synthetic images; the webcam-to-UNO-Q
+physical wiring doesn't exist yet; crack-type taxonomy and corner localization are
+explicitly deferred. None of this session's changes have been committed to git yet.

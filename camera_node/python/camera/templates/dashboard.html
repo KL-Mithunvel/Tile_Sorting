@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camera Node — Tile Inspection Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; background: #111; color: #eee; }
+  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+  .layout { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .video-panel { flex: 0 0 auto; }
+  .video-panel img { max-width: 640px; width: 100%; border: 1px solid #333; border-radius: 4px; }
+  .stats-panel { flex: 1 1 300px; }
+  .count { font-size: 2.5rem; font-weight: bold; }
+  .count-label { color: #aaa; font-size: 0.9rem; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #333; }
+  th { color: #aaa; font-weight: normal; }
+  .grade-Reject { color: #ff5c5c; font-weight: bold; }
+  .grade-B { color: #f0c93d; }
+  .grade-A { color: #5cd65c; }
+  .badge { display: inline-block; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
+  .badge-yes { background: #5c2020; }
+  .badge-no { background: #204020; }
+</style>
+</head>
+<body>
+  <h1>Camera Node — Live Tile Inspection</h1>
+  <div class="layout">
+    <div class="video-panel">
+      <img src="/video_feed" alt="live camera feed">
+    </div>
+    <div class="stats-panel">
+      <div class="count" id="tile-count">0</div>
+      <div class="count-label">tiles crossed the belt</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Grade</th>
+            <th>Crack</th>
+            <th>Length (px)</th>
+            <th>Corner</th>
+            <th>Missing area (px)</th>
+          </tr>
+        </thead>
+        <tbody id="tile-rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    async function refresh() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        document.getElementById('tile-count').textContent = data.tile_count;
+
+        const rows = data.recent_tiles.map(t => {
+          const crack = t.crack_detected
+            ? `<span class="badge badge-yes">${t.crack_severity}</span>`
+            : `<span class="badge badge-no">none</span>`;
+          const corner = t.corner_broken
+            ? `<span class="badge badge-yes">broken</span>`
+            : `<span class="badge badge-no">intact</span>`;
+          return `<tr>
+            <td>${t.seq}</td>
+            <td class="grade-${t.grade.replace('Grade ', '')}">${t.grade}</td>
+            <td>${crack}</td>
+            <td>${t.crack_detected ? t.crack_length_px : '-'}</td>
+            <td>${corner}</td>
+            <td>${t.corner_broken ? t.corner_missing_area_px : '-'}</td>
+          </tr>`;
+        }).join('');
+        document.getElementById('tile-rows').innerHTML = rows;
+      } catch (err) {
+        console.error('status refresh failed', err);
+      }
+    }
+    refresh();
+    setInterval(refresh, 1000);
+  </script>
+</body>
+</html>

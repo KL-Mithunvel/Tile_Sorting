@@ -1,0 +1,60 @@
+# Camera vision pipeline configuration.
+# All tunables live here so the code never hardcodes device/threshold values
+# (see .CLAUDE/CLAUDE.md Development Rule 2 / CLAUDE-COMMON.md).
+#
+# PROVISIONAL: segmentation and crack/corner thresholds below are starting
+# guesses for brown terracotta tiles, not calibrated against real tile photos
+# (none were available on this machine when this was written — see
+# .CLAUDE/CLAUDE.md Known Technical Debt). Re-tune every value in this file
+# against real sample images before trusting any detection result.
+
+camera:
+  # OpenCV VideoCapture device index. 0 = first/default webcam.
+  device_index: 0
+  frame_width: 640
+  frame_height: 480
+  target_fps: 15
+
+segmentation:
+  # HSV range for isolating a brown terracotta tile from its background.
+  # OpenCV hue range is 0-179. This is an unvalidated starting guess for
+  # "brown/terracotta" — re-derive from real photos (e.g. sample pixel values
+  # from an actual tile image in HSV) before relying on it.
+  hsv_lower: [5, 60, 40]
+  hsv_upper: [25, 255, 220]
+  # Minimum contour area (pixels) to be considered a tile rather than noise.
+  min_tile_area_px: 3000
+  # Morphological close/open kernel size, to clean up the threshold mask.
+  morph_kernel_size: 5
+
+crack_detection:
+  blur_kernel_size: 5
+  # Canny edge detector thresholds.
+  canny_low: 50
+  canny_high: 150
+  # A candidate edge contour must be at least this long (pixels, arc length)
+  # and this elongated (major/minor axis ratio) to count as a crack rather
+  # than surface texture noise.
+  min_crack_length_px: 40
+  min_aspect_ratio: 4.0
+  # Below this measured length, a detected crack is graded "minor"; at or
+  # above, "major".
+  minor_severity_max_length_px: 120
+
+corner_detection:
+  # Ratio of (tile contour area / its minimum-area bounding rectangle area).
+  # A perfect rectangle is close to 1.0; a broken/chipped corner lowers this.
+  min_fill_ratio: 0.92
+
+tile_tracker:
+  # Consecutive frames a tile must be detected/absent before counting it as
+  # arrived/departed, to debounce single-frame segmentation noise.
+  min_present_frames: 3
+  min_absent_frames: 5
+
+dashboard:
+  # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not
+  # just localhost.
+  host: "0.0.0.0"
+  port: 5000
+  jpeg_quality: 80

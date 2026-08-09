@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 data/
 *.wav
+*.jpg
+*.jpeg
+*.png
 .idea/
 
 # Device credentials — never commit

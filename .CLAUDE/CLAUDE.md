@@ -15,9 +15,10 @@ Automated ceramic/terracotta tile inspection, grading, sorting, and packing syst
 - Real-world basis: proposed for Sree Murugan Tile Works (SMTW), a clay tile manufacturer currently doing inspection/grading/sorting/packing manually. Tile size/weight range not yet obtained from SMTW — see Known Technical Debt.
 - License: see `LICENSE`
 - Runtime: Python 3.13 (venv at repo root)
-- Current build phase: Phase 1 (Laboratory Proof of Concept, charter §12.1) — acoustic capture only. Camera, dimensional, control, sorting, and database layers are not started.
+- Current build phase: Phase 1 (Laboratory Proof of Concept, charter §12.1) — acoustic capture and camera vision pipeline exist; dimensional, control, sorting, and database layers are not started.
 - Entry point (acoustic module): `python -m acoustic.live_monitor`, run from `acoustic_node/python/` (see Architecture below — the module moved out of a repo-root `acoustic/` package into this App Bricks-shaped node folder on 2026-08-03).
-- Every UNO Q station (`camera_node/`, `acoustic_node/`, `pick_place_node/`) is organized as an **Arduino App Bricks** project (`app.yaml` + `sketch/` + `python/`), matching Arduino's own `app-bricks-examples` convention, so each can be opened in Arduino App Lab. Only `acoustic_node/` has real code (`python/acoustic/`, migrated unchanged); the other two are scaffolding only. Only one physical UNO Q board exists — see Deployment Notes.
+- Entry point (camera module): `python -m camera.live_dashboard`, run from `camera_node/python/` — opens a WiFi-reachable Flask dashboard (added 2026-08-07, see Architecture below).
+- Every UNO Q station (`camera_node/`, `acoustic_node/`, `pick_place_node/`) is organized as an **Arduino App Bricks** project (`app.yaml` + `sketch/` + `python/`), matching Arduino's own `app-bricks-examples` convention, so each can be opened in Arduino App Lab. `acoustic_node/` and `camera_node/` have real Python-side code; `pick_place_node/` and both nodes' `sketch/`/App Lab wiring are still scaffolding. Only one physical UNO Q board exists — see Deployment Notes.
 
 ---
 
@@ -71,13 +72,22 @@ cd ..\..
 python -m pytest tests/ -v
 ```
 
-There is no hardware/production mode yet — everything above runs on the dev laptop's built-in mic. No seed data or one-time setup beyond the venv.
+```bash
+# The camera module's CLI runs from inside camera_node/python/, same pattern.
+cd camera_node\python
+
+# Opens a Flask dashboard at http://0.0.0.0:5000/ — reachable from any
+# browser on the same WiFi network, not just localhost.
+python -m camera.live_dashboard
+```
+
+There is no hardware/production mode yet — everything above runs on the dev laptop's built-in mic / webcam. No seed data or one-time setup beyond the venv.
 
 ---
 
 ## Architecture
 
-Only the acoustic capture module exists so far. Camera, dimensional, control, decision/grading, sorting, and database layers from the full charter (`documents/project/project_charter.md` §5) are not started.
+Acoustic capture and the camera vision pipeline exist so far. Dimensional, control, decision/grading, sorting, and database layers from the full charter (`documents/project/project_charter.md` §5) are not started.
 
 **Repo layout (since 2026-08-03):** every planned UNO Q station gets its own top-level
 node folder, following the Arduino **App Bricks** convention (`app.yaml` + `sketch/` +
@@ -86,8 +96,8 @@ Arduino App Lab:
 
 | Folder | Status |
 |---|---|
-| `acoustic_node/` | Real code — `python/acoustic/` is the working, tested module (below), migrated unchanged from the old repo-root `acoustic/`. `sketch/` (laser/ToF trigger + ball-drop release) and `python/main.py`'s App Lab wiring are new stubs, unverified on hardware. |
-| `camera_node/` | Scaffolding only — no visual-inspection code exists yet. |
+| `acoustic_node/` | Real code — `python/acoustic/` is the working, tested module (below), migrated unchanged from the old repo-root `acoustic/`. `sketch/` (laser/ToF trigger + ball-drop release) and `python/main.py`'s App Lab wiring are stubs, unverified on hardware. |
+| `camera_node/` | Real code (added 2026-08-07) — `python/camera/` is a working, tested vision pipeline + WiFi dashboard (below). `sketch/` and `python/main.py`'s App Lab wiring are still stubs. |
 | `pick_place_node/` | Scaffolding only — no gantry motion-control code exists yet. |
 
 Conveyor stays on the Arduino Mega (not App-Lab-class, not part of this convention).
@@ -100,7 +110,17 @@ Conveyor stays on the Arduino Mega (not App-Lab-class, not part of this conventi
 | `acoustic_node/python/acoustic/plotting.py` | `plot_waveform_and_spectrum()` — matplotlib waveform + FFT display |
 | `acoustic_node/python/acoustic/live_monitor.py` | CLI entry point: `--list-devices`, `--calibrate`, or continuous monitor mode |
 | `acoustic_node/python/main.py` | Arduino App Lab entry point (`arduino.app_utils.App.run()`) — unverified stub, not wired to the module above yet |
-| `pytest.ini` | `pythonpath = acoustic_node/python`, so `tests/` can still `import acoustic` unchanged after the move |
+| `camera_node/python/camera/config.yaml` | All tunable vision parameters (device index, HSV segmentation range, Canny thresholds, crack/corner thresholds, dashboard host/port) — see camera_node/README.md for the full list |
+| `camera_node/python/camera/segmentation.py` | `segment_tile()` — isolate the tile from the background via HSV threshold. No I/O — synthetic-image testable. |
+| `camera_node/python/camera/crack_detection.py` | `detect_cracks()` — grayscale → blur → Canny → keep long/thin contours → measure length + severity. No I/O — synthetic-image testable. |
+| `camera_node/python/camera/corner_detection.py` | `detect_broken_corner()` — contour area vs. its own bounding rect area → missing-corner-area measurement. No I/O — synthetic-contour testable. |
+| `camera_node/python/camera/tile_tracker.py` | `TileTracker` — debounced presence/absence state machine, counts tiles crossing the frame. No I/O — synthetic-sequence testable. |
+| `camera_node/python/camera/pipeline.py` | `process_tile()` — wires the three detectors above into one `TileRecord` + a first-pass rule-based grade |
+| `camera_node/python/camera/capture.py` | `WebcamCapture` — thin OpenCV `VideoCapture` wrapper. Real hardware I/O, not unit-tested. |
+| `camera_node/python/camera/worker.py` | `CameraWorker` + `SharedState` — background thread wiring capture → segmentation → tracker → pipeline, thread-safe latest-value store for the dashboard |
+| `camera_node/python/camera/dashboard.py` + `templates/dashboard.html` | Flask app: `/video_feed` (MJPEG stream), `/api/status` (JSON), `/` (dashboard page). Serves on `0.0.0.0` so it's reachable over WiFi. |
+| `camera_node/python/camera/live_dashboard.py` | CLI entry point, mirrors `acoustic_node`'s `live_monitor.py` |
+| `pytest.ini` | `pythonpath = acoustic_node/python, camera_node/python`, so `tests/` can `import acoustic` / `import camera` unchanged |
 
 ### Data flow (current)
 
@@ -128,9 +148,44 @@ plot_waveform_and_spectrum()  — blocks until plot window closed,
 
 `sounddevice.InputStream` runs its callback on PortAudio's own background thread. `TriggerDetector` state is only ever touched from that one callback thread, so no locking is needed there. Completed clips cross into the main thread via a `queue.Queue`, which is thread-safe by design. The main thread blocks on `get_clip()` and then blocks again on `plt.show()` — while a plot window is open, the audio stream keeps running and can queue up further clips, which display one after another as windows are closed.
 
+### Camera vision pipeline (data flow)
+
+```text
+Webcam (cv2.VideoCapture, CameraWorker's own background thread)
+   |
+   v
+segment_tile()  — HSV threshold isolates the tile from the background
+   |
+   v
+TileTracker.process_frame()  — debounced presence state machine;
+   |                            fires once when a tile finishes crossing
+   v
+process_tile()  — on tile departure only: detect_cracks() + detect_broken_corner()
+   |               on the last-seen isolated tile region, grade_tile()
+   v
+SharedState  — thread-safe: latest annotated JPEG frame + tile_count + recent TileRecords
+   |
+   v
+Flask dashboard  — /video_feed (MJPEG, every frame) and /api/status (JSON,
+                     polled by the page every second), served on 0.0.0.0
+```
+
+Every frame gets segmented and re-encoded to JPEG for the live stream, but the
+crack/corner pipeline only runs once per tile — on the frame where `TileTracker` confirms
+the tile has departed, using the last region seen while it was present.
+
+### Threading model (camera)
+
+Unlike `sounddevice`'s callback-driven model, OpenCV's `VideoCapture` is read
+synchronously, so `CameraWorker` spins its own background thread (`threading.Thread`,
+daemon) that owns the whole per-frame pipeline. `SharedState` is the only thing shared
+across threads (the worker thread writes, Flask's request-handling threads read), guarded
+by a single `threading.Lock` — reads/writes are "latest value wins," not a queue, since
+the dashboard only ever wants the most recent frame/status, not a backlog.
+
 ### Simulation vs real mode
 
-Not applicable yet — this runs entirely on the dev laptop's built-in mic, no embedded/hardware target involved. `TriggerDetector` is hardware-independent by construction (see Development Rules), so once `camera_node/`'s and `pick_place_node/`'s real code is added, and once `acoustic_node/sketch/` (laser/ToF + ball-drop) is built, the same dev-machine-first split should be repeated for each.
+Not applicable yet — the acoustic module runs on the dev laptop's built-in mic and the camera module runs on a dev laptop webcam, no embedded/hardware target involved for either. `TriggerDetector` and the `camera/` pure modules are hardware-independent by construction (see Development Rules), so once `pick_place_node/`'s real code is added, and once `acoustic_node/sketch/` (laser/ToF + ball-drop) and `camera_node/sketch/` (tile-presence trigger, if any) are built, the same dev-machine-first split should be repeated for each.
 
 ---
 
@@ -159,13 +214,46 @@ No I/O, no side effects. Fully covered by `tests/test_signal_processing.py`.
 
 CLI entry point (`argparse`). `--list-devices` prints devices and exits. `--calibrate` prints live RMS in a loop (Ctrl+C to stop) for threshold tuning. No flags: continuous listen-and-plot mode.
 
+### `camera/segmentation.py`
+
+- `segment_tile(frame_bgr, hsv_lower, hsv_upper, min_area_px, morph_kernel_size=5) -> TileRegion | None` — HSV color-range threshold + largest-contour selection. Returns `None` if nothing large enough matches. `TileRegion` carries the bbox, area, contour, mask, and cropped image. No I/O; covered by `tests/test_camera_segmentation.py` with synthetic colored rectangles.
+
+### `camera/crack_detection.py`
+
+- `detect_cracks(tile_bgr, canny_low, canny_high, min_crack_length_px, min_aspect_ratio, minor_severity_max_length_px, blur_kernel_size=5) -> CrackResult` — grayscale → Gaussian blur → Canny → keeps only contours that are both long enough and elongated enough (aspect ratio) to be a crack rather than texture noise or a compact defect. Measures length from the winning contour's `minAreaRect`, grades severity against a length threshold. Raises `ValueError` on an empty image. No I/O; covered by `tests/test_camera_crack_detection.py` with synthetic drawn lines.
+
+### `camera/corner_detection.py`
+
+- `detect_broken_corner(contour, min_fill_ratio) -> CornerResult` — ratio of the tile's actual contour area to its own `minAreaRect` area; a low ratio means a corner is missing. Returns the fill ratio and a missing-area measurement, not which corner. Raises `ValueError` on a degenerate (zero-area) contour. No I/O; covered by `tests/test_camera_corner_detection.py` with synthetic clipped-corner polygons.
+
+### `camera/tile_tracker.py`
+
+- `TileTracker(min_present_frames, min_absent_frames)` — pure debounced state machine. `.process_frame(tile_detected: bool) -> bool` returns `True` exactly once per tile, on the frame its presence is confirmed to have ended. `.tile_count` / `.confirmed_present` properties. No I/O; covered by `tests/test_camera_tile_tracker.py` with synthetic presence sequences.
+
+### `camera/pipeline.py`
+
+- `process_tile(seq, region, ...) -> TileRecord` — runs `detect_cracks()` + `detect_broken_corner()` on one `TileRegion` and grades it (`grade_tile()`: any broken corner or major crack → Reject, minor crack → Grade B, else Grade A — a first-pass rule, not the master's fused final grade). Pure glue, not separately unit-tested (exercised via the smoke test below and indirectly by the modules it calls).
+
+### `camera/capture.py` / `camera/worker.py`
+
+- `WebcamCapture(config)` — thin `cv2.VideoCapture` wrapper (`start()`/`read_frame()`/`stop()`, context-manager support). Real hardware I/O, not unit-tested.
+- `CameraWorker(capture, config, state)` — background thread: reads a frame, segments it, feeds `TileTracker`, runs the pipeline on tile departure, and publishes an annotated JPEG + results into `SharedState`. `SharedState` is the thread-safe latest-value store the Flask app reads from. Real hardware I/O + threading, not unit-tested (mirrors `AudioCapture`).
+
+### `camera/dashboard.py` + `camera/templates/dashboard.html`
+
+- `create_app(state) -> Flask` — `/` (dashboard page), `/video_feed` (MJPEG multipart stream from `SharedState`), `/api/status` (JSON: `tile_count` + `recent_tiles`, each a serialized `TileRecord`). Runs on `host: 0.0.0.0` from config so it's reachable over WiFi. Smoke-tested via Flask's test client, not part of the synthetic-image unit test suite.
+
+### `camera/live_dashboard.py`
+
+CLI entry point. No flags — loads config, starts `CameraWorker`, runs the Flask app. Ctrl+C stops both.
+
 ---
 
 ## Data Files
 
-Nothing is persisted yet — captures are shown live and discarded (per explicit decision this session: save-to-disk is deferred until later). `acoustic/config.yaml` is the only data file, and it's git-tracked (it's configuration, not runtime output).
+Nothing is persisted yet for either module — acoustic captures and camera frames/results are shown live and discarded (deferred to later by explicit decision). `acoustic/config.yaml` and `camera/config.yaml` are the only data files, and both are git-tracked (configuration, not runtime output).
 
-Planned, not yet built: a `data/` directory for saved WAV clips + extracted features once dataset collection starts (charter §22.1). Already excluded in `.gitignore` (`data/`, `*.wav`) so it's ready when that lands — audio/image datasets should never be committed to git.
+Planned, not yet built: a `data/` directory for saved WAV clips, tile photos, and extracted features once dataset collection starts (charter §22.1). Already excluded in `.gitignore` (`data/`, `*.wav`, and — added 2026-08-07 alongside the camera module — `*.jpg`/`*.jpeg`/`*.png`) so it's ready when that lands — audio/image datasets should never be committed to git.
 
 ---
 
@@ -175,6 +263,7 @@ Planned, not yet built: a `data/` directory for saved WAV clips + extracted feat
 - This machine enumerates several "Microphone Array" input devices (Realtek, 2ch/4ch variants, one reporting a 16000 Hz default sample rate). `device: null` picks whatever Windows considers the default; if `AudioCapture.start()` fails to open at `sample_rate: 44100`, pin an explicit device index from `--list-devices` in `config.yaml` rather than debugging the default.
 - **Windows Microphone Enhancements** (AGC / noise suppression) must be manually disabled in Sound Control Panel → input device → Properties → Enhancements tab. This cannot be controlled from Python/PortAudio. Until confirmed disabled, RMS threshold and FFT shape are not trustworthy for calibration — fine for pipeline smoke-testing, not for real threshold tuning.
 - No hardware dependencies yet (no GPIO/I2C/serial/solenoid/PLC in this repo). Those land with the acoustic tapping station, dimensional sensors, and control layer per the charter — each will need the dev-machine simulation split required by `CLAUDE-COMMON.md` when it's built.
+- `camera/config.yaml`'s `camera.device_index: 0` is OpenCV's default-webcam index — same "re-verify per machine" caveat as the mic's `device: null`. The eventual target is a separate PC-style webcam connected to the UNO Q (per the 2026-08-07 session), not this dev laptop's built-in camera — device index/backend will need re-checking once that's wired up.
 
 ---
 
@@ -199,12 +288,16 @@ A lab Arduino UNO Q board (aarch64 Debian, hostname `KLM`, reachable at `arduino
 - **App Bricks/App Lab is unverified** (added 2026-08-03): `acoustic_node/python/main.py`, `camera_node/python/main.py`, and `pick_place_node/python/main.py` all just call `arduino.app_utils.App.run()`, copied from the shape of Arduino's own `app-bricks-examples`. Nobody has run this against the lab UNO Q board yet, so it's unknown whether `App.run()` behaves as assumed, what `sketch/sketch.yaml`'s real schema is, or how the Python/sketch sides are meant to communicate. Treat every `sketch/` and `python/main.py` file in the three node folders as an unverified stub, not working code.
 - The `acoustic_node/`/`camera_node/`/`pick_place_node/` three-folder split assumes three physical UNO Q boards eventually; only one exists today (see Deployment Notes) — don't infer hardware procurement from the repo structure.
 - `.CLAUDE/CLAUDE.md` previously documented a `venv/` at the repo root; the actual local environment found during this session was `.venv/` (PyCharm default) with only `pip` installed — `requirements.txt` had not been installed into it. Re-verify which venv convention is actually in use before trusting either name blindly.
+- **Every camera vision threshold is unvalidated** (added 2026-08-07): `camera_node/python/camera/config.yaml`'s HSV segmentation range, Canny edge thresholds, crack length/aspect-ratio thresholds, and corner fill-ratio threshold are all placeholder starting guesses for brown terracotta tiles. No real tile photos were available on this machine when this was built (the user has sample photos from a different camera than the one that will actually be used, but they weren't accessible here) — see `camera_node/README.md` Known Limitations. Do not trust any crack/corner detection result until these are re-tuned against real photos.
+- Crack "type" reported by the camera pipeline is severity (minor/major) + measured length, not a defect taxonomy (hairline vs. structural, edge vs. center crack) — that needs real labeled photos to design against.
+- Corner detection reports that + how much area is missing, not which corner — localization was deliberately deferred (see `corner_detection.py` docstring).
+- The camera dashboard's live MJPEG stream is only smoke-tested via Flask's test client and manual review of the code — it has not been run against a real webcam feed end-to-end in this session (no camera hardware available to the assistant). Confirm `python -m camera.live_dashboard` actually opens a working webcam stream on the target machine before relying on it.
 
 ---
 
 ## Development Rules
 
-1. **Hardware I/O stays separate from pure logic.** Any module touching real hardware (mic, camera, sensors, actuators) must isolate the hardware-facing code into a thin wrapper around pure, synthetic-input-testable logic — see `acoustic/capture.py`'s `TriggerDetector` (pure) vs `AudioCapture` (hardware wrapper) as the pattern to repeat for camera/dimensional/control modules.
+1. **Hardware I/O stays separate from pure logic.** Any module touching real hardware (mic, camera, sensors, actuators) must isolate the hardware-facing code into a thin wrapper around pure, synthetic-input-testable logic — see `acoustic/capture.py`'s `TriggerDetector` (pure) vs `AudioCapture` (hardware wrapper), and `camera/segmentation.py`/`crack_detection.py`/`corner_detection.py`/`tile_tracker.py` (pure) vs `camera/capture.py`/`worker.py` (hardware wrapper), as the pattern to repeat for dimensional/control modules.
 2. **No hardcoded device/sensor parameters.** Sample rate, device selection, thresholds, timing — all of it goes in a module-local `config.yaml`, never inline in source (extends the `CLAUDE-COMMON.md` hardware-address rule to audio params).
 3. **Any threshold calibrated on prototype/substitute hardware (e.g. laptop mic instead of the measurement mic + real tapping mechanism) is provisional** and must be explicitly called out as such in code/docs until recalibrated on the real acoustic station (charter §6.2, §15.2, §18.1).
 4. **New non-code artifacts get filed under the matching `documents/` subfolder in the same commit as the work that produced them** — see Documentation Architecture above. Don't leave CAD exports, schematics, or college submissions loose at the repo root or bundled into an unrelated folder.

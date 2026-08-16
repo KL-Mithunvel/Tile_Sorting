@@ -63,3 +63,29 @@ def test_detect_cracks_severity_thresholds():
 def test_detect_cracks_rejects_empty_array():
     with pytest.raises(ValueError):
         detect_cracks(np.array([]), **DEFAULTS)
+
+
+def test_detect_cracks_ignores_border_silhouette_with_margin():
+    # Simulates segmentation's bounding-box crop, where the tile's own edge
+    # against the background sits right along one side of the crop border -
+    # a long, thin line that would otherwise look exactly like a crack (see
+    # development/analyze_dataset.py: ~100% false-positive rate on real
+    # photos before border_margin_px was added).
+    tile = make_blank_tile()
+    cv2.line(tile, (5, 3), (195, 3), (40, 40, 40), thickness=2)
+
+    without_margin = detect_cracks(tile, **DEFAULTS)
+    assert without_margin.crack_detected
+
+    with_margin = detect_cracks(tile, **DEFAULTS, border_margin_px=10)
+    assert not with_margin.crack_detected
+
+
+def test_detect_cracks_still_finds_interior_line_with_margin():
+    tile = make_blank_tile()
+    cv2.line(tile, (30, 100), (170, 100), (40, 40, 40), thickness=3)
+
+    result = detect_cracks(tile, **DEFAULTS, border_margin_px=10)
+
+    assert result.crack_detected
+    assert result.severity in ("minor", "major")

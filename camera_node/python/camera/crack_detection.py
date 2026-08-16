@@ -40,6 +40,7 @@ def detect_cracks(
     min_aspect_ratio: float,
     minor_severity_max_length_px: float,
     blur_kernel_size: int = 5,
+    border_margin_px: int = 0,
 ) -> CrackResult:
     if tile_bgr.size == 0:
         raise ValueError("detect_cracks: tile_bgr is empty")
@@ -48,6 +49,21 @@ def detect_cracks(
     k = max(1, blur_kernel_size | 1)  # GaussianBlur needs an odd kernel size
     blurred = cv2.GaussianBlur(gray, (k, k), 0)
     edges = cv2.Canny(blurred, canny_low, canny_high)
+
+    # tile_bgr is segmentation's bounding-box crop, so its own border sits
+    # right on the tile-vs-background silhouette edge - a long, thin,
+    # high-contrast line that Canny always finds and that would otherwise
+    # look exactly like a crack (confirmed empirically: ~100% false-positive
+    # rate on known-intact tile photos before this margin was added - see
+    # development/analyze_dataset.py). Blanking a border band excludes that
+    # silhouette edge from consideration; real interior cracks still show up
+    # as long as they extend more than the margin inward.
+    m = max(0, int(border_margin_px))
+    if m > 0:
+        edges[:m, :] = 0
+        edges[-m:, :] = 0
+        edges[:, :m] = 0
+        edges[:, -m:] = 0
 
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 

@@ -1,0 +1,42 @@
+# Digital twin prototype configuration.
+# All tunables live here so the code never hardcodes device/threshold values
+# (see .claude/CLAUDE.md Development Rule 2).
+#
+# PLACEHOLDER: this drives MockGantrySimulator only — no real gantry hardware exists
+# yet (documents/project/Pick_Place_Sorting_Subsystem.md §3.1). Workspace bounds and
+# waypoint coordinates below are arbitrary placeholders, not real gantry travel limits
+# — those are blocked on SMTW tile size/weight data (.claude/CLAUDE.md Known Technical
+# Debt). Re-derive once real gantry dimensions are known.
+
+workspace:
+  x_min_mm: 0
+  x_max_mm: 600
+  y_min_mm: 0
+  y_max_mm: 400
+  z_min_mm: 0
+  z_max_mm: 200
+
+# A simple home -> pick -> place -> home patrol the mock simulator loops through,
+# so the digital twin has something to visibly do (moving, picking, placing,
+# vacuum on/off) without any real motion-control code.
+mock:
+  travel_speed_mm_s: 150
+  # Home position (also the travel height used between pick/place approaches).
+  home: {x: 0, y: 0, z: 200}
+  pick_xy: {x: 500, y: 100}
+  pick_z_mm: 20
+  place_xy: {x: 100, y: 350}
+  place_z_mm: 20
+  # How long to pause at pick/place/home before moving on, seconds.
+  dwell_s: 0.6
+
+dashboard:
+  # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not just
+  # localhost — same convention as camera_node/acoustic_node.
+  host: "0.0.0.0"
+  # Different from camera_node's 5000 so both can run at once during development.
+  port: 5050
+  # How often the browser polls /api/status for the live twin.
+  poll_interval_s: 0.1
+  # How often the background worker advances the simulator.
+  tick_hz: 30

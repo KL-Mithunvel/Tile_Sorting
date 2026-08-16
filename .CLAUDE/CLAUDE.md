@@ -79,6 +79,19 @@ cd camera_node\python
 # Opens a Flask dashboard at http://0.0.0.0:5000/ — reachable from any
 # browser on the same WiFi network, not just localhost.
 python -m camera.live_dashboard
+
+# Offline: process a saved video file instead of a live webcam — prints the
+# total tile flow count + a numbered per-tile crack/corner result for each
+# tile that crossed. --report writes the same as JSON.
+python -m camera.process_video path\to\footage.mp4 --report report.json
+```
+
+```bash
+# Calibrating camera_node's vision thresholds against real tile photos in
+# data/ — see development/README.md. Run from the repo root.
+venv\Scripts\activate
+python development\tile_param_tuner.py    # interactive GUI, one photo at a time
+python development\analyze_dataset.py     # batch: recommends values from all of data/
 ```
 
 There is no hardware/production mode yet — everything above runs on the dev laptop's built-in mic / webcam. No seed data or one-time setup beyond the venv.
@@ -102,6 +115,12 @@ Arduino App Lab:
 
 Conveyor stays on the Arduino Mega (not App-Lab-class, not part of this convention).
 
+`development/` (added 2026-08-11) is a separate, dev-only top-level folder — **not** a
+node, not part of the App Bricks convention above. It holds tooling for calibrating
+`camera_node`'s vision thresholds against real tile photos (an interactive GUI tuner and
+a batch analysis script) before those values get copied into
+`camera_node/python/camera/config.yaml`. See `development/README.md`.
+
 | File | Role |
 |---|---|
 | `acoustic_node/python/acoustic/config.yaml` | All tunable audio/trigger parameters (device, sample rate, RMS threshold, timing) |
@@ -113,11 +132,13 @@ Conveyor stays on the Arduino Mega (not App-Lab-class, not part of this conventi
 | `camera_node/python/camera/config.yaml` | All tunable vision parameters (device index, HSV segmentation range, Canny thresholds, crack/corner thresholds, dashboard host/port) — see camera_node/README.md for the full list |
 | `camera_node/python/camera/segmentation.py` | `segment_tile()` — isolate the tile from the background via HSV threshold. No I/O — synthetic-image testable. |
 | `camera_node/python/camera/crack_detection.py` | `detect_cracks()` — grayscale → blur → Canny → keep long/thin contours → measure length + severity. No I/O — synthetic-image testable. |
-| `camera_node/python/camera/corner_detection.py` | `detect_broken_corner()` — contour area vs. its own bounding rect area → missing-corner-area measurement. No I/O — synthetic-contour testable. |
+| `camera_node/python/camera/corner_detection.py` | `detect_broken_corner()` — contour area vs. its own bounding rect area (`fill_ratio`) *plus* a distance-transform-based check on how deep any gap reaches (`missing_extent_fraction`) — the latter catches diagonal chips the former misses (see Key Modules below). Converts missing area/depth to real inches given the tile's known size. No I/O — synthetic-contour testable. |
 | `camera_node/python/camera/tile_tracker.py` | `TileTracker` — debounced presence/absence state machine, counts tiles crossing the frame. No I/O — synthetic-sequence testable. |
-| `camera_node/python/camera/pipeline.py` | `process_tile()` — wires the three detectors above into one `TileRecord` + a first-pass rule-based grade |
-| `camera_node/python/camera/capture.py` | `WebcamCapture` — thin OpenCV `VideoCapture` wrapper. Real hardware I/O, not unit-tested. |
-| `camera_node/python/camera/worker.py` | `CameraWorker` + `SharedState` — background thread wiring capture → segmentation → tracker → pipeline, thread-safe latest-value store for the dashboard |
+| `camera_node/python/camera/pipeline.py` | `process_tile()` — wires the three detectors above into one `TileRecord` + a first-pass rule-based grade. `tile_record_to_dict()` — shared JSON serialization, used by both the dashboard and `process_video.py`. |
+| `camera_node/python/camera/snapshot.py` | `save_tile_snapshot()` — persists a departed tile's photo to `data/camera_captures/` (config: `capture_snapshots`), named by sequence number. I/O only, not unit-tested. |
+| `camera_node/python/camera/capture.py` | `WebcamCapture` — thin OpenCV `VideoCapture` wrapper for a live device. `VideoFileCapture` — same shape, reads a saved video file instead (for `process_video.py`). Real hardware/file I/O, not unit-tested. |
+| `camera_node/python/camera/worker.py` | `CameraWorker` + `SharedState` — background thread wiring capture → segmentation → tracker → pipeline (+ snapshot save), thread-safe latest-value store for the dashboard. Tracks the *largest-area* sighting of each tile while it's crossing, not just the last frame before departure. |
+| `camera_node/python/camera/process_video.py` | `process_video_file()` + CLI — offline counterpart to `worker.py`'s loop: runs the same pipeline against a saved video file, reports total tile flow count + a numbered per-tile crack/corner result for each tile that crossed. Not unit-tested; smoke-tested against a synthetic video (see `development/`). |
 | `camera_node/python/camera/dashboard.py` + `templates/dashboard.html` | Flask app: `/video_feed` (MJPEG stream), `/api/status` (JSON), `/` (dashboard page). Serves on `0.0.0.0` so it's reachable over WiFi. |
 | `camera_node/python/camera/live_dashboard.py` | CLI entry point, mirrors `acoustic_node`'s `live_monitor.py` |
 | `pytest.ini` | `pythonpath = acoustic_node/python, camera_node/python`, so `tests/` can `import acoustic` / `import camera` unchanged |
@@ -161,7 +182,11 @@ TileTracker.process_frame()  — debounced presence state machine;
    |                            fires once when a tile finishes crossing
    v
 process_tile()  — on tile departure only: detect_cracks() + detect_broken_corner()
-   |               on the last-seen isolated tile region, grade_tile()
+   |               on the largest-area isolated tile region seen while it was
+   |               present, grade_tile()
+   v
+save_tile_snapshot()  — (if capture_snapshots.enabled) writes that region's
+   |                      photo to data/camera_captures/, tagged with seq
    v
 SharedState  — thread-safe: latest annotated JPEG frame + tile_count + recent TileRecords
    |
@@ -172,7 +197,13 @@ Flask dashboard  — /video_feed (MJPEG, every frame) and /api/status (JSON,
 
 Every frame gets segmented and re-encoded to JPEG for the live stream, but the
 crack/corner pipeline only runs once per tile — on the frame where `TileTracker` confirms
-the tile has departed, using the last region seen while it was present.
+the tile has departed, using the *largest-area* region seen while it was present (not
+just the last frame before departure, which can be partially exited/motion-blurred at the
+frame edge).
+
+`camera/process_video.py` runs this same segment → track → process_tile → snapshot chain
+synchronously against a saved video file instead of a live device + Flask dashboard —
+see its section in Key Modules below.
 
 ### Threading model (camera)
 
@@ -224,7 +255,7 @@ CLI entry point (`argparse`). `--list-devices` prints devices and exits. `--cali
 
 ### `camera/corner_detection.py`
 
-- `detect_broken_corner(contour, min_fill_ratio) -> CornerResult` — ratio of the tile's actual contour area to its own `minAreaRect` area; a low ratio means a corner is missing. Returns the fill ratio and a missing-area measurement, not which corner. Raises `ValueError` on a degenerate (zero-area) contour. No I/O; covered by `tests/test_camera_corner_detection.py` with synthetic clipped-corner polygons.
+- `detect_broken_corner(contour, min_fill_ratio, max_missing_extent_fraction=1.0, tile_size_inches=None) -> CornerResult` — two independent broken-corner checks, OR'd together: (1) `fill_ratio` (tile's actual contour area / its own `minAreaRect` area) — a low ratio means area is missing; and (2) `missing_extent_fraction` (added 2026-08-11, fixing a real gap) — how far the deepest point of the gap between the actual contour and the ideal rectangle reaches, as a fraction of the tile's side length, via a distance transform. **Why both are needed**: `fill_ratio` alone under-catches diagonal/triangular corner chips — the realistic way ceramic actually breaks — because a triangular chip removes much less area than a square notch reaching the same distance into the tile. Confirmed empirically: a chip whose two legs each reach halfway across the tile's edge only dropped `fill_ratio` to ~0.87, above the production `min_fill_ratio` (0.83), so it would not have been flagged; `missing_extent_fraction` catches it (measures ~0.35 there, well above `config.yaml`'s `max_missing_extent_fraction: 0.22`). If `tile_size_inches` is given (config: 9.0, these tiles are 9x9in), `CornerResult` also reports `missing_area_sq_inches`/`missing_depth_inches` — real physical measurements of the break, using the tile's own detected pixel size as the scale reference (no separate calibration needed). Does not localize *which* corner is broken. Raises `ValueError` on a degenerate (zero-area) contour. No I/O; covered by `tests/test_camera_corner_detection.py`, including the diagonal-chip case above and the tile-size conversion.
 
 ### `camera/tile_tracker.py`
 
@@ -232,12 +263,22 @@ CLI entry point (`argparse`). `--list-devices` prints devices and exits. `--cali
 
 ### `camera/pipeline.py`
 
-- `process_tile(seq, region, ...) -> TileRecord` — runs `detect_cracks()` + `detect_broken_corner()` on one `TileRegion` and grades it (`grade_tile()`: any broken corner or major crack → Reject, minor crack → Grade B, else Grade A — a first-pass rule, not the master's fused final grade). Pure glue, not separately unit-tested (exercised via the smoke test below and indirectly by the modules it calls).
+- `process_tile(seq, region, ...) -> TileRecord` — runs `detect_cracks()` + `detect_broken_corner()` on one `TileRegion` and grades it (`grade_tile()`: any broken corner or major crack → Reject, minor crack → Grade B, else Grade A — a first-pass rule, not the master's fused final grade). `TileRecord.seq` is the tile's sequence number in this run's flow (1st, 2nd, ... tile to cross), and doubles as its identifier — carried alongside that tile's crack/corner results in the same record. `TileRecord.snapshot_path` is set by callers after `camera/snapshot.py` persists the tile's photo (`None` if snapshot saving is off). Pure glue, not separately unit-tested itself (exercised via the smoke test below and indirectly by the modules it calls) — `grade_tile()` and `tile_record_to_dict()` are unit-tested directly (`tests/test_camera_pipeline.py`).
+- `tile_record_to_dict(record) -> dict` — the JSON/API-friendly view of a `TileRecord` (everything except the raw pixel array). Shared by `dashboard.py`'s `/api/status` and `process_video.py`'s `--report`, so both report a tile the same way.
+
+### `camera/snapshot.py`
+
+- `save_tile_snapshot(record, output_dir) -> Path` — writes `record.tile_bgr` to `<output_dir>/tile_<seq>_<timestamp>.jpg`. I/O only, not unit-tested (mirrors `capture.py`'s hardware-wrapper modules). `resolve_output_dir(config)` anchors `capture_snapshots.output_dir` (config-relative, e.g. `"data/camera_captures"`) to the repo root regardless of current working directory.
 
 ### `camera/capture.py` / `camera/worker.py`
 
-- `WebcamCapture(config)` — thin `cv2.VideoCapture` wrapper (`start()`/`read_frame()`/`stop()`, context-manager support). Real hardware I/O, not unit-tested.
-- `CameraWorker(capture, config, state)` — background thread: reads a frame, segments it, feeds `TileTracker`, runs the pipeline on tile departure, and publishes an annotated JPEG + results into `SharedState`. `SharedState` is the thread-safe latest-value store the Flask app reads from. Real hardware I/O + threading, not unit-tested (mirrors `AudioCapture`).
+- `WebcamCapture(config)` — thin `cv2.VideoCapture` wrapper around a live device (`start()`/`read_frame()`/`stop()`, context-manager support). Real hardware I/O, not unit-tested.
+- `VideoFileCapture(video_path)` — same shape as `WebcamCapture` but opens a saved video file instead of a live device; `read_frame()` raises `StopIteration` at end-of-file rather than blocking (a file has a defined end). Used by `process_video.py`, not by the live dashboard.
+- `CameraWorker(capture, config, state)` — background thread: reads a frame, segments it, feeds `TileTracker`, and on tile departure runs the pipeline against the *largest-area* region seen while that tile was present (not just the last frame before departure — typically the most centered/least-blurred view), saves a snapshot if `capture_snapshots.enabled`, and publishes an annotated JPEG + results into `SharedState`. `SharedState` is the thread-safe latest-value store the Flask app reads from. Real hardware I/O + threading, not unit-tested (mirrors `AudioCapture`).
+
+### `camera/process_video.py`
+
+- `process_video_file(video_path, config, save_snapshots=True) -> list[TileRecord]` — the offline counterpart to `CameraWorker._loop()`: runs the identical segment → track → process_tile → snapshot chain against a saved video file (via `VideoFileCapture`) instead of a live device + `SharedState`/Flask, returning every tile's record once the file is exhausted. CLI (`python -m camera.process_video <video_path> [--report file.json] [--no-snapshots]`) prints a per-tile table and the total tile flow count for that clip. Not unit-tested; smoke-tested end-to-end against a synthetic video built from real tile photos (see `development/`) — confirmed correct tile counting, sequence numbering, and snapshot saving.
 
 ### `camera/dashboard.py` + `camera/templates/dashboard.html`
 
@@ -251,9 +292,19 @@ CLI entry point. No flags — loads config, starts `CameraWorker`, runs the Flas
 
 ## Data Files
 
-Nothing is persisted yet for either module — acoustic captures and camera frames/results are shown live and discarded (deferred to later by explicit decision). `acoustic/config.yaml` and `camera/config.yaml` are the only data files, and both are git-tracked (configuration, not runtime output).
+Acoustic captures are still shown live and discarded — nothing persisted there yet. Camera
+tile photos **are** now persisted (added 2026-08-11): each tile a live dashboard run or
+`camera/process_video.py` processes gets its isolated photo saved to
+`data/camera_captures/` (config: `capture_snapshots`, see `camera/snapshot.py`), named
+`tile_<seq>_<timestamp>.jpg`. `acoustic/config.yaml` and `camera/config.yaml` are git-tracked
+(configuration, not runtime output); `data/` itself is not.
 
-Planned, not yet built: a `data/` directory for saved WAV clips, tile photos, and extracted features once dataset collection starts (charter §22.1). Already excluded in `.gitignore` (`data/`, `*.wav`, and — added 2026-08-07 alongside the camera module — `*.jpg`/`*.jpeg`/`*.png`) so it's ready when that lands — audio/image datasets should never be committed to git.
+`data/` also now holds ~380 real terracotta tile photos used to calibrate
+`camera_node`'s vision thresholds (see `development/README.md`,
+`development/analyze_dataset.py`) — single tiles on a checkerboard calibration sheet, not
+yet including any damaged-tile examples. Excluded from git via `.gitignore` (`data/`,
+`*.wav`, and — added 2026-08-07 alongside the camera module — `*.jpg`/`*.jpeg`/`*.png`) —
+audio/image datasets should never be committed to git.
 
 ---
 
@@ -288,9 +339,10 @@ A lab Arduino UNO Q board (aarch64 Debian, hostname `KLM`, reachable at `arduino
 - **App Bricks/App Lab is unverified** (added 2026-08-03): `acoustic_node/python/main.py`, `camera_node/python/main.py`, and `pick_place_node/python/main.py` all just call `arduino.app_utils.App.run()`, copied from the shape of Arduino's own `app-bricks-examples`. Nobody has run this against the lab UNO Q board yet, so it's unknown whether `App.run()` behaves as assumed, what `sketch/sketch.yaml`'s real schema is, or how the Python/sketch sides are meant to communicate. Treat every `sketch/` and `python/main.py` file in the three node folders as an unverified stub, not working code.
 - The `acoustic_node/`/`camera_node/`/`pick_place_node/` three-folder split assumes three physical UNO Q boards eventually; only one exists today (see Deployment Notes) — don't infer hardware procurement from the repo structure.
 - `.CLAUDE/CLAUDE.md` previously documented a `venv/` at the repo root; the actual local environment found during this session was `.venv/` (PyCharm default) with only `pip` installed — `requirements.txt` had not been installed into it. Re-verify which venv convention is actually in use before trusting either name blindly.
-- **Every camera vision threshold is unvalidated** (added 2026-08-07): `camera_node/python/camera/config.yaml`'s HSV segmentation range, Canny edge thresholds, crack length/aspect-ratio thresholds, and corner fill-ratio threshold are all placeholder starting guesses for brown terracotta tiles. No real tile photos were available on this machine when this was built (the user has sample photos from a different camera than the one that will actually be used, but they weren't accessible here) — see `camera_node/README.md` Known Limitations. Do not trust any crack/corner detection result until these are re-tuned against real photos.
+- **Camera vision thresholds are now data-driven but still unvalidated for true-positive sensitivity** (updated 2026-08-11, was "unvalidated" as of 2026-08-07): `camera_node/python/camera/config.yaml`'s HSV segmentation range, crack-detection Canny thresholds/`border_margin_px`, and corner `min_fill_ratio` were calibrated against 311 real terracotta tile photos (`data/`, see `development/README.md`) — no longer blind guesses. But every one of those photos is a **known-intact** tile, so calibration only established a false-positive floor (loose enough not to flag a healthy tile), not whether a real crack or broken corner actually gets caught — there are no damaged-tile photos yet. `min_tile_area_px` and `border_margin_px` are also absolute pixel values tied to the close-up calibration photos' resolution, not the live 640x480 pipeline's real (undecided) camera distance — re-derive both once that's fixed. `min_crack_length_px`/`min_aspect_ratio` were not part of the calibration and remain the original placeholder guesses. See `camera_node/README.md` Known Limitations and `development/README.md` for the full reasoning. Do not trust any crack/corner detection result as a true-positive guarantee until real damaged-tile photos exist to validate against.
+- **`detect_cracks()` had a border-silhouette false-positive bug** (found 2026-08-11 while running the calibration above, fixed same day): it runs Canny on segmentation's tight bounding-box crop, so the tile's own edge against the background sits right at the crop's border — a long, thin, high-contrast line indistinguishable from a real crack by the existing length/aspect-ratio filter. Measured ~98-100% false-positive rate on known-intact tile photos before the fix. Fixed by adding `border_margin_px` (blanks a border band of the Canny edge map before contour-matching — see `crack_detection.py`'s docstring and `development/analyze_dataset.py`), which dropped the false-positive rate to ~2-11% depending on margin. Worth remembering if crack detection is ever reworked: any crop-based edge detector on this kind of tight bounding-box input needs this kind of border exclusion.
 - Crack "type" reported by the camera pipeline is severity (minor/major) + measured length, not a defect taxonomy (hairline vs. structural, edge vs. center crack) — that needs real labeled photos to design against.
-- Corner detection reports that + how much area is missing, not which corner — localization was deliberately deferred (see `corner_detection.py` docstring).
+- **`detect_broken_corner()`'s `fill_ratio` check alone under-caught diagonal corner chips** (found and fixed 2026-08-11, same session as the crack bug above): a triangular chip — the realistic way ceramic actually breaks — removes much less *area* than a square notch reaching the same distance into the tile, so `fill_ratio` badly under-represents how far a diagonal break reaches. Confirmed empirically: a chip whose two legs each reach halfway across the tile's edge only dropped `fill_ratio` to ~0.87, above the production `min_fill_ratio` (0.83) — it would not have been flagged. Fixed by adding `max_missing_extent_fraction`, a second check on how *deep* the gap reaches (distance transform), which does catch it — see `corner_detection.py`'s docstring. Also added real-world missing-area/depth measurements (`missing_area_sq_inches`, `missing_depth_inches`) using the tile's known 9x9in size. **Still unvalidated against a real broken-corner photo** — only one real defect photo has turned up in the whole dataset so far (a crack, in `data/9x9-5(Cam)/DSC_0065.JPG`, correctly caught by `detect_cracks()` — see `development/README.md`), no broken-corner example yet. Localizing *which* corner is broken remains deliberately deferred.
 - The camera dashboard's live MJPEG stream is only smoke-tested via Flask's test client and manual review of the code — it has not been run against a real webcam feed end-to-end in this session (no camera hardware available to the assistant). Confirm `python -m camera.live_dashboard` actually opens a working webcam stream on the target machine before relying on it.
 
 ---

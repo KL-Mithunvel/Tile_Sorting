@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pick &amp; Place Node — Digital Twin Prototype</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, sans-serif; padding: 1.5rem; background: #111; color: #eee; box-sizing: border-box; }
+  h1 { font-size: 1.3rem; margin: 0 0 0.25rem; }
+  .notice { color: #f0c93d; font-size: 0.8rem; margin: 0 0 1rem; }
+  .layout { display: flex; gap: 1.5rem; height: calc(100vh - 6rem); }
+  .viewport-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .tabs button { background: #222; color: #eee; border: 1px solid #333; border-radius: 4px; padding: 0.4rem 0.9rem; cursor: pointer; font-size: 0.85rem; }
+  .tabs button.active { background: #3a6ea5; border-color: #3a6ea5; }
+  #canvas-container { flex: 1 1 auto; border: 1px solid #333; border-radius: 4px; overflow: hidden; min-height: 0; }
+  canvas { display: block; }
+  .stats-panel { flex: 0 0 260px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #333; font-size: 0.9rem; }
+  .stat-label { color: #aaa; }
+  .stat-value { font-family: ui-monospace, monospace; }
+  .state-IDLE { color: #aaa; }
+  .state-HOMING { color: #f0c93d; }
+  .state-MOVING { color: #5cc8ff; }
+  .state-PICKING, .state-PLACING { color: #5cd65c; }
+  .vacuum-on { color: #5cd65c; font-weight: bold; }
+  .vacuum-off { color: #aaa; }
+  #error-banner { display: none; background: #5c2020; color: #fff; padding: 0.75rem 1rem; border-radius: 4px; margin: 0 0 1rem; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>Pick &amp; Place Node — Digital Twin Prototype</h1>
+  <p class="notice">Mock/simulated position data — no real gantry hardware exists yet
+    (see documents/project/Pick_Place_Sorting_Subsystem.md §3.1).</p>
+  <div id="error-banner"></div>
+
+  <script>
+    // Registered before the module script (and before import-map resolution)
+    // so any failure in starting the twin — WebGL unavailable, a bad import,
+    // a fetch error — shows up here instead of a silent black canvas.
+    function showTwinError(msg) {
+      var banner = document.getElementById('error-banner');
+      if (banner) {
+        banner.textContent = 'Digital twin failed to start: ' + msg;
+        banner.style.display = 'block';
+      }
+      console.error('Digital twin error:', msg);
+    }
+    window.addEventListener('error', function (e) {
+      showTwinError((e.error && e.error.message) || e.message || String(e));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      showTwinError((e.reason && e.reason.message) || String(e.reason));
+    });
+  </script>
+
+  <div class="layout">
+    <div class="viewport-panel">
+      <div class="tabs">
+        <button data-view="iso" class="active">Isometric</button>
+        <button data-view="top">Top</button>
+        <button data-view="front">Front</button>
+      </div>
+      <div id="canvas-container"></div>
+    </div>
+    <div class="stats-panel">
+      <div class="stat-row"><span class="stat-label">X (mm)</span><span class="stat-value" id="stat-x">0</span></div>
+      <div class="stat-row"><span class="stat-label">Y (mm)</span><span class="stat-value" id="stat-y">0</span></div>
+      <div class="stat-row"><span class="stat-label">Z (mm)</span><span class="stat-value" id="stat-z">0</span></div>
+      <div class="stat-row"><span class="stat-label">Vacuum</span><span class="stat-value" id="stat-vacuum">OFF</span></div>
+      <div class="stat-row"><span class="stat-label">State</span><span class="stat-value" id="stat-state">IDLE</span></div>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/static/vendor/three/three.module.min.js"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from '/static/vendor/three/OrbitControls.js';
+
+    const POLL_INTERVAL_MS = {{ poll_interval_ms }};
+    const container = document.getElementById('canvas-container');
+
+    function hasWebGL2() {
+      try {
+        const c = document.createElement('canvas');
+        return !!(window.WebGL2RenderingContext && c.getContext('webgl2'));
+      } catch (e) {
+        return false;
+      }
+    }
+    if (!hasWebGL2()) {
+      throw new Error('WebGL2 is not available in this browser (hardware acceleration may be disabled, or this is a remote/VNC session without GPU access).');
+    }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a1a);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    container.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+    sun.position.set(1, 2, 1.5);
+    scene.add(sun);
+
+    // Gantry meshes, built once workspace bounds are known (setupGantry()).
+    let xMin, xMax, yMin, yMax, zMin, zMax, center, maxDim;
+    let beam, column, endEffector;
+    const railColor = 0x666666, beamColor = 0x888888, columnColor = 0xaaaaaa;
+    const vacuumOffColor = 0x999999, vacuumOnColor = 0x5cd65c;
+
+    function setupGantry(ws) {
+      xMin = ws.x_min_mm; xMax = ws.x_max_mm;
+      yMin = ws.y_min_mm; yMax = ws.y_max_mm;
+      zMin = ws.z_min_mm; zMax = ws.z_max_mm;
+      const xSize = xMax - xMin, ySize = yMax - yMin, zSize = zMax - zMin;
+      center = new THREE.Vector3((xMin + xMax) / 2, (zMin + zMax) / 2, (yMin + yMax) / 2);
+      maxDim = Math.max(xSize, ySize, zSize, 1);
+
+      // Workspace bounding box (wireframe).
+      const boxGeom = new THREE.BoxGeometry(xSize, zSize, ySize);
+      const edges = new THREE.EdgesGeometry(boxGeom);
+      const box = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x444444 }));
+      box.position.copy(center);
+      scene.add(box);
+
+      // Floor grid (scene XZ plane == gantry XY plane).
+      const grid = new THREE.GridHelper(Math.max(xSize, ySize), 12, 0x333333, 0x2a2a2a);
+      grid.position.set((xMin + xMax) / 2, zMin, (yMin + yMax) / 2);
+      scene.add(grid);
+
+      // Static side rails the gantry beam slides along (Y axis), at travel height.
+      const railMat = new THREE.MeshStandardMaterial({ color: railColor });
+      const railGeom = new THREE.BoxGeometry(10, 10, ySize);
+      const rail1 = new THREE.Mesh(railGeom, railMat);
+      rail1.position.set(xMin, zMax, (yMin + yMax) / 2);
+      scene.add(rail1);
+      const rail2 = new THREE.Mesh(railGeom, railMat);
+      rail2.position.set(xMax, zMax, (yMin + yMax) / 2);
+      scene.add(rail2);
+
+      // X beam (bridge) — slides along Y, carriage slides along it in X.
+      beam = new THREE.Mesh(
+        new THREE.BoxGeometry(xSize, 10, 10),
+        new THREE.MeshStandardMaterial({ color: beamColor }),
+      );
+      beam.position.set((xMin + xMax) / 2, zMax, (yMin + yMax) / 2);
+      scene.add(beam);
+
+      // Z column — unit-height box, scaled per-frame to track current Z.
+      column = new THREE.Mesh(
+        new THREE.BoxGeometry(10, 1, 10),
+        new THREE.MeshStandardMaterial({ color: columnColor }),
+      );
+      scene.add(column);
+
+      // End effector.
+      endEffector = new THREE.Mesh(
+        new THREE.SphereGeometry(8, 16, 12),
+        new THREE.MeshStandardMaterial({ color: vacuumOffColor }),
+      );
+      scene.add(endEffector);
+    }
+
+    function updateGantryPose(pose) {
+      if (!beam) return;
+      // gantry (x, y, z) -> scene (x, z, y): Three.js is Y-up.
+      beam.position.z = pose.y;
+      column.position.set(pose.x, (zMax + pose.z) / 2, pose.y);
+      column.scale.y = Math.max(zMax - pose.z, 0.001);
+      endEffector.position.set(pose.x, pose.z, pose.y);
+      endEffector.material.color.setHex(pose.vacuum_on ? vacuumOnColor : vacuumOffColor);
+    }
+
+    // Three cameras (+ matched OrbitControls) sharing one renderer/canvas —
+    // only the active view's controls are enabled at a time.
+    let isoCamera, topCamera, frontCamera, isoControls, topControls, frontControls;
+    let activeView = 'iso';
+
+    function setupCameras() {
+      const aspect = container.clientWidth / Math.max(container.clientHeight, 1);
+
+      isoCamera = new THREE.PerspectiveCamera(45, aspect, 0.1, maxDim * 20);
+      isoCamera.position.set(
+        center.x + maxDim * 1.1, center.y + maxDim * 0.9, center.z + maxDim * 1.1,
+      );
+      isoControls = new OrbitControls(isoCamera, renderer.domElement);
+      isoControls.target.copy(center);
+      isoControls.update();
+
+      const viewSize = maxDim * 1.3;
+      topCamera = new THREE.OrthographicCamera(0, 0, 0, 0, 0.1, maxDim * 20);
+      topCamera.position.set(center.x, center.y + maxDim * 5, center.z);
+      topCamera.up.set(0, 0, -1);
+      topCamera.lookAt(center);
+
+      frontCamera = new THREE.OrthographicCamera(0, 0, 0, 0, 0.1, maxDim * 20);
+      frontCamera.position.set(center.x, center.y, center.z + maxDim * 5);
+      frontCamera.up.set(0, 1, 0);
+      frontCamera.lookAt(center);
+
+      topControls = new OrbitControls(topCamera, renderer.domElement);
+      topControls.enableRotate = false;
+      topControls.target.copy(center);
+      frontControls = new OrbitControls(frontCamera, renderer.domElement);
+      frontControls.enableRotate = false;
+      frontControls.target.copy(center);
+
+      applyOrthoFrustum(topCamera, viewSize, aspect);
+      applyOrthoFrustum(frontCamera, viewSize, aspect);
+      setActiveView('iso');
+    }
+
+    function applyOrthoFrustum(cam, viewSize, aspect) {
+      cam.left = -viewSize * aspect / 2;
+      cam.right = viewSize * aspect / 2;
+      cam.top = viewSize / 2;
+      cam.bottom = -viewSize / 2;
+      cam.updateProjectionMatrix();
+    }
+
+    function setActiveView(view) {
+      activeView = view;
+      isoControls.enabled = view === 'iso';
+      topControls.enabled = view === 'top';
+      frontControls.enabled = view === 'front';
+      document.querySelectorAll('.tabs button').forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+      });
+    }
+
+    document.querySelectorAll('.tabs button').forEach((btn) => {
+      btn.addEventListener('click', () => setActiveView(btn.dataset.view));
+    });
+
+    function activeCameraAndControls() {
+      if (activeView === 'top') return [topCamera, topControls];
+      if (activeView === 'front') return [frontCamera, frontControls];
+      return [isoCamera, isoControls];
+    }
+
+    function onResize() {
+      const w = container.clientWidth, h = Math.max(container.clientHeight, 1);
+      renderer.setSize(w, h);
+      const aspect = w / h;
+      if (isoCamera) {
+        isoCamera.aspect = aspect;
+        isoCamera.updateProjectionMatrix();
+        const viewSize = maxDim * 1.3;
+        applyOrthoFrustum(topCamera, viewSize, aspect);
+        applyOrthoFrustum(frontCamera, viewSize, aspect);
+      }
+    }
+    new ResizeObserver(onResize).observe(container);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      try {
+        const [camera, controls] = activeCameraAndControls();
+        controls.update();
+        renderer.render(scene, camera);
+      } catch (err) {
+        showTwinError(err.message || String(err));
+      }
+    }
+
+    function updateReadout(pose) {
+      document.getElementById('stat-x').textContent = pose.x.toFixed(1);
+      document.getElementById('stat-y').textContent = pose.y.toFixed(1);
+      document.getElementById('stat-z').textContent = pose.z.toFixed(1);
+      const vac = document.getElementById('stat-vacuum');
+      vac.textContent = pose.vacuum_on ? 'ON' : 'OFF';
+      vac.className = 'stat-value ' + (pose.vacuum_on ? 'vacuum-on' : 'vacuum-off');
+      const st = document.getElementById('stat-state');
+      st.textContent = pose.machine_state;
+      st.className = 'stat-value state-' + pose.machine_state;
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (!res.ok) throw new Error('/api/status returned HTTP ' + res.status);
+        const pose = await res.json();
+        updateGantryPose(pose);
+        updateReadout(pose);
+      } catch (err) {
+        console.error('status poll failed', err);
+      }
+    }
+
+    async function init() {
+      const res = await fetch('/api/config');
+      if (!res.ok) throw new Error('/api/config returned HTTP ' + res.status);
+      const cfg = await res.json();
+      setupGantry(cfg.workspace);
+      setupCameras();
+      onResize();
+      animate();
+      pollStatus();
+      setInterval(pollStatus, POLL_INTERVAL_MS);
+    }
+
+    init().catch((err) => showTwinError(err.message || String(err)));
+  </script>
+</body>
+</html>

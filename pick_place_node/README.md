@@ -17,3 +17,11 @@ scaffolding only. The command interface is decided (master sends high-level
 grade/slot commands; this layer translates to axis motion — not an off-the-shelf
 CNC/G-code controller), but axis count, motor/gripper hardware, and travel limits are
 still open — see `TODO.md` ("Design the gantry's custom machine-control layer").
+
+## HMI / digital twin dashboard (design in progress, 2026-08-11)
+
+Full feature sketch for this node's local HMI (control panel, status panel, live digital
+twin visualization) is in `documents/project/Pick_Place_Sorting_Subsystem.md`. Current
+work: building and testing the digital twin visualization standalone (mock/simulated
+position data, no real `GantryWorker` yet) before any motion-control code or full node
+integration.

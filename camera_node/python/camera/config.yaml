@@ -2,11 +2,26 @@
 # All tunables live here so the code never hardcodes device/threshold values
 # (see .CLAUDE/CLAUDE.md Development Rule 2 / CLAUDE-COMMON.md).
 #
-# PROVISIONAL: segmentation and crack/corner thresholds below are starting
-# guesses for brown terracotta tiles, not calibrated against real tile photos
-# (none were available on this machine when this was written — see
-# .CLAUDE/CLAUDE.md Known Technical Debt). Re-tune every value in this file
-# against real sample images before trusting any detection result.
+# CALIBRATED (2026-08-11) against 311 real terracotta tile photos in data/
+# (see development/analyze_dataset.py, development/README.md) — segmentation
+# hsv_lower/upper, crack_detection canny_low/high/border_margin_px, and
+# corner_detection.min_fill_ratio below are data-driven, not hand guesses,
+# BUT: (1) every photo used was a close-up calibration shot of a known-INTACT
+# tile on a checkerboard sheet, at a much higher resolution than the live
+# 640x480 pipeline — this only established a false-positive FLOOR (thresholds
+# loose enough not to flag known-good tiles), not true-positive sensitivity
+# to real cracks/broken corners, since no damaged-tile photos exist yet; and
+# (2) min_tile_area_px and border_margin_px are absolute pixel counts tied to
+# the resolution/framing they were measured at — re-derive both once the
+# conveyor-mounted camera's real distance/resolution is fixed (still
+# undecided — see .CLAUDE/CLAUDE.md Known Technical Debt). Re-run
+# development/analyze_dataset.py against real damaged-tile photos as soon as
+# any exist.
+#
+# corner_detection also gained max_missing_extent_fraction + tile_size_inches
+# the same day, after fill_ratio alone was found to under-catch diagonal
+# corner chips — see corner_detection.py's docstring and the comment on
+# max_missing_extent_fraction below.
 
 camera:
   # OpenCV VideoCapture device index. 0 = first/default webcam.
@@ -17,24 +32,40 @@ camera:
 
 segmentation:
   # HSV range for isolating a brown terracotta tile from its background.
-  # OpenCV hue range is 0-179. This is an unvalidated starting guess for
-  # "brown/terracotta" — re-derive from real photos (e.g. sample pixel values
-  # from an actual tile image in HSV) before relying on it.
-  hsv_lower: [5, 60, 40]
-  hsv_upper: [25, 255, 220]
+  # OpenCV hue range is 0-179. Derived from the 0.5/99.5 percentile of
+  # center-crop pixels across 311 real tile photos (hue computed only from
+  # well-lit pixels — it's unstable/near-random on the near-gray glare and
+  # shadow pixels every photo also has — see analyze_dataset.py), plus a
+  # safety margin.
+  hsv_lower: [6, 0, 37]
+  hsv_upper: [15, 208, 225]
   # Minimum contour area (pixels) to be considered a tile rather than noise.
+  # NOT re-derived from the photo dataset (see note above) — still the
+  # original placeholder.
   min_tile_area_px: 3000
   # Morphological close/open kernel size, to clean up the threshold mask.
   morph_kernel_size: 5
 
 crack_detection:
   blur_kernel_size: 5
-  # Canny edge detector thresholds.
-  canny_low: 50
-  canny_high: 150
+  # Canny edge detector thresholds. Chosen from a grid search (30-200) as the
+  # pair with the lowest false-positive rate on known-intact tile photos.
+  canny_low: 75
+  canny_high: 200
+  # Blanks a border band of the Canny edge map before contour-matching.
+  # Without this, the tile's own silhouette edge — which sits right at the
+  # crop's border, since crack_detection runs on segmentation's tight
+  # bounding-box crop — reads as a long, thin, high-contrast line and gets
+  # misdetected as a crack on nearly every photo (measured: ~98% false-positive
+  # rate at margin=0, dropping to ~2% at margin=40 on the calibration set).
+  # 25 is a middle-ground default, not the calibration set's lowest-FP value
+  # (40px, but that was measured on ~700-1000px-wide crops from close-up
+  # photos) — see the resolution-transfer caveat above.
+  border_margin_px: 25
   # A candidate edge contour must be at least this long (pixels, arc length)
   # and this elongated (major/minor axis ratio) to count as a crack rather
-  # than surface texture noise.
+  # than surface texture noise. Not part of the grid search above — still
+  # the original placeholder.
   min_crack_length_px: 40
   min_aspect_ratio: 4.0
   # Below this measured length, a detected crack is graded "minor"; at or
@@ -44,13 +75,47 @@ crack_detection:
 corner_detection:
   # Ratio of (tile contour area / its minimum-area bounding rectangle area).
   # A perfect rectangle is close to 1.0; a broken/chipped corner lowers this.
-  min_fill_ratio: 0.92
+  # Derived from the 1st percentile of fill_ratio measured on 310 known-intact
+  # tile photos (0.852), minus a small margin, so ordinary photography noise
+  # doesn't false-positive "broken corner" on an intact tile.
+  #
+  # KNOWN GAP, FIXED 2026-08-11: fill_ratio alone under-catches diagonal/
+  # triangular corner chips (the realistic way ceramic actually breaks) —
+  # confirmed empirically that a chip whose two legs each reach halfway
+  # across the tile's edge only drops fill_ratio to ~0.87, above this
+  # threshold, so it would NOT have been flagged. See
+  # max_missing_extent_fraction below, and corner_detection.py's docstring.
+  min_fill_ratio: 0.83
+  # How far (as a fraction of the tile's own side length) the deepest point
+  # of a gap between the tile's actual shape and its ideal rectangle is
+  # allowed to reach before it counts as a broken corner too, independent of
+  # fill_ratio — this is what actually catches the diagonal-chip case above.
+  # Derived from the max observed on 310 known-intact tile photos (0.186,
+  # p99.5 was 0.159) plus a margin; a synthetic chip reaching halfway across
+  # a tile's edge measures ~0.35, well above this.
+  max_missing_extent_fraction: 0.22
+  # Real-world tile size (inches) — these tiles are 9x9in. Used only to
+  # convert missing_area_px/missing_depth_px into inches for reporting
+  # (missing_area_sq_inches, missing_depth_inches on CornerResult); doesn't
+  # affect the corner_broken decision itself, and needs no separate
+  # calibration since it's derived from the tile's own detected pixel size
+  # each time (see corner_detection.py).
+  tile_size_inches: 9.0
 
 tile_tracker:
   # Consecutive frames a tile must be detected/absent before counting it as
   # arrived/departed, to debounce single-frame segmentation noise.
   min_present_frames: 3
   min_absent_frames: 5
+
+capture_snapshots:
+  # When enabled, each tile's isolated photo is saved to disk on departure
+  # (see camera/snapshot.py), named by its sequence number, so it can be
+  # reviewed later instead of only living in memory for the process's
+  # lifetime. output_dir is relative to the repo root; data/ is gitignored
+  # (see .gitignore) so these never get committed.
+  enabled: true
+  output_dir: "data/camera_captures"
 
 dashboard:
   # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not

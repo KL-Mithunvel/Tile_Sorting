@@ -1,0 +1,12 @@
+<?xml version="1.0" ?>
+<TileVisionParams>
+  <ColorIsolation>
+    <HSVLower h="6" s="0" v="37"/>
+    <HSVUpper h="15" s="208" v="225"/>
+  </ColorIsolation>
+  <EdgeDetection>
+    <Canny low="75" high="200"/>
+    <CornerDetection min_area_fraction="0.0500" min_fill_ratio="0.8323" max_missing_extent_fraction="0.2162"/>
+  </EdgeDetection>
+  <SourceImage path="C:\Users\MithunvelKL\PycharmProjects\Tile_Sorting\data" saved_at="2026-08-12T23:47:11"/>
+</TileVisionParams>

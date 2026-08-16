@@ -1,6 +1,7 @@
 # TODO
 
 ## In Progress
+- [ ] Pick-and-place HMI / digital twin dashboard — feature sketch documented (`documents/project/Pick_Place_Sorting_Subsystem.md`, 2026-08-11). Building the digital twin visualization (isometric/2D live gantry view) standalone with mock position data first; real `GantryWorker`/dashboard integration and motion-control code come after that's validated.
 - [ ] Review 0 (VIT Zeroth Review Form, hardcopy) — content drafted (`documents/deliverables/review_0/Review_0_Form.md`), still needs guide + HoD signature on the physical hardcopy, submission on/before 2026-07-13, then update guide + project title in VTOP. See `documents/deliverables/review_0/README.md`.
 - [ ] Review 1 (Expert Panel Review, 2026-08-19 tentative) — narrative content drafted per rubric category (`documents/deliverables/review_1/Review_1_Content.md`, 2026-08-03). Still missing: literature survey (none written), sustainability goals treatment, and Phase 1 results/analysis (lab work not done yet) — see that file's open questions. Needs guide approval well in advance per college guidelines.
 

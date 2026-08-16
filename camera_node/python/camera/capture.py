@@ -64,3 +64,42 @@ class WebcamCapture:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.stop()
+
+
+class VideoFileCapture:
+    """Reads frames from a saved video file instead of a live device — same
+    start()/read_frame()/stop() shape as WebcamCapture, for offline
+    processing of recorded conveyor footage (see camera/process_video.py).
+
+    Unlike WebcamCapture, read_frame() raises StopIteration at end-of-file
+    instead of blocking forever — a file has a defined end, a live device
+    doesn't."""
+
+    def __init__(self, video_path: str):
+        self.video_path = video_path
+        self._cap: Optional[cv2.VideoCapture] = None
+
+    def start(self) -> None:
+        self._cap = cv2.VideoCapture(self.video_path)
+        if not self._cap.isOpened():
+            raise RuntimeError(f"VideoFileCapture: could not open video file '{self.video_path}'")
+
+    def read_frame(self) -> np.ndarray:
+        if self._cap is None:
+            raise RuntimeError("VideoFileCapture: call start() before read_frame()")
+        ok, frame = self._cap.read()
+        if not ok:
+            raise StopIteration
+        return frame
+
+    def stop(self) -> None:
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+    def __enter__(self) -> "VideoFileCapture":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.stop()

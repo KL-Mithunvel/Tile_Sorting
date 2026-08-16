@@ -19,6 +19,7 @@ import numpy as np
 from camera.capture import WebcamCapture
 from camera.pipeline import TileRecord, process_tile
 from camera.segmentation import TileRegion, segment_tile
+from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
 _OVERLAY_OK_COLOR = (0, 200, 0)  # BGR
@@ -98,10 +99,11 @@ class CameraWorker:
         seg_cfg = self._config["segmentation"]
         crack_cfg = self._config["crack_detection"]
         corner_cfg = self._config["corner_detection"]
+        snapshot_cfg = self._config["capture_snapshots"]
         jpeg_quality = self._config["dashboard"]["jpeg_quality"]
 
         seq = 0
-        last_seen_region: Optional[TileRegion] = None
+        best_seen_region: Optional[TileRegion] = None
 
         while self._running:
             try:
@@ -118,16 +120,23 @@ class CameraWorker:
             )
             tile_present = region is not None
             if tile_present:
-                last_seen_region = region
+                # Keep the largest-area sighting, not just the latest one:
+                # the frame right before departure is often partially exited
+                # (or motion-blurred at the frame edge), while the
+                # largest-area frame is typically the most centered, fully
+                # visible, least-blurred picture of the tile taken while it
+                # was crossing.
+                if best_seen_region is None or region.area_px > best_seen_region.area_px:
+                    best_seen_region = region
 
             departed = self._tracker.process_frame(tile_present)
 
             grade_for_overlay = None
-            if departed and last_seen_region is not None:
+            if departed and best_seen_region is not None:
                 seq += 1
                 record = process_tile(
                     seq=seq,
-                    region=last_seen_region,
+                    region=best_seen_region,
                     canny_low=crack_cfg["canny_low"],
                     canny_high=crack_cfg["canny_high"],
                     min_crack_length_px=crack_cfg["min_crack_length_px"],
@@ -135,10 +144,16 @@ class CameraWorker:
                     minor_severity_max_length_px=crack_cfg["minor_severity_max_length_px"],
                     blur_kernel_size=crack_cfg["blur_kernel_size"],
                     min_fill_ratio=corner_cfg["min_fill_ratio"],
+                    border_margin_px=crack_cfg["border_margin_px"],
+                    max_missing_extent_fraction=corner_cfg["max_missing_extent_fraction"],
+                    tile_size_inches=corner_cfg.get("tile_size_inches"),
                 )
+                if snapshot_cfg["enabled"]:
+                    path = save_tile_snapshot(record, resolve_output_dir(self._config))
+                    record.snapshot_path = str(path)
                 self._state.record_tile(record, self._tracker.tile_count)
                 grade_for_overlay = record.grade
-                last_seen_region = None
+                best_seen_region = None
 
             annotated = _draw_overlay(frame, region, grade_for_overlay)
             ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])

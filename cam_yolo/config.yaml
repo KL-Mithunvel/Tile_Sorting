@@ -20,12 +20,28 @@ classes: ["3A", "3B", "4", "5"]
 split:
   val_fraction: 0.2
   seed: 42 # fixed so reruns of prepare_dataset.py reproduce the same split
+  # Classes are imbalanced (3A=140, 3B=109, 4=74, 5=53 source images) which
+  # biases the model toward the majority classes. When true, prepare_dataset.py
+  # duplicates minority-class train images (copies, not synthetic data) up to
+  # the majority class's train count -- Ultralytics re-applies its random
+  # augmentation independently each time a duplicate is sampled, so this is
+  # a meaningfully different image each epoch, not a literal no-op duplicate.
+  oversample_train: true
 
 train:
-  model: "yolo26n-cls.pt" # pretrained checkpoint to fine-tune from
-  epochs: 100
+  model: "yolo26s-cls.pt" # pretrained checkpoint to fine-tune from
+  epochs: 150
   imgsz: 224
   batch: 16
-  patience: 20 # early-stop if val accuracy hasn't improved in this many epochs
+  patience: 40 # early-stop if val accuracy hasn't improved in this many epochs
   project: "runs" # Ultralytics output root (cam_yolo/runs/<name>/)
-  name: "tile_grade_cls"
+  name: "tile_grade_cls-aug-s-gpu"
+  # Tile photos have no canonical "up" (a tile can be photographed/placed in
+  # any rotation), so rotation/vertical-flip augmentation reflects a real
+  # invariance rather than an artificial one -- Ultralytics classification
+  # defaults (fliplr=0.5, hsv_s=0.7, erasing=0.4, auto_augment=randaugment)
+  # already apply; these add to them.
+  degrees: 180.0
+  flipud: 0.5
+  dropout: 0.2 # classification-head dropout, regularizes given the small dataset
+  cos_lr: true

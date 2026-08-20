@@ -43,10 +43,12 @@ def main() -> None:
         print(f"Removing existing split at {dataset_dir}")
         shutil.rmtree(dataset_dir)
 
+    oversample_train = config["split"].get("oversample_train", False)
+
     rng = random.Random(seed)
     print(f"Splitting {source_dir} -> {dataset_dir} (val_fraction={val_fraction}, seed={seed})\n")
 
-    total_train = 0
+    per_class_train_images: dict[str, list[Path]] = {}
     total_val = 0
     for grade in classes:
         grade_dir = source_dir / grade
@@ -60,16 +62,35 @@ def main() -> None:
         n_val = max(1, round(len(images) * val_fraction)) if images else 0
         val_images = images[:n_val]
         train_images = images[n_val:]
+        per_class_train_images[grade] = train_images
 
-        for split_name, split_images in (("train", train_images), ("val", val_images)):
-            out_dir = dataset_dir / split_name / grade
-            out_dir.mkdir(parents=True, exist_ok=True)
-            for src in split_images:
-                shutil.copy2(src, out_dir / src.name)
+        out_dir = dataset_dir / "val" / grade
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for src in val_images:
+            shutil.copy2(src, out_dir / src.name)
 
-        total_train += len(train_images)
         total_val += len(val_images)
         print(f"  {grade:4s} {len(images):4d} images -> train={len(train_images):4d} val={len(val_images):4d}")
+
+    max_train = max((len(imgs) for imgs in per_class_train_images.values()), default=0)
+    total_train = 0
+    for grade, train_images in per_class_train_images.items():
+        out_dir = dataset_dir / "train" / grade
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for src in train_images:
+            shutil.copy2(src, out_dir / src.name)
+
+        n_written = len(train_images)
+        if oversample_train and train_images and len(train_images) < max_train:
+            n_needed = max_train - len(train_images)
+            for i in range(n_needed):
+                src = train_images[i % len(train_images)]
+                dst = out_dir / f"{src.stem}_dup{i // len(train_images)}{src.suffix}"
+                shutil.copy2(src, dst)
+            n_written += n_needed
+            print(f"  {grade:4s} oversampled train {len(train_images):4d} -> {n_written:4d} (target {max_train})")
+
+        total_train += n_written
 
     print(f"\nTotal: train={total_train} val={total_val}")
     print(f"Dataset ready at {dataset_dir}")

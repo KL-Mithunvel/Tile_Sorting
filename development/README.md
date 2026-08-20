@@ -11,6 +11,8 @@ folder is intentionally outside the `acoustic_node/`/`camera_node/`/
 | `tile_param_tuner.py` | Interactive GUI — drag sliders, watch the effect live on one photo at a time, save the values you land on to an XML file. |
 | `analyze_dataset.py` | Batch script — runs every photo under `data/` through the real `camera_node` segmentation/crack/corner modules and prints statistically-derived recommended values. |
 | `run_pick_place_twin.py` | Launcher for `pick_place_node`'s mock digital twin GUI (`--mode desktop` for a native matplotlib window, `--mode browser` for the Flask+Three.js WiFi dashboard). See below. |
+| `prepare_roboflow_dataset.py` | Crops every tile photo under `data/` down to just the tile (via the real `segment_tile()`) and organizes the crops by grade under `data/roboflow_dataset/`, plus builds contact sheets for manually flagging visible damage. Prep step for the Roboflow `tile-detection` / `tile-grade-classification` projects (`aida-hutc5` workspace) — see below. |
+| `evaluate_grade_model.py` | Evaluates trained versions of the Roboflow `tile-grade-classification` model against a fixed 19-image held-out test set, calling the hosted inference API (no local weights — Roboflow doesn't export raw weights for models trained through their hosted ViT training). Writes per-version accuracy/confusion-matrix/predictions plus a version-comparison chart to `development/output/roboflow_models/`. |
 
 Use `analyze_dataset.py` first to get a data-driven starting point, then
 `tile_param_tuner.py` to sanity-check/hand-adjust it against individual
@@ -225,6 +227,51 @@ data only.
 - `--mode browser` — Flask + vendored Three.js dashboard at
   `http://<this machine's IP>:5050/`, reachable from any browser on the same
   WiFi. Ctrl+C to stop.
+
+## Evaluating the Roboflow `tile-grade-classification` model
+
+```bash
+venv\Scripts\activate
+python development\evaluate_grade_model.py                         # 19-image held-out test set
+python development\evaluate_grade_model.py --full-dataset --versions 2   # all 376 local images
+```
+
+Calls the hosted serverless inference API for each version listed in the
+script's `VERSIONS` constant (or `--versions`). Default mode uses a fixed
+19-image held-out test set (Roboflow's split assignment is sticky across
+version regeneration, so the same 19 images stay a valid held-out set even
+after retraining) - the honest generalization estimate. `--full-dataset`
+instead runs every local image under `data/roboflow_dataset/` (376, ground
+truth from folder name, uploaded directly as files rather than by Roboflow
+image ID) - most of these *were* in the training set, so this measures
+dataset fit, not generalization; useful for spotting systematic errors, not
+for judging real-world performance. Writes per-version, per-eval-set
+`predictions.json` / `metrics.json` / `confusion_matrix.png` plus a
+`version_comparison.png` (or `full_dataset_version_comparison.png`) bar
+chart under `development/output/roboflow_models/tile-grade-classification/`.
+
+**Held-out test result (2026-08-21):** v2 (brightness/exposure augmentation
+only) scored 84.2% (16/19); v3 (added CLAHE/Adaptive Equalization contrast
+*preprocessing*, same augmentation) scored 63.2% (12/19) on the same test
+set — contrast normalization made this model *worse*, not better. The drop
+is concentrated in grade 5 recall (1/4 correct, the other three predicted as
+grade 4 or 3A) — plausible explanation: CLAHE erases exactly the kind of
+diffuse tonal/contrast cues (staining, overall darkening) that the model may
+have been using as a real signal for the worst-condition tiles, without
+adding enough compensating benefit from lighting-invariance. **v2 remains
+the better model as of this session** — don't switch production/default use
+to v3 without re-testing on more than 19 images first.
+
+**Full-dataset result, v2 only (2026-08-21):** 98.1% (369/376), per-class
+F1 0.96-0.99 across all four grades, confusion nearly all off-by-one
+(3A misread as 4: 2 cases; 4 misread as 3B/5: 3 cases; 5 misread as 3A: 1
+case; 3B misread as 4: 1 case). **This number is inflated versus real-world
+performance** - most of these 376 images were in v2's training set (only 19
+were held out), so it mostly reflects how well the model fits data it has
+already seen, not how it'll do on a new tile. Treat the 84.2% held-out
+result above as the realistic estimate; this full-dataset run is useful for
+spotting *which* images/classes still trip the model up even after seeing
+them in training, not for judging deployment readiness.
 
 ## Data
 

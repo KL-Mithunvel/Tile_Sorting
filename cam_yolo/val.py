@@ -41,8 +41,13 @@ def main() -> None:
         raise SystemExit(f"{args.weights} not found — train a model first with cam_yolo/train.py")
 
     dataset_dir = (CAM_YOLO_DIR / config["dataset_dir"]).resolve()
+    train_cfg = config["train"]
     model = YOLO(str(args.weights))
-    metrics = model.val(data=str(dataset_dir))
+    metrics = model.val(
+        data=str(dataset_dir),
+        project=str(CAM_YOLO_DIR / train_cfg["project"]),
+        name=f"{args.weights.parent.parent.name}-val",
+    )
     print(f"\ntop1 accuracy: {metrics.top1:.4f}")
     print(f"top5 accuracy: {metrics.top5:.4f}")
 

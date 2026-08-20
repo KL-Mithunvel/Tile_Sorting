@@ -1,0 +1,116 @@
+[
+  {
+    "image_id": "8nyZgQAfU5GTglGswBqa",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9836
+  },
+  {
+    "image_id": "7aLRfJTy7nHKysajOst0",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9811
+  },
+  {
+    "image_id": "8VBEEmTwGD7iQGXNfeK1",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9764
+  },
+  {
+    "image_id": "9JygOH8KT0Rjxj3wgStp",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9785
+  },
+  {
+    "image_id": "8g0NdPBlOeMI0oppEsIp",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9812
+  },
+  {
+    "image_id": "8vyU7tUWQDjrhwjL2BLI",
+    "true": "3A",
+    "pred": "4",
+    "confidence": 0.9787
+  },
+  {
+    "image_id": "8BAWfQqT0POZ13fltu54",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9671
+  },
+  {
+    "image_id": "8tEJIRQPMeMPUuHS6KPR",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9834
+  },
+  {
+    "image_id": "8LQcYQHMIStyG48gBuA2",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.8828
+  },
+  {
+    "image_id": "8ea0mUfF7gz1cp2Cvx3f",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9804
+  },
+  {
+    "image_id": "88IL80RKAHf3QzjNowDj",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.582
+  },
+  {
+    "image_id": "9YPHzoZ6hdQWrgKKde5n",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9838
+  },
+  {
+    "image_id": "97m0lgyFKzSiNmGKy8u3",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9844
+  },
+  {
+    "image_id": "89JgKJzUXsWCKYt1UKXR",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.5183
+  },
+  {
+    "image_id": "7REG1GcmkfEiVpXm7Q6v",
+    "true": "5",
+    "pred": "3A",
+    "confidence": 0.6145
+  },
+  {
+    "image_id": "7xxyHRoO35mVqAH4S92U",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9814
+  },
+  {
+    "image_id": "8qSAFoUC7wO0I8d8l8hL",
+    "true": "4",
+    "pred": "5",
+    "confidence": 0.801
+  },
+  {
+    "image_id": "7xeKrmoSjLyGox41aStU",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.8411
+  },
+  {
+    "image_id": "9XWaVW1pKRBfbz4lOpvL",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9273
+  }
+]

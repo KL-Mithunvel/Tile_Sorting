@@ -1,0 +1,33 @@
+{
+  "model_id": "aida-hutc5/tile-grade-classification/2",
+  "model_url": "https://app.roboflow.com/aida-hutc5/tile-grade-classification/2",
+  "accuracy": 0.8421052631578947,
+  "num_correct": 16,
+  "num_total": 19,
+  "per_class": {
+    "3A": {
+      "precision": 0.8333333333333334,
+      "recall": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "support": 6
+    },
+    "3B": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 5
+    },
+    "4": {
+      "precision": 0.75,
+      "recall": 0.75,
+      "f1": 0.75,
+      "support": 4
+    },
+    "5": {
+      "precision": 0.75,
+      "recall": 0.75,
+      "f1": 0.75,
+      "support": 4
+    }
+  }
+}

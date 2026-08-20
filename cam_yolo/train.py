@@ -39,6 +39,10 @@ def main() -> None:
         patience=train_cfg["patience"],
         project=str(CAM_YOLO_DIR / train_cfg["project"]),
         name=train_cfg["name"],
+        degrees=train_cfg.get("degrees", 0.0),
+        flipud=train_cfg.get("flipud", 0.0),
+        dropout=train_cfg.get("dropout", 0.0),
+        cos_lr=train_cfg.get("cos_lr", False),
     )
 
 

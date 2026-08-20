@@ -333,14 +333,32 @@ UNO Q triggers a ball release → the ball falls under gravity and strikes the t
 same UNO Q captures the resulting sound and does the required processing (filtering,
 FFT, feature extraction) → the acoustic grade/result is sent to the master.
 
-Open / not yet decided:
+### Release Mechanism (Decision, 2026-08-20): Dual-Solenoid Arm + Lock
 
-* The release mechanism itself — electromagnet holding the ball, a solenoid-actuated
-  gate, or a servo latch. A solenoid may still be part of the BOM, but as a release
-  actuator rather than a direct striker.
+The release mechanism is now decided: **two solenoids, ARM and LOCK, driving the
+gravity-drop**. Neither solenoid strikes the tile directly.
+
+* **ARM solenoid** — energizes briefly to raise the striker ball up to drop height into
+  the LOCK latch's catch, then de-energizes and retracts out of the way.
+* **LOCK solenoid** — normally de-energized = latch closed, holding the ball at drop
+  height. Energizing it briefly opens the latch, releasing the ball to free-fall under
+  gravity onto the tile — this is the actual impact.
+
+Full pin assignments, MOSFET driver wiring, timing sequence, and BOM are in
+`documents/electrical/schematics/acoustic_station_wiring.md`. State-machine
+implementation: `acoustic_node/sketch/sketch.ino` (MCU, real-time) and
+`acoustic_node/python/acoustic/tap_sequencer.py` (pure Python mirror + dev-machine
+simulator).
+
+Still open / not yet decided:
+
 * Ball material, mass, and drop height — these fix the impact energy (`E = mgh`) and
-  need to be chosen and calibrated together, not independently.
-* Reload/reset mechanism between tiles.
+  need to be chosen and calibrated together, not independently (blocked on SMTW tile
+  size/weight data, see requirements.md Open Items).
+* Reload/reset mechanism between tiles — the ball needs a return path back to the ARM
+  lift platform's rest position after each strike; not designed yet.
+* Mechanical lift/latch hardware itself — the wiring doc's mechanism diagram is a
+  conceptual placeholder pending real CAD.
 
 This changes the tapping actuator described in §8.4 (Actuators), and touches every other
 place in this charter that assumes a solenoid directly striking the tile (§17 Safety,

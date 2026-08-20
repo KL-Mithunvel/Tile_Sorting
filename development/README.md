@@ -1,16 +1,16 @@
 # development/
 
 Dev-only tooling for calibrating `camera_node`'s vision thresholds against
-real tile photos. Not part of any App Bricks node (see the repo root
-`.CLAUDE/CLAUDE.md` — this folder is intentionally outside the
-`acoustic_node/`/`camera_node/`/`pick_place_node/` convention).
-
-Two tools:
+real tile photos, plus a launcher for `pick_place_node`'s digital twin GUI.
+Not part of any App Bricks node (see the repo root `.CLAUDE/CLAUDE.md` — this
+folder is intentionally outside the `acoustic_node/`/`camera_node/`/
+`pick_place_node/` convention).
 
 | File | What it does |
 |---|---|
 | `tile_param_tuner.py` | Interactive GUI — drag sliders, watch the effect live on one photo at a time, save the values you land on to an XML file. |
 | `analyze_dataset.py` | Batch script — runs every photo under `data/` through the real `camera_node` segmentation/crack/corner modules and prints statistically-derived recommended values. |
+| `run_pick_place_twin.py` | Launcher for `pick_place_node`'s mock digital twin GUI (`--mode desktop` for a native matplotlib window, `--mode browser` for the Flask+Three.js WiFi dashboard). See below. |
 
 Use `analyze_dataset.py` first to get a data-driven starting point, then
 `tile_param_tuner.py` to sanity-check/hand-adjust it against individual
@@ -203,6 +203,28 @@ check instead of only a false-positive-rate one.
   photos were taken under different lighting than the conveyor will use.
 
 ---
+
+## Running the pick-and-place digital twin GUI with `run_pick_place_twin.py`
+
+```bash
+venv\Scripts\activate
+python development\run_pick_place_twin.py                 # native window (default)
+python development\run_pick_place_twin.py --mode browser   # WiFi dashboard
+```
+
+Thin wrapper around `pick_place_node/python/pick_place`'s two existing twin
+entry points (`desktop_twin.py` / `twin_prototype.py`) — same
+`MockGantrySimulator` mock motion and `pick_place/config.yaml` either way,
+just so you don't have to `cd pick_place_node\python` and run the
+`pick_place.*` modules directly. No real gantry hardware exists yet (see
+`pick_place_node/README.md`); both modes show simulated position/vacuum-state
+data only.
+
+- `--mode desktop` (default) — matplotlib 3D window, no browser/network. Close
+  the window (or Ctrl+C) to stop.
+- `--mode browser` — Flask + vendored Three.js dashboard at
+  `http://<this machine's IP>:5050/`, reachable from any browser on the same
+  WiFi. Ctrl+C to stop.
 
 ## Data
 

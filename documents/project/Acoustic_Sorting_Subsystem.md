@@ -71,7 +71,34 @@ The microphone should be fixed in position. The tile must be struck at the same 
 
 ## 3.1 Impact Mechanism
 
-Recommended for prototype:
+**Decided 2026-08-20**: a ToF-triggered, dual-solenoid ARM+LOCK gravity-drop ball
+impactor. Full pin table, BOM, wiring diagram, and timing sequence are in
+`documents/electrical/schematics/acoustic_station_wiring.md`; state-machine
+implementation in `acoustic_node/sketch/sketch.ino` (MCU) and
+`acoustic_node/python/acoustic/tap_sequencer.py` (pure Python mirror/simulator).
+
+```text
+ToF sensor confirms tile in place
+        |
+        v
+ARM solenoid raises striker ball to drop height (into LOCK's catch)
+        |
+        v
+ARM de-energizes, retracts
+        |
+        v
+LOCK solenoid opens latch -> ball free-falls under gravity -> strikes tile
+        |
+        v
+Cooldown, then wait for the next tile
+```
+
+Neither solenoid strikes the tile directly — both only position and then release the
+ball. This supersedes the direct-strike push-pull solenoid design below, which is kept
+for background/rationale on driver circuit and striker-tip material choices (both still
+apply to the ball itself).
+
+Recommended for prototype (background — see decided mechanism above):
 
 ```text
 24 V push-pull solenoid

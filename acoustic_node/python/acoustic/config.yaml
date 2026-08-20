@@ -14,9 +14,22 @@ audio:
   block_size_ms: 30
 
 trigger:
+  # "rms"       - trigger on the mic's own RMS crossing (acoustic.capture.TriggerDetector).
+  #               Dev-machine default: works with just a laptop mic, no ToF/solenoid hardware.
+  # "hardware"  - trigger on a real tap event notified via AudioCapture.notify_tap()
+  #               (acoustic.hardware_trigger.HardwareTapDetector), driven by
+  #               acoustic_node/python/main.py polling the sketch's tapCount bridge
+  #               variable. Requires the real ToF + dual-solenoid station (see
+  #               documents/electrical/schematics/acoustic_station_wiring.md).
+  # "simulated" - same HardwareTapDetector, but acoustic.live_monitor drives the taps
+  #               itself using tap_mechanism below + a fake periodic tile arrival
+  #               (no hardware needed at all) — see live_monitor.py --simulate-taps.
+  mode: rms
+
   # Linear RMS threshold, range 0.0-1.0 (float32 samples). Not dBFS.
   # This is a throwaway starting value for a laptop mic with unknown gain —
   # run --calibrate first and watch the printed RMS levels to pick a real one.
+  # Only used when mode: "rms".
   rms_threshold: 0.02
   # How much audio before the threshold crossing to keep, so the captured
   # clip includes the attack transient and not just the tail.
@@ -27,3 +40,31 @@ trigger:
   # Prevents one sound event from being re-captured multiple times as its
   # decay tail crosses the threshold repeatedly.
   cooldown_s: 1.0
+
+hardware_trigger:
+  # Used when trigger.mode is "hardware" or "simulated". Same shape as
+  # trigger's rms fields, but the capture window starts from an external tap
+  # event (acoustic.hardware_trigger.HardwareTapDetector) instead of an RMS
+  # threshold crossing. Defaults follow Acoustic_Sorting_Subsystem.md §4.1/§8.1's
+  # recommended -100ms pre-hit noise window and 0.5s total clip.
+  pre_trigger_ms: 100
+  capture_duration_s: 0.5
+  cooldown_s: 1.0
+  # mode: "simulated" only — live_monitor.py fakes a tile arriving this often,
+  # staying "present" for simulated_tile_present_s (must exceed the
+  # tap_mechanism sequence duration below, or a tap never fires).
+  simulated_tile_interval_s: 4.0
+  simulated_tile_present_s: 2.0
+
+# Dev-machine mirror of acoustic_node/sketch/sketch.ino's tap-sequencer timing
+# constants — used only by acoustic.tap_sequencer.TapSequencer when simulating
+# tap events on a machine with no ToF sensor/solenoids attached (trigger.mode:
+# "simulated"). The sketch is the source of truth for real hardware timing;
+# these are NOT read by the sketch and must be kept in sync by hand. See
+# documents/electrical/schematics/acoustic_station_wiring.md §5.
+tap_mechanism:
+  settle_s: 0.2       # wait after tile detected, before arming
+  arm_s: 0.3           # ARM solenoid energized: drives striker/ball to drop height
+  arm_settle_s: 0.15   # wait after arm retracts, before releasing
+  lock_pulse_s: 0.1    # LOCK solenoid energized: latch open, ball free-falls onto tile
+  cooldown_s: 1.0       # minimum time before the next tile can arm a new cycle

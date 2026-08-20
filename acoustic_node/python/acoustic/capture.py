@@ -1,12 +1,17 @@
-"""Microphone capture with a rolling RMS trigger.
+"""Microphone capture with a rolling RMS trigger, or an external tap trigger.
 
-Split into two pieces on purpose:
+Split into pieces on purpose:
 
 - `TriggerDetector` is pure logic: feed it blocks of audio, it hands back a
-  finished clip when a trigger fires. It never touches `sounddevice`, so it
-  can be unit-tested with synthetic blocks on any machine.
+  finished clip when the mic's own RMS crosses a threshold. It never touches
+  `sounddevice`, so it can be unit-tested with synthetic blocks on any machine.
+- `acoustic.hardware_trigger.HardwareTapDetector` is the same shape, but the
+  capture window starts from an external tap event (the ToF-triggered
+  ball-drop station, see acoustic_node/sketch/sketch.ino and
+  acoustic/tap_sequencer.py) instead of an RMS crossing.
 - `AudioCapture` is the hardware wrapper: opens the mic via `sounddevice` and
-  feeds real audio blocks into a `TriggerDetector`, one callback at a time.
+  feeds real audio blocks into whichever detector `config["trigger"]["mode"]`
+  selects, one callback at a time.
 
 This mirrors the dev-machine-first rule in CLAUDE-COMMON.md — the part that
 needs real hardware is as thin as possible around the part that doesn't.
@@ -18,12 +23,13 @@ import math
 import queue
 from collections import deque
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import sounddevice as sd
 import yaml
 
+from acoustic.hardware_trigger import HardwareTapDetector
 from acoustic.signal_processing import compute_rms
 
 
@@ -112,14 +118,28 @@ class AudioCapture:
         self.channels: int = audio_cfg["channels"]
         self.block_size: int = max(1, int(audio_cfg["block_size_ms"] / 1000.0 * self.sample_rate))
 
-        self._detector = TriggerDetector(
-            sample_rate=self.sample_rate,
-            block_size=self.block_size,
-            rms_threshold=trigger_cfg["rms_threshold"],
-            pre_trigger_ms=trigger_cfg["pre_trigger_ms"],
-            capture_duration_s=trigger_cfg["capture_duration_s"],
-            cooldown_s=trigger_cfg["cooldown_s"],
-        )
+        self.trigger_mode: str = trigger_cfg.get("mode", "rms")
+        self._detector: Union[TriggerDetector, HardwareTapDetector]
+        if self.trigger_mode == "rms":
+            self._detector = TriggerDetector(
+                sample_rate=self.sample_rate,
+                block_size=self.block_size,
+                rms_threshold=trigger_cfg["rms_threshold"],
+                pre_trigger_ms=trigger_cfg["pre_trigger_ms"],
+                capture_duration_s=trigger_cfg["capture_duration_s"],
+                cooldown_s=trigger_cfg["cooldown_s"],
+            )
+        elif self.trigger_mode in ("hardware", "simulated"):
+            hw_cfg = config["hardware_trigger"]
+            self._detector = HardwareTapDetector(
+                sample_rate=self.sample_rate,
+                block_size=self.block_size,
+                pre_trigger_ms=hw_cfg["pre_trigger_ms"],
+                capture_duration_s=hw_cfg["capture_duration_s"],
+                cooldown_s=hw_cfg["cooldown_s"],
+            )
+        else:
+            raise ValueError(f"Unknown trigger.mode: {self.trigger_mode!r} (expected rms/hardware/simulated)")
 
         self.clip_queue: "queue.Queue[np.ndarray]" = queue.Queue()
         self._stream: Optional[sd.InputStream] = None
@@ -156,6 +176,15 @@ class AudioCapture:
     def get_clip(self, timeout: Optional[float] = None) -> np.ndarray:
         """Block until a triggered clip is available."""
         return self.clip_queue.get(timeout=timeout)
+
+    def notify_tap(self) -> None:
+        """Signal that a hardware tap event just fired. Only valid when
+        trigger.mode is "hardware" or "simulated" — see HardwareTapDetector."""
+        if not isinstance(self._detector, HardwareTapDetector):
+            raise RuntimeError(
+                f"notify_tap() called but trigger.mode is {self.trigger_mode!r}, not 'hardware'/'simulated'"
+            )
+        self._detector.notify_tap()
 
     def __enter__(self) -> "AudioCapture":
         self.start()

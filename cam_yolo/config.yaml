@@ -1,0 +1,31 @@
+# Tunable parameters for the tile-grade YOLO classifier — no hardcoded
+# training params in source, per repo Development Rule #2.
+
+# Source of the per-grade cropped tile photos produced by
+# development/prepare_roboflow_dataset.py (already cropped to just the
+# tile, organized as <grade>/<capture_type>__<name>.jpg — no train/val
+# split yet, which is what prepare_dataset.py below builds).
+source_dataset_dir: "../data/roboflow_dataset"
+
+# Where prepare_dataset.py writes the split, classification-ready dataset
+# (train/<class>/*.jpg, val/<class>/*.jpg) that train.py points Ultralytics
+# at. Not git-tracked (images are repo-wide gitignored).
+dataset_dir: "dataset"
+
+# Grade folders under source_dataset_dir to include as classes. Order does
+# not matter — Ultralytics assigns class indices alphabetically from the
+# dataset folder names it finds.
+classes: ["3A", "3B", "4", "5"]
+
+split:
+  val_fraction: 0.2
+  seed: 42 # fixed so reruns of prepare_dataset.py reproduce the same split
+
+train:
+  model: "yolo26n-cls.pt" # pretrained checkpoint to fine-tune from
+  epochs: 100
+  imgsz: 224
+  batch: 16
+  patience: 20 # early-stop if val accuracy hasn't improved in this many epochs
+  project: "runs" # Ultralytics output root (cam_yolo/runs/<name>/)
+  name: "tile_grade_cls"

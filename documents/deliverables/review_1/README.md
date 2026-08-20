@@ -32,3 +32,12 @@ exist yet), sustainability goals (nothing decided yet, draft starting points off
 a real costed BOM (only generic categories exist so far), and Phase 1 results/analysis
 (no lab data collected yet — needs real-mic calibration and tap-testing on labeled tile
 samples before this review).
+
+See `Flowchart.md` — 18 Mermaid diagrams (compute architecture, physical station layout,
+Ethernet/MQTT control network, protocol stack, MQTT topic map, end-to-end data flow,
+full tile process flow, per-station sequence diagrams, final-grade fusion logic, tile
+record state lifecycle, DB entity relationships, failure handling, heartbeat monitoring,
+phased build plan vs. current status, and the prototype→industrial upgrade path) redrawn
+from `documents/project/Automation_Architecture.md` for §2/§3 of the review content, with
+build status (🟢 built / 🟡 scaffolding / ⚪ planned) marked on each node. GitHub renders
+Mermaid natively — no separate image files.

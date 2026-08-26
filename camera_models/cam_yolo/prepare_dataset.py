@@ -1,11 +1,22 @@
 """Splits the per-grade cropped tile photos in data/roboflow_dataset/<grade>/
-(built by development/prepare_roboflow_dataset.py) into the train/<class>/,
-val/<class>/ directory layout Ultralytics YOLO classification training
-expects (see Ultralytics classify dataset docs).
+(or data/roboflow_dataset_augmented/<grade>/, see config.yaml's
+source_dataset_dir) into the train/<class>/, val/<class>/ directory layout
+Ultralytics YOLO classification training expects (see Ultralytics classify
+dataset docs).
+
+Splits by SOURCE IMAGE GROUP, not by file (added 2026-08-26, matching
+cam_vit/prepare_dataset.py -- see its docstring for the full rationale): if
+source_dataset_dir is ever pointed at development/augment_dataset.py's
+offline-augmented copy, `dslr__DSC_0022.jpg` and `..._aug0.jpg` are
+near-duplicates of the same real tile and must not be split across
+train/val, or val accuracy would be inflated by evaluating on an
+essentially-already-seen image. Harmless no-op against the original,
+non-augmented data/roboflow_dataset/ (every group there has exactly one
+member) -- this pipeline currently still points at that original set.
 
 Copies rather than moves/symlinks — source images stay untouched under
-data/, and cam_yolo/dataset/ can be regenerated (a different split seed, a
-different val_fraction) by just deleting cam_yolo/dataset/ and rerunning
+data/, and camera_models/cam_yolo/dataset/ can be regenerated (a different split seed, a
+different val_fraction) by just deleting camera_models/cam_yolo/dataset/ and rerunning
 this script.
 
 Usage:
@@ -16,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import random
+import re
 import shutil
 from pathlib import Path
 
@@ -24,11 +36,17 @@ import yaml
 CAM_YOLO_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = CAM_YOLO_DIR / "config.yaml"
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+AUG_SUFFIX_RE = re.compile(r"_aug\d+$")
 
 
 def load_config() -> dict:
     with open(CONFIG_PATH, "r") as f:
         return yaml.safe_load(f)
+
+
+def group_key(path: Path) -> str:
+    """The shared identity of every augmented variant of one source photo."""
+    return AUG_SUFFIX_RE.sub("", path.stem)
 
 
 def main() -> None:
@@ -57,11 +75,22 @@ def main() -> None:
             continue
 
         images = sorted(p for p in grade_dir.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS)
-        rng.shuffle(images)
 
-        n_val = max(1, round(len(images) * val_fraction)) if images else 0
-        val_images = images[:n_val]
-        train_images = images[n_val:]
+        groups: dict[str, list[Path]] = {}
+        for img in images:
+            groups.setdefault(group_key(img), []).append(img)
+        group_keys = list(groups.keys())
+        rng.shuffle(group_keys)
+
+        target_val = max(1, round(len(images) * val_fraction)) if images else 0
+        val_images: list[Path] = []
+        train_images: list[Path] = []
+        for key in group_keys:
+            members = groups[key]
+            if len(val_images) < target_val:
+                val_images.extend(members)
+            else:
+                train_images.extend(members)
         per_class_train_images[grade] = train_images
 
         out_dir = dataset_dir / "val" / grade
@@ -70,7 +99,10 @@ def main() -> None:
             shutil.copy2(src, out_dir / src.name)
 
         total_val += len(val_images)
-        print(f"  {grade:4s} {len(images):4d} images -> train={len(train_images):4d} val={len(val_images):4d}")
+        print(
+            f"  {grade:4s} {len(images):4d} images ({len(group_keys)} source groups) "
+            f"-> train={len(train_images):4d} val={len(val_images):4d}"
+        )
 
     max_train = max((len(imgs) for imgs in per_class_train_images.values()), default=0)
     total_train = 0

@@ -13,6 +13,7 @@ folder is intentionally outside the `acoustic_node/`/`camera_node/`/
 | `run_pick_place_twin.py` | Launcher for `pick_place_node`'s mock digital twin GUI (`--mode desktop` for a native matplotlib window, `--mode browser` for the Flask+Three.js WiFi dashboard). See below. |
 | `prepare_roboflow_dataset.py` | Crops every tile photo under `data/` down to just the tile (via the real `segment_tile()`) and organizes the crops by grade under `data/roboflow_dataset/`, plus builds contact sheets for manually flagging visible damage. Prep step for the Roboflow `tile-detection` / `tile-grade-classification` projects (`aida-hutc5` workspace) — see below. |
 | `evaluate_grade_model.py` | Evaluates trained versions of the Roboflow `tile-grade-classification` model against a fixed 19-image held-out test set, calling the hosted inference API (no local weights — Roboflow doesn't export raw weights for models trained through their hosted ViT training). Writes per-version accuracy/confusion-matrix/predictions plus a version-comparison chart to `development/output/roboflow_models/`. |
+| `augment_dataset.py` | Creates an offline-augmented **copy** of `data/roboflow_dataset/` at `data/roboflow_dataset_augmented/` — every original image copied through unchanged, plus mild affine (rotation <15°, shear) and perspective variants generated via the `albumentations` library, expanding 376 source images to ~1000. See below. |
 
 Use `analyze_dataset.py` first to get a data-driven starting point, then
 `tile_param_tuner.py` to sanity-check/hand-adjust it against individual
@@ -272,6 +273,89 @@ already seen, not how it'll do on a new tile. Treat the 84.2% held-out
 result above as the realistic estimate; this full-dataset run is useful for
 spotting *which* images/classes still trip the model up even after seeing
 them in training, not for judging deployment readiness.
+
+## Expanding the training pool with `augment_dataset.py`
+
+```bash
+venv\Scripts\activate
+pip install albumentations
+python development\augment_dataset.py
+```
+
+Both `camera_models/cam_yolo/` and `camera_models/cam_vit/` already apply *online* augmentation —
+regenerated fresh each epoch, never saved to disk (`cam_yolo`'s
+`train.degrees`/`train.flipud` config keys, `cam_vit`'s
+`RandomNinetyRotation` — see their READMEs). Neither one does shear or
+perspective, though: Ultralytics' built-in `Albumentations` class
+(confirmed via its source, `ultralytics/data/augment.py`, 2026-08-26) only
+applies color/quality transforms by default (`Blur`, `MedianBlur`,
+`ToGray`, `CLAHE`, `RandomBrightnessContrast`, `RandomGamma`,
+`ImageCompression`) — no geometric transforms at all.
+
+`augment_dataset.py` adds mild affine (rotation capped under 15°, shear)
+and mild perspective directly via the `albumentations` library, as a
+**real, offline, additive** dataset expansion rather than more online
+per-epoch randomness:
+
+- Every original image is copied through byte-for-byte unchanged
+  (`shutil.copy2`, no JPEG recompression).
+- Each original also gets 1–2 augmented variants (`_aug0`, `_aug1`, ...),
+  written as real files — inspectable, unlike online augmentation, which
+  exists only in memory during training. The exact split (which images get
+  1 vs. 2 copies) is chosen via a shuffled, seeded index so it isn't
+  concentrated in one grade folder.
+- Output: `data/roboflow_dataset_augmented/<grade>/*.jpg`, same folder
+  structure as `data/roboflow_dataset/`, 376 → 1000 images
+  (per-class: 3A 140→369, 3B 109→293, 4 74→200, 5 53→138 — the original
+  class imbalance ratio is preserved, not corrected; that's still handled
+  separately by each pipeline's `split.oversample_train`, see their
+  READMEs).
+
+The augmentation pipeline (API confirmed against the installed
+`albumentations==2.0.8` and its upstream source, 2026-08-26):
+
+```python
+A.Compose([
+    A.Affine(rotate=(-15, 15), shear=(-8, 8), scale=(0.95, 1.05),
+             border_mode=cv2.BORDER_REFLECT_101, p=0.9),
+    A.Perspective(scale=(0.02, 0.06), keep_size=True, p=0.5),
+])
+```
+
+`rotate`/`shear` are in degrees; `Perspective`'s `scale` is the corner-jitter
+standard deviation as a fraction of image size (Albumentations' own default
+is `(0.05, 0.1)` — this uses a narrower, milder range).
+`border_mode=cv2.BORDER_REFLECT_101` avoids an artificial solid-color patch
+appearing at the rotated/sheared edges (these source images are already
+tight tile-boundary crops, so there's real background right up to the edge
+to reflect). Visually spot-checked against a sample (`data/roboflow_dataset_augmented/3A/dslr__DSC_0022_aug0.jpg`
+etc., 2026-08-26 session) — mild, recognizable distortion, no extreme
+warping.
+
+This script only produces the dataset copy — it does not automatically
+repoint every pipeline's `source_dataset_dir` at it. `camera_models/cam_vit/config.yaml`
+is pointed at `"../../data/roboflow_dataset_augmented"` (as of 2026-08-26,
+see `camera_models/cam_vit/README.md`'s results comparison for the
+augmented-vs-original accuracy difference); `camera_models/cam_yolo/config.yaml`
+still points at the original `"../../data/roboflow_dataset"`. To try the
+augmented set with a different pipeline, change that key to
+`"../../data/roboflow_dataset_augmented"` and rerun that pipeline's
+`prepare_dataset.py`.
+
+**Important if you do this for a pipeline other than `cam_vit`**: make sure
+its `prepare_dataset.py` splits by source-image group, not by file — a
+source photo's augmented variants (`..._aug0.jpg`, `..._aug1.jpg`) are
+near-duplicates of the original and must stay entirely on one side of the
+train/val split, or val accuracy gets inflated by evaluating on an
+essentially-already-seen image. Both `camera_models/cam_yolo/prepare_dataset.py` and
+`camera_models/cam_vit/prepare_dataset.py` already do this (fixed 2026-08-26) — see either
+script's docstring — but a new pipeline copying the old per-file-shuffle
+pattern would reintroduce the leak.
+
+Writes a manifest (`development/output/roboflow_dataset_augmented_manifest.csv`,
+git-tracked like `roboflow_dataset_manifest.csv`) recording every
+source → output mapping and whether each output was an original copy or an
+augmented variant.
 
 ## Data
 

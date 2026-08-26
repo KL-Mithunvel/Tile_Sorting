@@ -3,8 +3,8 @@ by prepare_dataset.py.
 
 Usage:
     venv\\Scripts\\activate
-    python cam_yolo\\prepare_dataset.py   # once, or whenever the split should change
-    python cam_yolo\\train.py
+    python camera_models\\cam_yolo\\prepare_dataset.py   # once, or whenever the split should change
+    python camera_models\\cam_yolo\\train.py
 """
 
 from __future__ import annotations

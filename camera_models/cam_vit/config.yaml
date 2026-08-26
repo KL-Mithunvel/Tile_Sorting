@@ -1,0 +1,69 @@
+# Tunable parameters for the tile-grade ViT classifier -- no hardcoded
+# training params in source, per repo Development Rule #2.
+
+# Source of the per-grade cropped tile photos. Pointed at the offline-
+# augmented copy (development/augment_dataset.py, 2026-08-26 session:
+# 376 -> 1000 images via mild affine rotation/shear + perspective) rather
+# than the original data/roboflow_dataset -- see cam_vit/README.md's
+# results comparison for augmented-vs-original accuracy. Point this back at
+# "../../data/roboflow_dataset" to train on the original, smaller set.
+source_dataset_dir: "../../data/roboflow_dataset_augmented"
+
+# Where prepare_dataset.py writes the split, classification-ready dataset
+# (train/<class>/*.jpg, val/<class>/*.jpg). Not git-tracked (images are
+# repo-wide gitignored).
+dataset_dir: "dataset"
+
+# Grade folders under source_dataset_dir to include as classes.
+classes: ["3A", "3B", "4", "5"]
+
+split:
+  val_fraction: 0.2
+  seed: 42 # same seed/fraction as camera_models/cam_yolo/config.yaml, for a comparable split
+  # Classes are imbalanced (3A=140, 3B=109, 4=74, 5=53 source images).
+  # Mirrors cam_yolo's fix: duplicate minority-class train images (copies, not
+  # synthetic data) up to the majority class's train count. The augmentation
+  # pipeline below re-applies fresh random transforms each time a duplicated
+  # path is sampled, so this is not a literal no-op duplicate.
+  oversample_train: true
+
+model:
+  # The only ViT this pipeline is meant to match: Roboflow's hosted
+  # tile-grade-classification models are trained on this exact checkpoint
+  # (model_id "vit-base-patch16-224-in21k" -- confirmed via Roboflow's
+  # trainings_describe_recipe API, 2026-08-25 session). Base size only --
+  # Roboflow's ViT offering has no small/large variant.
+  checkpoint: "google/vit-base-patch16-224-in21k"
+  image_size: 224 # ViT-Base/patch16's native resolution; Roboflow's 640x640
+  # baked-in resize is a shared-pipeline artifact (same resize step used for
+  # detection projects), not what the ViT architecture actually trains at --
+  # see cam_vit/README.md.
+
+train:
+  output_dir: "runs/tile_grade_vit"
+  epochs: 30 # ViT fine-tuning converges much faster than YOLO's from-scratch
+  # classification head on a small dataset like this; early stopping below
+  # will cut this short if val accuracy plateaus first.
+  batch_size: 16
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  logging_steps: 10
+  save_total_limit: 2
+  patience: 8 # early-stop if val accuracy hasn't improved in this many epochs
+
+# Mirrors the Roboflow-hosted tile-grade-classification v2 dataset version --
+# the better-performing config (84.2% held-out accuracy vs v3's 63.2% after
+# v3 added Adaptive Equalization contrast preprocessing on top of the same
+# augmentation). Pulled from the live Roboflow project (workspace
+# aida-hutc5) via versions_get/trainings_describe_recipe, 2026-08-25 session
+# -- not just development/README.md's summary. See cam_vit/README.md for the
+# full breakdown and what's approximated vs exact.
+augmentation:
+  hflip_prob: 0.5 # matches Roboflow's flip.horizontal
+  vflip_prob: 0.5 # matches Roboflow's flip.vertical
+  ninety_rotation: true # random choice of 0/90/180/270 deg, matches Roboflow's "ninety" step (NOT continuous-angle rotation)
+  brightness_percent: 10 # matches Roboflow's brightness +/-10% (brighten+darken both on)
+  exposure_percent: 5 # matches Roboflow's exposure +/-5%; approximated here as a second, independent brightness-style jitter -- see README
+  # Deliberately no contrast/CLAHE step -- that's what Roboflow's v3 added
+  # and it measurably hurt accuracy (development/README.md).

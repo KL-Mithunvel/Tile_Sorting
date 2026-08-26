@@ -121,6 +121,20 @@ node, not part of the App Bricks convention above. It holds tooling for calibrat
 a batch analysis script) before those values get copied into
 `camera_node/python/camera/config.yaml`. See `development/README.md`.
 
+`camera_models/` (added 2026-08-20, reorganized into this shared parent folder
+2026-08-26 — previously `cam_yolo/`/`cam_vit/` sat loose at the repo root) is another
+dev-only top-level folder, **not** an App Bricks node and **not** wired into
+`camera_node`'s live pipeline — model training/evaluation experiments only, grouped here
+so new tile-grade-classification architectures don't keep littering the repo root.
+Whether/how any of these models' weights get deployed into `camera_node` (or onto the
+UNO Q directly, e.g. via Edge Impulse — see Deployment Notes) is a separate, later
+decision.
+
+| Folder | Status |
+|---|---|
+| `camera_models/cam_yolo/` | Real code — fine-tunes a YOLO26 classification model (`yolo26s-cls`, Ultralytics) on the tile-grade dataset. 85.5% top1 on its own val split. See `camera_models/cam_yolo/README.md`. |
+| `camera_models/cam_vit/` | Real code — fine-tunes `google/vit-base-patch16-224-in21k` (HuggingFace `transformers`) on the same dataset, matching the augmentation config of the Roboflow-hosted `tile-grade-classification` model but with real exportable weights (Roboflow's hosted ViT training doesn't export weights). 93.4% top1 (76-image val split) trained on the original dataset; retrained 2026-08-26 on an offline-augmented copy (`development/augment_dataset.py`) with no measurable improvement (92.1% on the same val split, apples-to-apples) — see `camera_models/cam_vit/README.md`. |
+
 | File | Role |
 |---|---|
 | `acoustic_node/python/acoustic/config.yaml` | All tunable audio/trigger parameters (device, sample rate, RMS threshold, timing, `trigger.mode`, `hardware_trigger`, `tap_mechanism`) |

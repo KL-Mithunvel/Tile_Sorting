@@ -2,8 +2,8 @@
 
 Usage:
     venv\\Scripts\\activate
-    python cam_yolo\\val.py                              # uses runs/<name>/weights/best.pt
-    python cam_yolo\\val.py --weights path\\to\\best.pt
+    python camera_models\\cam_yolo\\val.py                              # uses runs/<name>/weights/best.pt
+    python camera_models\\cam_yolo\\val.py --weights path\\to\\best.pt
 """
 
 from __future__ import annotations

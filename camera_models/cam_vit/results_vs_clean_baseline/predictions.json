@@ -1,0 +1,458 @@
+[
+  {
+    "image": "val\\3A\\dslr__DSC_0023.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9905312657356262
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0031.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.99483323097229
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0038.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9909887909889221
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0040.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9950166344642639
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0043-1.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9950588941574097
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0052.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.995155930519104
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0053.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9952084422111511
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0058.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9945082068443298
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0061.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951547384262085
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0229.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951993823051453
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0232.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9952914714813232
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0243.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.99506676197052
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0245.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9952545166015625
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0256.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951801300048828
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0264.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9952622652053833
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0268.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951454997062683
+  },
+  {
+    "image": "val\\3A\\dslr__DSC_0272.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9950098991394043
+  },
+  {
+    "image": "val\\3A\\phone__20250912_083021.jpg",
+    "true": "3A",
+    "pred": "4",
+    "confidence": 0.995040237903595
+  },
+  {
+    "image": "val\\3A\\phone__20250912_083243.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9947983026504517
+  },
+  {
+    "image": "val\\3A\\phone__20250912_083337.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9940305352210999
+  },
+  {
+    "image": "val\\3A\\phone__20250912_083836.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951885938644409
+  },
+  {
+    "image": "val\\3A\\phone__20250912_083957.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951292276382446
+  },
+  {
+    "image": "val\\3A\\phone__20250913_121038.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9950528740882874
+  },
+  {
+    "image": "val\\3A\\phone__20250913_121059.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.995017945766449
+  },
+  {
+    "image": "val\\3A\\phone__20250913_121109.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.995173990726471
+  },
+  {
+    "image": "val\\3A\\phone__20250913_121130.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9951748847961426
+  },
+  {
+    "image": "val\\3A\\phone__20250913_121204.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9857195019721985
+  },
+  {
+    "image": "val\\3A\\phone__20250913_121400.jpg",
+    "true": "3A",
+    "pred": "3A",
+    "confidence": 0.9949991703033447
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0136.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9957101345062256
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0139.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9955980181694031
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0142.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.995719850063324
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0144.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9958133101463318
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0148.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9958103895187378
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0154.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9949784874916077
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0157.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9958254098892212
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0159.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9958370923995972
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0173.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9958173632621765
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0177.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9957807064056396
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0184.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9957725405693054
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0186.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.995845377445221
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0187.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9956973791122437
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0190.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9958239793777466
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0204.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9957440495491028
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0208.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9954240918159485
+  },
+  {
+    "image": "val\\3B\\dslr__DSC_0218.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.995688259601593
+  },
+  {
+    "image": "val\\3B\\phone__20250912_084818.jpg",
+    "true": "3B",
+    "pred": "5",
+    "confidence": 0.9215404987335205
+  },
+  {
+    "image": "val\\3B\\phone__20250912_085201.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9953517913818359
+  },
+  {
+    "image": "val\\3B\\phone__20250912_085306.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9940529465675354
+  },
+  {
+    "image": "val\\3B\\phone__20250912_085326.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9952514171600342
+  },
+  {
+    "image": "val\\3B\\phone__20250912_085420.jpg",
+    "true": "3B",
+    "pred": "3B",
+    "confidence": 0.9953022003173828
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0099.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.994968593120575
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0104.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9950496554374695
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0114.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.995229959487915
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0116.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9915946125984192
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0117.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9950868487358093
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0118.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9950422048568726
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0120.jpg",
+    "true": "4",
+    "pred": "3B",
+    "confidence": 0.9949910044670105
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0121.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9922358393669128
+  },
+  {
+    "image": "val\\4\\dslr__DSC_0130.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9942516088485718
+  },
+  {
+    "image": "val\\4\\phone__20250912_104640.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.99510657787323
+  },
+  {
+    "image": "val\\4\\phone__20250912_104740.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9950064420700073
+  },
+  {
+    "image": "val\\4\\phone__20250912_104826.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9804518818855286
+  },
+  {
+    "image": "val\\4\\phone__20250912_105141.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9939547181129456
+  },
+  {
+    "image": "val\\4\\phone__20250913_152610.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.9949795603752136
+  },
+  {
+    "image": "val\\4\\phone__20250913_152912.jpg",
+    "true": "4",
+    "pred": "4",
+    "confidence": 0.994965136051178
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0066.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9958093166351318
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0082.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9957927465438843
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0084.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9958536624908447
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0087.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9956226944923401
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0089.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9957681894302368
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0093.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9957242012023926
+  },
+  {
+    "image": "val\\5\\dslr__DSC_0095.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9956550598144531
+  },
+  {
+    "image": "val\\5\\phone__20250912_105454.jpg",
+    "true": "5",
+    "pred": "4",
+    "confidence": 0.9948061108589172
+  },
+  {
+    "image": "val\\5\\phone__20250912_110017.jpg",
+    "true": "5",
+    "pred": "4",
+    "confidence": 0.8074710369110107
+  },
+  {
+    "image": "val\\5\\phone__20250912_110122.jpg",
+    "true": "5",
+    "pred": "5",
+    "confidence": 0.9956904053688049
+  },
+  {
+    "image": "val\\5\\phone__20250912_110251.jpg",
+    "true": "5",
+    "pred": "4",
+    "confidence": 0.9928828477859497
+  }
+]

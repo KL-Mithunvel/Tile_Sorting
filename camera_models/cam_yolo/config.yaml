@@ -5,7 +5,7 @@
 # development/prepare_roboflow_dataset.py (already cropped to just the
 # tile, organized as <grade>/<capture_type>__<name>.jpg — no train/val
 # split yet, which is what prepare_dataset.py below builds).
-source_dataset_dir: "../data/roboflow_dataset"
+source_dataset_dir: "../../data/roboflow_dataset"
 
 # Where prepare_dataset.py writes the split, classification-ready dataset
 # (train/<class>/*.jpg, val/<class>/*.jpg) that train.py points Ultralytics
@@ -34,7 +34,7 @@ train:
   imgsz: 224
   batch: 16
   patience: 40 # early-stop if val accuracy hasn't improved in this many epochs
-  project: "runs" # Ultralytics output root (cam_yolo/runs/<name>/)
+  project: "runs" # Ultralytics output root (camera_models/cam_yolo/runs/<name>/)
   name: "tile_grade_cls-aug-s-gpu"
   # Tile photos have no canonical "up" (a tile can be photographed/placed in
   # any rotation), so rotation/vertical-flip augmentation reflects a real

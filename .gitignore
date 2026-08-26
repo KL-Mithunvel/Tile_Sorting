@@ -14,7 +14,14 @@ data/
 # Device credentials — never commit
 tools/uno_q/secrets.bat
 
-# cam_yolo — generated dataset split, training runs, downloaded/trained weights
-cam_yolo/dataset/
-cam_yolo/runs/
+# camera_models/cam_yolo — generated dataset split, training runs, downloaded/trained weights
+camera_models/cam_yolo/dataset/
+camera_models/cam_yolo/runs/
 *.pt
+
+# camera_models/cam_vit — generated dataset split, training runs, downloaded/trained weights
+camera_models/cam_vit/dataset/
+camera_models/cam_vit/runs/
+camera_models/cam_vit/.checkpoint_cache/
+*.safetensors
+*.onnx

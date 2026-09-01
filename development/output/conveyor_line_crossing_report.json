@@ -1,0 +1,51 @@
+{
+  "video_path": "C:\\Users\\MithunvelKL\\PycharmProjects\\Tile_Sorting\\data\\WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4",
+  "line_crossing_count": 9,
+  "crossings": [
+    {
+      "seq": 1,
+      "frame_index": 507,
+      "timestamp_s": 16.92
+    },
+    {
+      "seq": 2,
+      "frame_index": 613,
+      "timestamp_s": 20.46
+    },
+    {
+      "seq": 3,
+      "frame_index": 672,
+      "timestamp_s": 22.43
+    },
+    {
+      "seq": 4,
+      "frame_index": 827,
+      "timestamp_s": 27.6
+    },
+    {
+      "seq": 5,
+      "frame_index": 931,
+      "timestamp_s": 31.07
+    },
+    {
+      "seq": 6,
+      "frame_index": 992,
+      "timestamp_s": 33.11
+    },
+    {
+      "seq": 7,
+      "frame_index": 1184,
+      "timestamp_s": 39.51
+    },
+    {
+      "seq": 8,
+      "frame_index": 1484,
+      "timestamp_s": 49.52
+    },
+    {
+      "seq": 9,
+      "frame_index": 1602,
+      "timestamp_s": 53.46
+    }
+  ]
+}

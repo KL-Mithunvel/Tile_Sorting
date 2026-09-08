@@ -130,8 +130,23 @@ Whether/how any of these models' weights get deployed into `camera_node` (or ont
 UNO Q directly, e.g. via Edge Impulse — see Deployment Notes) is a separate, later
 decision.
 
+`Acoustic-Analysis/` (added 2026-09-08) is a **git submodule** —
+<https://github.com/KL-Mithunvel/Acoustic-Analysis>, MIT-licensed, its own repo /
+history / releases. It is a standalone Windows desktop app (Tkinter) for **acoustic
+data collection, analysis, and labelling**: record/import tile-tap clips, run the full
+DSP suite from `documents/project/Acoustic_Analysis_Methods.md` (octave bands, decay,
+spectral descriptors, level metrics), visualise and compare them, assign a quality
+class, and export a labelled feature dataset. That dataset later trains a tile-grade
+model; only the trained model — not this app — is copied into `acoustic_node`. It is
+**not** an App Bricks node, **not** on the App Bricks convention, and **not** imported
+by `acoustic_node` — code moves the other way, by hand, copy-as-needed (mirrors the
+`camera_models/` relationship to `camera_node`). To work on it: `cd Acoustic-Analysis`
+and use its own git; Tile_Sorting only records the pinned commit. After pulling
+Tile_Sorting fresh, run `git submodule update --init` to populate the folder.
+
 | Folder | Status |
 |---|---|
+| `Acoustic-Analysis/` | Submodule — standalone acoustic analysis + data-labelling desktop app (independent repo). Scaffolding as of 2026-09-08. |
 | `camera_models/cam_yolo/` | Real code — fine-tunes a YOLO26 classification model (`yolo26s-cls`, Ultralytics) on the tile-grade dataset. 85.5% top1 on its own val split. See `camera_models/cam_yolo/README.md`. |
 | `camera_models/cam_vit/` | Real code — fine-tunes `google/vit-base-patch16-224-in21k` (HuggingFace `transformers`) on the same dataset, matching the augmentation config of the Roboflow-hosted `tile-grade-classification` model but with real exportable weights (Roboflow's hosted ViT training doesn't export weights). 93.4% top1 (76-image val split) trained on the original dataset; retrained 2026-08-26 on an offline-augmented copy (`development/augment_dataset.py`) with no measurable improvement (92.1% on the same val split, apples-to-apples) — see `camera_models/cam_vit/README.md`. |
 

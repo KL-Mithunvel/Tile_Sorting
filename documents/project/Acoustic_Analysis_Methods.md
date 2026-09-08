@@ -1,8 +1,12 @@
 # Acoustic Analysis Methods — Reference and Application to Tile Quality Classification
 
-**Status:** design / reference note (2026-09-08). No code written from this yet.
+**Status:** design / reference note (2026-09-08).
 **Source reviewed:** Crystal Instruments, *Acoustic Analysis*
 — <https://www.crystalinstruments.com/acoustic-analysis> (fetched 2026-09-08).
+**Where the code lives:** Part D's DSP modules are being built first in the standalone
+**Acoustic-Analysis** desktop app (submodule `Acoustic-Analysis/`, own repo) as a
+data-collection + labelling workbench. Once a labelled dataset trains a tile-grade
+model, that model — not this pipeline verbatim — is what runs in `acoustic_node`.
 **Companion docs:** `Acoustic_Sorting_Subsystem.md` (the tap station + pipeline this
 plugs into), `project_charter.md` §6.2, `AI_Software_Novelty.md` (adaptive grading),
 `documents/requirements/requirements.md` FR-21.

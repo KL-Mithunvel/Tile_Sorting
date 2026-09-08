@@ -33,7 +33,7 @@ summary:
 | `documents/mech/` | CAD source files, drafted mechanical sheets (PDF), BOMs |
 | `documents/electrical/` | Wiring/connection schematics, component datasheets, panel layout |
 | `documents/programming/` | Flowcharts, pseudocode, dataset/model notes, test reports |
-| `documents/project/` | System design source of truth: `project_charter.md`, `Automation_Architecture.md`, `Acoustic_Sorting_Subsystem.md`, `Camera_Sorting_Subsystem.md` |
+| `documents/project/` | System design source of truth: `project_charter.md`, `Automation_Architecture.md`, `Acoustic_Sorting_Subsystem.md`, `Acoustic_Analysis_Methods.md`, `Camera_Sorting_Subsystem.md` |
 | `documents/requirements/` | `requirements.md` — formal FR-xx/NFR-xx spec, traceable to `documents/project/` |
 | `documents/deliverables/` | College-mandated coursework (VIT Chennai BMEE497J/BMHA497J) — reviews, guide evaluation, final report, daily logbook. See `documents/deliverables/README.md` for the assessment schedule and due dates. |
 

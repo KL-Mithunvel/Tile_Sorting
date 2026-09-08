@@ -22,6 +22,16 @@ Reject / grade diverter
 
 The main challenge is that the conveyor, motor, bearings, tile movement, solenoid body, and surrounding factory environment will introduce noise. Therefore, the system must use controlled timing, mechanical isolation, filtering, windowing, and repeatable impact conditions.
 
+> **See also `Acoustic_Analysis_Methods.md`** (2026-09-08) — reviews the Crystal
+> Instruments acoustic-analysis toolset (fractional-octave-band analysis, SLM level
+> metrics, frequency/time weighting, the octave waterfall, statistical levels,
+> loudness, sound power, NC curves, calibration) and maps each method to this
+> subsystem: which ones grade a tile, which only qualify the test environment, the
+> full feature-extraction + classification pipeline, and the proposed
+> `octave_bands.py` / `decay.py` / `sound_level.py` / `weighting.py` / `calibration.py`
+> / `features.py` / `reference_profile.py` / `classifier.py` modules. That document
+> supersedes the feature list in §16–§17 and the classification sketch in §19 here.
+
 ---
 
 # 2. Acoustic Test Station Overview

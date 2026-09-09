@@ -18,6 +18,13 @@ grade/slot commands; this layer translates to axis motion — not an off-the-she
 CNC/G-code controller), but axis count, motor/gripper hardware, and travel limits are
 still open — see `TODO.md` ("Design the gantry's custom machine-control layer").
 
+## Bench bring-up
+
+`bench_tests/stepper_smoke_test/` — a standalone `arduino-app-cli` app that pulses
+X, Y+A(clone), and Z to confirm all 4 CNC Shield V3 stepper motors move (checklist
+task 0.5, `documents/pick_place_todo.md`). Not the real firmware. Push with
+`tools\uno_q\push-stepper-test.bat`; see that folder's `README.md`.
+
 ## HMI / digital twin dashboard (design in progress, 2026-08-11)
 
 Full feature sketch for this node's local HMI (control panel, status panel, live digital

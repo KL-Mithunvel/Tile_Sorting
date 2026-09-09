@@ -4,7 +4,8 @@ rem The SSH password lives in secrets.bat (gitignored) - see secrets.bat.example
 rem No "setlocal" here on purpose: this file is meant to be called from another
 rem .bat so these variables stay set in the caller's environment.
 
-set UNO_Q_HOST=172.20.10.2
+rem Hotspot DHCP lease - has been .2 and .3; update when it moves (ping to check).
+set UNO_Q_HOST=172.20.10.3
 set UNO_Q_USER=arduino
 
 rem Pinned host key fingerprint (ssh-ed25519, captured 2026-07-28). Passed explicitly

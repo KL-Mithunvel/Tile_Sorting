@@ -1,0 +1,10 @@
+# Reference copy only — NOT pushed to the board.
+#
+# The authoritative app.yaml is the one `arduino-app-cli app new stepper_smoke_test`
+# generates on the board. push-stepper-test.bat deliberately pushes only
+# sketch/sketch.ino and python/main.py, leaving the board's generated manifest alone.
+# This mirrors the schema of that generated file (verified on the lab board 2026-09-09).
+name: stepper_smoke_test
+icon: 🔧
+ports: []
+bricks: []

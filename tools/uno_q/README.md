@@ -98,6 +98,7 @@ useful outside these scripts (e.g. VS Code Remote-SSH).
 | Script | Does |
 |---|---|
 | `push.bat` | Copies `acoustic_node/python/acoustic/`, `tests/`, `requirements.txt`, `pytest.ini` to `~/tile_sorting/` on the device |
+| `push-stepper-test.bat` | Copies `pick_place_node/bench_tests/stepper_smoke_test/` (`sketch/sketch.ino` + `python/main.py`) to `~/ArduinoApps/<app>/` on the device as an `arduino-app-cli` app (default app name `stepper_smoke_test`). See that folder's `README.md`. |
 | `ssh.bat` | Opens an interactive terminal on the device |
 | `vnc-start.bat` | Kills any stale TigerVNC session, restarts it at the configured geometry, opens an SSH tunnel, and launches VNC Viewer |
 | `vnc-stop.bat` | Closes the SSH tunnel and kills the remote VNC session |

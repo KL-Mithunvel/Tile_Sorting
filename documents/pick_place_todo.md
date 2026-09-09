@@ -100,7 +100,14 @@ user:cnc`.)*
 - [ ] Power up. **Re-check Vref** on each (values shift once loaded).
 - [ ] Run one motor for ~10 min; check **driver temperature** by hand / IR — too hot to touch → lower Vref or add heatsink/fan. Record: __________
 
-### 0.5 First motion — single axis (start from the teammate's *tested* single-motor sketch)
+### 0.5 First motion — all-4-motor smoke test + single axis
+
+*A ready-to-deploy smoke-test sketch is in the repo:*
+`pick_place_node/bench_tests/stepper_smoke_test/` (pulses X, Y+A(clone), Z; push with
+`tools\uno_q\push-stepper-test.bat`; see that folder's `README.md`). Use it to confirm
+all 4 motors move, then continue with the single-axis checks below using the teammate's
+tested single-motor sketch.
+
 
 *Deploy path (confirmed 2026-09-01):* the teammate's sketch is already on the board as
 app `user:cnc` (`~/ArduinoApps/cnc/sketch/sketch.ino`). Edit it, then

@@ -299,3 +299,161 @@ against real tile photos (the user's existing photos weren't accessible on this 
 pipeline has never run against a real webcam, only synthetic images; the webcam-to-UNO-Q
 physical wiring doesn't exist yet; crack-type taxonomy and corner localization are
 explicitly deferred. None of this session's changes have been committed to git yet.
+
+## 2026-08-11 – 2026-09-10 — Back-fill: a month of unlogged work
+
+This log went quiet after the 2026-08-07 camera entry (last touched in commit `edd48b2`,
+2026-08-09) while the project kept moving. This entry reconstructs the gap from git
+history, `documents/`, `.claude/CLAUDE.md`, `TODO.md`, and the session memory notes — so
+it is an after-the-fact summary, not the blow-by-blow the earlier entries carry. Dates
+are best-effort; several commits batched days of work at once, and commit dates lag the
+work.
+
+### ~2026-08-11 — Camera thresholds calibrated on real photos; two detector bugs fixed (committed in `8dc7279`)
+
+- The user provided ~380 real terracotta tile photos (single tiles on a checkerboard
+  calibration sheet, all known-intact). New **dev-only `development/` folder** (not an
+  App Bricks node): `tile_param_tuner.py` (interactive per-photo GUI) and
+  `analyze_dataset.py` (batch, recommends values). `camera_node/python/camera/config.yaml`'s
+  HSV range, Canny thresholds, `border_margin_px`, and corner `min_fill_ratio` are now
+  data-derived instead of blind guesses — but only a **false-positive floor** was
+  established (loose enough not to flag a healthy tile); true-positive sensitivity is
+  still unvalidated (no damaged-tile photos).
+- **Bug 1 — `detect_cracks()` border-silhouette false positive:** Canny on the tight
+  bbox crop put the tile's own edge against the background right at the crop border — a
+  long thin high-contrast line indistinguishable from a crack. ~98–100 % false-positive
+  rate on intact tiles. Fixed with `border_margin_px` (blanks a border band of the edge
+  map before contour-matching) → ~2–11 %.
+- **Bug 2 — `detect_broken_corner()` under-caught diagonal chips:** a triangular chip
+  (the realistic break) removes far less area than a square notch reaching the same
+  depth, so `fill_ratio` alone missed it (a half-edge chip only dropped it to ~0.87,
+  above the 0.83 threshold). Added `max_missing_extent_fraction` — a distance-transform
+  check on how *deep* the gap reaches — plus real-inch `missing_area_sq_inches` /
+  `missing_depth_inches` using the tile's known 9×9 in size.
+- Added `camera/process_video.py` (offline pipeline over a saved video file — same
+  segment→track→process_tile→snapshot chain as `worker.py`) and `camera/snapshot.py`
+  (persist each departed tile's photo to `data/camera_captures/`, config `capture_snapshots`).
+
+### ~2026-08-13 to 08-26 — Roboflow integration + tile-grade classification models (commits `7b34709`, `054e649`)
+
+- Roboflow MCP server + its skill docs vendored under `.claude/skill/roboflow-*`.
+- `development/`: `prepare_roboflow_dataset.py`, `roboflow_upload.py`,
+  `evaluate_grade_model.py`. A Roboflow-hosted `tile-grade-classification` ViT was
+  trained (v2/v3) but its weights are not exportable.
+- **`camera_models/`** (dev-only top-level folder, grouped 2026-08-26 — previously
+  `cam_yolo/`/`cam_vit/` loose at the repo root; **not** wired into `camera_node`'s live
+  pipeline):
+  - `cam_yolo/` — fine-tunes `yolo26s-cls` (Ultralytics) on the tile-grade dataset,
+    85.5 % top-1 on its own val split.
+  - `cam_vit/` — fine-tunes `google/vit-base-patch16-224-in21k` (HF `transformers`) with
+    real exportable weights, 93.4 % top-1 (76-image val). Retrained on an
+    offline-augmented copy (`development/augment_dataset.py`) with no measurable gain
+    (92.1 %, apples-to-apples).
+- Whether/how any of these get deployed into `camera_node` (or onto the UNO Q via Edge
+  Impulse) is still an open, later decision.
+
+### 2026-08-19 / 2026-08-20 — Review 1 held; AI-novelty pivot (commit `05d675c`)
+
+- **Review 1** (Expert Panel Review) took place 2026-08-19. The panel/guide liked the
+  overall idea but **flagged the project as short on novelty**.
+- Response, captured 2026-08-20 in `documents/project/AI_Software_Novelty.md` (notes
+  only, no code, no FR numbers yet): (1) **AI-logged anomaly diagnosis** — structured
+  fault events from every station → LLM plain-English summaries (depends on the
+  not-yet-built database/logging layer); (2) **adaptive AI grading** — keep the
+  rule-based `grade_tile()` baseline, then explore a model that adapts on-machine to new
+  clay mixes/shapes without a pre-collected labelled set (Phase 2, research stretch,
+  gated on real labelled defect data). Sequenced to slot *alongside* the existing
+  hardware/control priorities, not ahead of them.
+- Also committed here: `documents/deliverables/review_1/Flowchart.md` (699 lines).
+
+### 2026-08-20 — Acoustic tap-trigger rig: ToF + dual-solenoid ball drop (commit `05d675c`)
+
+Resolved `project_charter.md` §6.2's open release-mechanism question: **two solenoids
+(ARM + LOCK) driving a gravity-drop ball impactor — neither touches the tile.**
+
+- `documents/electrical/schematics/acoustic_station_wiring.md` — pin table, BOM, wiring
+  diagram, timing sequence.
+- `acoustic_node/sketch/sketch.ino` — real MCU FSM (`WAIT_TILE → SETTLE → ARM →
+  ARM_SETTLE → RELEASE → COOLDOWN`), e-stop. Never compiled/run on hardware.
+- `acoustic_node/python/acoustic/`: `tap_sequencer.py` (pure FSM mirror + dev-machine
+  tap simulator), `hardware_trigger.py` (`HardwareTapDetector` — capture window starts
+  on an external `notify_tap()` instead of an RMS crossing), `capture.py` gained a
+  `trigger.mode` switch (`rms` / `hardware` / `simulated`), `live_monitor.py` gained a
+  `--simulate-taps` driver.
+- Reconciled charter §6.2 / `Acoustic_Sorting_Subsystem.md` §3.1 / `requirements.md`
+  FR-21. 11 new synthetic-input tests (57 total, green). No ToF sensor / solenoid /
+  MOSFET has touched a bench; `readTofDistanceMm()` and the App Bricks bridge read are
+  placeholders. Ball mass/drop height and the reload path are undecided.
+
+### 2026-08-31 / 2026-09-01 — Pick-and-place control architecture + first real code on the lab UNO Q (commit `30e9502`)
+
+- **Architecture decided:** custom minimal firmware on the UNO Q MCU (**not** GRBL /
+  Klipper — no STM32U585 port, and FR-18 forbids an off-the-shelf G-code controller).
+  MCU owns step generation + accel, homing, limits, e-stop, soft limits, position,
+  gripper, FSM. Linux owns the coordinate model, named locations, stack bookkeeping, the
+  pick-place sequencer, the master interface, the HMI/digital twin. They talk over a
+  **line-based ASCII protocol** (`MOVE`/`HOME`/`JOG`/`VAC`/`STOP` + `ok`/`done`/`err`/
+  `pos`/`alarm`/`hb`), one motion in flight. Docs:
+  `documents/programming/pick_place_control_protocol.md`,
+  `documents/electrical/schematics/pick_place_hardware_connections_plan.md`,
+  `documents/pick_place_todo.md` (granular checklist).
+- **Hardware (owner has all of it):** CNC Shield V3.10, 4× TMC2208 (standalone, 1/16
+  µstep), 4× 42HM48-1684 NEMA 17, Mean Well LRS-150-12. 3 logical axes; Y beam = 2
+  motors (A socket cloned from Y in hardware). End effector: vacuum cup + vacuum-confirm
+  sensor.
+- **First time project-adjacent code ran on the lab UNO Q** (`arduino@172.20.10.2`).
+  Confirmed and recorded (memory `uno_q_app_lab_working`): MCU runs **Zephyr**, chip
+  **STM32U585 / Cortex-M33** (classic Arduino API works via a compat layer); deploy path
+  is `arduino-app-cli app restart <dir>` over SSH (compiles sketch, flashes STM32 over
+  SWD, starts the Python side in a Docker container, ~90 s); MCU↔Linux bridge is
+  `Arduino_RouterBridge.h` / `Bridge.provide()` ↔ Python `Bridge.call()`. This resolves
+  much of the "App Bricks unverified" caveat in Known Technical Debt / FR-22.
+- Also here: `development/process_conveyor_video.py` + a real conveyor clip processed
+  end-to-end (`development/output/conveyor_annotated.mp4`, line-crossing report).
+
+### 2026-09-08 — Acoustic analysis methods review (Crystal Instruments) (commit `b717b41`)
+
+`documents/project/Acoustic_Analysis_Methods.md` (473 lines) — the owner asked to go
+over the Crystal Instruments *Acoustic Analysis* page, document it, and map it to tile
+quality classification. Part A: every method + standard in its own terms (IEC 61260 /
+IEC 61672 / ANSI S1.11 octave filters, SLM levels + A/C/Z + Fast/Slow/Impulse,
+statistical levels, sound power ISO 3744/3745, loudness sones/phons, NC curves,
+calibration). Part B: each rated **CORE / SUPPORT / SKIP** for impact-acoustic tile NDT.
+Part C: the concrete per-tile analysis + classification pipeline. Part D: the module
+plan (`octave_bands.py`, `decay.py`, `weighting.py`, `sound_level.py`, `calibration.py`,
+`features.py`, `reference_profile.py`, `classifier.py`). Part E: build order.
+
+### 2026-09-08 → 2026-09-09 — Acoustic-Analysis desktop app: submodule + v0.1 build (commits `c69dae6`, `370b00e`, `2c73efc`, `f3d4b03`, `c33ea66`)
+
+- The Part-D DSP suite is being built **first** in a standalone tool, not in
+  `acoustic_node`. New independent MIT repo
+  <https://github.com/KL-Mithunvel/Acoustic-Analysis>, linked as a git submodule at
+  `Acoustic-Analysis/` (its own venv, history, releases). Windows Tkinter workbench:
+  record/import tap clips → DSP suite → visualise/compare → label → export a labelled
+  feature dataset. The tile line consumes only the exported dataset + the model trained
+  from it — never this code; no cross-imports either direction.
+- **v0.1 built end-to-end 2026-09-09** (its own `.CLAUDE/CLAUDE-LOG.md` has the phase
+  detail; 133 pytest, green): `dsp/` (conditioning, spectrum, octave_bands, Schroeder
+  decay, IEC 61672 weighting, sound_level, filter chain + Bode, spectral-subtraction
+  denoise, NC/Ln environment), `features.py`, `classify/` (reference profile + rule
+  grader), `io/` (WAV + SQLite dataset + recorder + playback), a headless CLI, and a
+  12-screen Tkinter GUI (dark instrument-look shell, left sidebar nav, opens on a Home
+  launcher/session-summary screen — the sidebar nav + Home were a 2026-09-09 follow-on).
+- **Not trusted:** never run against a real mic; no pistonphone calibration (levels
+  relative, not dB SPL); no real good-vs-defective tile recordings so the grader and
+  every `config.yaml` threshold are unvalidated; `dsp/loudness.py` deferred; no
+  PyInstaller build.
+
+### Still open / in flight at back-fill time
+
+- **Pick-and-place motion code** — the Python modules under
+  `pick_place_node/python/pick_place/` (`protocol.py`, `coordinate_model.py`,
+  `sequencer.py`, `gantry_backend.py`, `job_runner.py`) and the first real motor run are
+  in progress; `pick_place_node/bench_tests/`, `tools/uno_q/push-stepper-test.bat`, and
+  edits to `documents/pick_place_todo.md` / `pick_place_node/README.md` /
+  `tools/uno_q/*` are uncommitted on the working tree.
+- **Everything acoustic and camera is still pre-hardware / pre-real-tile.** No SMTW tile
+  size/weight spec yet — still blocks conveyor width, gantry travel, gripper/cup sizing,
+  ball-drop energy, and the stack pitch.
+- **This log stays a lagging record.** Prefer the memory notes + `TODO.md` +
+  `documents/` for current state; treat this entry as the index, not the detail.

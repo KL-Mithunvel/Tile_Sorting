@@ -1,0 +1,39 @@
+; systemd unit TEMPLATE for the camera inspection node (Raspberry Pi 5).
+;
+; @PYTHON_DIR@ and @RUN_USER@ are substituted by deploy/install_pi.sh — do not
+; install this file directly, run that script instead. Keeping the paths out of
+; the checked-in file means this works on any Pi and any clone location.
+;
+; Automation_Architecture.md §5.2 (camera = Raspberry Pi 5, decided 2026-09-20);
+; §5.7 for why this node is systemd-deployed rather than an App Lab app.
+
+[Unit]
+Description=Tile Sorting — camera inspection node
+Documentation=https://github.com/KL-Mithunvel/Tile_Sorting
+; The dashboard binds 0.0.0.0 to be reachable over WiFi, so wait for a usable
+; network rather than just for the interface to exist.
+After=network-online.target
+Wants=network-online.target
+; Rate-limit restarts: a camera that never enumerates would otherwise
+; restart-loop forever. These live in [Unit], not [Service], on systemd >= 230.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@RUN_USER@
+; video: USB/UVC and CSI camera access. render: libcamera's GPU/ISP buffers.
+SupplementaryGroups=video render
+WorkingDirectory=@PYTHON_DIR@
+; The system interpreter, not a venv — python3-picamera2 is an apt package
+; built against the system numpy/libcamera (see install_pi.sh).
+ExecStart=/usr/bin/python3 @PYTHON_DIR@/main.py
+; Unbuffered, so journalctl shows the node's output as it happens instead of
+; in 4 KB bursts.
+Environment=PYTHONUNBUFFERED=1
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

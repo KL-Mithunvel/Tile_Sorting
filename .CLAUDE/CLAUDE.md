@@ -17,8 +17,9 @@ Automated ceramic/terracotta tile inspection, grading, sorting, and packing syst
 - Runtime: Python 3.13 (venv at repo root)
 - Current build phase: Phase 1 (Laboratory Proof of Concept, charter §12.1) — acoustic capture and camera vision pipeline exist, plus a standalone acoustic analysis/labelling workbench (`Acoustic-Analysis/` submodule, v0.1); dimensional, control, sorting, and database layers are not started. None of it has run against real tiles or the real measurement hardware yet.
 - Entry point (acoustic module): `python -m acoustic.live_monitor`, run from `acoustic_node/python/` (see Architecture below — the module moved out of a repo-root `acoustic/` package into this App Bricks-shaped node folder on 2026-08-03).
-- Entry point (camera module): `python -m camera.live_dashboard`, run from `camera_node/python/` — opens a WiFi-reachable Flask dashboard (added 2026-08-07, see Architecture below).
-- Every UNO Q station (`camera_node/`, `acoustic_node/`, `pick_place_node/`) is organized as an **Arduino App Bricks** project (`app.yaml` + `sketch/` + `python/`), matching Arduino's own `app-bricks-examples` convention, so each can be opened in Arduino App Lab. All three now have real Python-side code (`pick_place_node/`'s is a digital-twin HMI prototype + bench bring-up tooling — no gantry firmware yet). Every `sketch/` is a stub except `acoustic_node/sketch/sketch.ino` (real FSM, uncompiled). The App Lab deploy path (`arduino-app-cli`) was verified on the lab board 2026-09-01 — see Deployment Notes. Only one physical UNO Q board exists.
+- Entry point (camera module): `python -m camera.live_dashboard`, run from `camera_node/python/` — opens a WiFi-reachable Flask dashboard (added 2026-08-07). Flags: `--list-devices`, `--backend {auto,usb,picamera2}`, `--no-dashboard`. On the Pi station it is started by systemd via `camera_node/python/main.py` instead (see Deployment Notes).
+- **Station→hardware map (updated 2026-09-20):** the camera station moved off the Arduino UNO Q to a **Raspberry Pi 5 (16 GB), Raspberry Pi OS Desktop 64-bit**; acoustic and pick-and-place stay on the UNO Q. Reasoning in `documents/project/Automation_Architecture.md` §5.2/§5.3 — in short, only acoustic uses the UNO Q's real-time MCU half (ToF trigger → solenoid ball-drop → capture window) and only camera is compute-bound (per-frame segmentation + a per-tile CNN/ViT classifier).
+- `acoustic_node/` and `pick_place_node/` are organized as **Arduino App Bricks** projects (`app.yaml` + `sketch/` + `python/`), matching Arduino's own `app-bricks-examples` convention, so each can be opened in Arduino App Lab. `camera_node/` left that convention on 2026-09-20 (its `app.yaml` + `sketch/` were removed) and is now a plain Python service deployed with systemd — see `camera_node/deploy/`. All three have real Python-side code (`pick_place_node/`'s is a digital-twin HMI prototype + bench bring-up tooling — no gantry firmware yet). `pick_place_node/sketch/` is a stub; `acoustic_node/sketch/sketch.ino` is a real FSM, uncompiled. The App Lab deploy path (`arduino-app-cli`) was verified on the lab board 2026-09-01 — see Deployment Notes. Only one physical UNO Q board exists, plus (as of 2026-09-20) one Raspberry Pi 5.
 
 ---
 
@@ -76,9 +77,21 @@ python -m pytest tests/ -v
 # The camera module's CLI runs from inside camera_node/python/, same pattern.
 cd camera_node\python
 
+# Which cameras can this machine actually open? Lists USB devices by OpenCV
+# index and CSI modules by libcamera camera number. Run this first on any new
+# machine (same role as the acoustic module's --list-devices).
+python -m camera.live_dashboard --list-devices
+
 # Opens a Flask dashboard at http://0.0.0.0:5000/ — reachable from any
 # browser on the same WiFi network, not just localhost.
 python -m camera.live_dashboard
+
+# Force a capture backend for one run, overriding config.yaml's camera.backend
+# ("auto" picks the CSI module if libcamera reports one, else a USB webcam).
+python -m camera.live_dashboard --backend usb
+
+# Vision pipeline with no web dashboard (headless grading only).
+python -m camera.live_dashboard --no-dashboard
 
 # Offline: process a saved video file instead of a live webcam — prints the
 # total tile flow count + a numbered per-tile crack/corner result for each
@@ -94,7 +107,16 @@ python development\tile_param_tuner.py    # interactive GUI, one photo at a time
 python development\analyze_dataset.py     # batch: recommends values from all of data/
 ```
 
-There is no hardware/production mode yet — everything above runs on the dev laptop's built-in mic / webcam. No seed data or one-time setup beyond the venv.
+On the **Raspberry Pi 5 camera station** the same module is installed and run as a
+systemd service instead — see `camera_node/deploy/README.md`:
+
+```bash
+./camera_node/deploy/install_pi.sh      # apt deps + systemd unit (NEVER RUN YET)
+sudo systemctl start tile-camera
+journalctl -u tile-camera -f
+```
+
+There is no hardware/production mode yet — everything above has only run on the dev laptop's built-in mic / webcam. The Pi has not been set up; `camera_node/deploy/` and `camera/capture.py`'s `PiCameraCapture` are written but unrun. No seed data or one-time setup beyond the venv.
 
 ---
 
@@ -102,15 +124,18 @@ There is no hardware/production mode yet — everything above runs on the dev la
 
 Acoustic capture, the camera vision pipeline, and a pick-and-place digital-twin HMI prototype exist so far. The pick-and-place gantry control layer is fully *designed* (`documents/programming/pick_place_control_protocol.md` — custom firmware + ASCII line protocol) but no firmware or motion-control code is written. Dimensional, conveyor, decision/grading fusion, sorting execution, and database layers from the full charter (`documents/project/project_charter.md` §5) are not started.
 
-**Repo layout (since 2026-08-03):** every planned UNO Q station gets its own top-level
-node folder, following the Arduino **App Bricks** convention (`app.yaml` + `sketch/` +
-`python/` — see Arduino's `app-bricks-examples` repo) so each can be opened as an app in
-Arduino App Lab:
+**Repo layout (since 2026-08-03, amended 2026-09-20):** every planned station gets its
+own top-level node folder. Stations that run on an **Arduino UNO Q** follow the Arduino
+**App Bricks** convention (`app.yaml` + `sketch/` + `python/` — see Arduino's
+`app-bricks-examples` repo) so each can be opened as an app in Arduino App Lab. Stations
+on other hardware use that platform's normal packaging — as of 2026-09-20 that means
+`camera_node/`, which runs on a **Raspberry Pi 5** and is a plain Python service
+(`python/` + `deploy/`, no `app.yaml`, no `sketch/`):
 
 | Folder | Status |
 |---|---|
 | `acoustic_node/` | Real code — `python/acoustic/` is the working, tested module (below), migrated unchanged from the old repo-root `acoustic/`. `sketch/` (laser/ToF trigger + ball-drop release) and `python/main.py`'s App Lab wiring are stubs, unverified on hardware. |
-| `camera_node/` | Real code (added 2026-08-07) — `python/camera/` is a working, tested vision pipeline + WiFi dashboard (below). `sketch/` and `python/main.py`'s App Lab wiring are still stubs. |
+| `camera_node/` | Real code (added 2026-08-07). **Runs on a Raspberry Pi 5 (16 GB), Raspberry Pi OS Desktop 64-bit — not an UNO Q (decided 2026-09-20, `Automation_Architecture.md` §5.2).** `python/camera/` is a working, tested vision pipeline + WiFi dashboard (below), with three capture backends (USB/OpenCV, CSI/Picamera2, video file). `app.yaml` + `sketch/` were **deleted** 2026-09-20 — this node left the App Bricks convention. `python/main.py` is now a real systemd entry point, not an App Lab stub. `deploy/` (systemd unit + `install_pi.sh` + pinned deps) is written but **never run** — no Pi has been set up and `PiCameraCapture` has never seen a CSI module. |
 | `pick_place_node/` | Partial (2026-08-17 / 09-01) — `python/pick_place/` is a working **digital-twin HMI prototype** (mock gantry simulator + Three.js browser twin + matplotlib desktop twin; `MockGantrySimulator` unit-tested). `bench_tests/stepper_smoke_test/` is a standalone `arduino-app-cli` app to confirm the 4 CNC-shield steppers move (checklist task 0.5). Gantry control **architecture** is fully designed (`documents/programming/pick_place_control_protocol.md` — custom firmware + ASCII line protocol; motor/driver/PSU hardware all chosen) but no real firmware or motion-control Python exists. `sketch/` + `python/main.py` still stubs. |
 
 Conveyor stays on the Arduino Mega (not App-Lab-class, not part of this convention).
@@ -180,11 +205,13 @@ See `Acoustic-Analysis/TODO.md` and its `.CLAUDE/CLAUDE.md` Known Technical Debt
 | `camera_node/python/camera/tile_tracker.py` | `TileTracker` — debounced presence/absence state machine, counts tiles crossing the frame. No I/O — synthetic-sequence testable. |
 | `camera_node/python/camera/pipeline.py` | `process_tile()` — wires the three detectors above into one `TileRecord` + a first-pass rule-based grade. `tile_record_to_dict()` — shared JSON serialization, used by both the dashboard and `process_video.py`. |
 | `camera_node/python/camera/snapshot.py` | `save_tile_snapshot()` — persists a departed tile's photo to `data/camera_captures/` (config: `capture_snapshots`), named by sequence number. I/O only, not unit-tested. |
-| `camera_node/python/camera/capture.py` | `WebcamCapture` — thin OpenCV `VideoCapture` wrapper for a live device. `VideoFileCapture` — same shape, reads a saved video file instead (for `process_video.py`). Real hardware/file I/O, not unit-tested. |
+| `camera_node/python/camera/capture.py` | Three same-shaped capture backends: `WebcamCapture` (USB/UVC via OpenCV), `PiCameraCapture` (CSI Raspberry Pi camera module via Picamera2 — lazy import, so this file still loads on Windows; **never run on hardware**), `VideoFileCapture` (saved file, for `process_video.py`). `create_capture(config)` picks one from `camera.backend` (`auto`/`usb`/`picamera2`); `list_cameras()` backs `--list-devices`. Real hardware/file I/O, not unit-tested. |
 | `camera_node/python/camera/worker.py` | `CameraWorker` + `SharedState` — background thread wiring capture → segmentation → tracker → pipeline (+ snapshot save), thread-safe latest-value store for the dashboard. Tracks the *largest-area* sighting of each tile while it's crossing, not just the last frame before departure. |
 | `camera_node/python/camera/process_video.py` | `process_video_file()` + CLI — offline counterpart to `worker.py`'s loop: runs the same pipeline against a saved video file, reports total tile flow count + a numbered per-tile crack/corner result for each tile that crossed. Not unit-tested; smoke-tested against a synthetic video (see `development/`). |
 | `camera_node/python/camera/dashboard.py` + `templates/dashboard.html` | Flask app: `/video_feed` (MJPEG stream), `/api/status` (JSON), `/` (dashboard page). Serves on `0.0.0.0` so it's reachable over WiFi. |
-| `camera_node/python/camera/live_dashboard.py` | CLI entry point, mirrors `acoustic_node`'s `live_monitor.py` |
+| `camera_node/python/camera/live_dashboard.py` | CLI entry point, mirrors `acoustic_node`'s `live_monitor.py`. Flags: `--list-devices`, `--backend`, `--no-dashboard`. |
+| `camera_node/python/main.py` | Raspberry Pi systemd service entry point — a thin `sys.path` shim over `live_dashboard.main()` so the service and the CLI can't drift apart. **Not** an App Lab stub any more (2026-09-20). |
+| `camera_node/deploy/` | Pi deployment: `tile-camera.service` (systemd unit template), `install_pi.sh` (apt deps + unit install), `requirements-pi.txt` (USB-only venv fallback), `README.md`. Written 2026-09-20, **never run**. |
 | `pick_place_node/python/pick_place/config.yaml` | Twin/workspace parameters — gantry envelope, patrol path, poll interval, dashboard host/port |
 | `pick_place_node/python/pick_place/mock_state.py` | `MockGantrySimulator` — pure deterministic gantry-motion simulator, `.advance(dt_s)` given elapsed time (stand-in for a real `GantryWorker`). No I/O; unit-tested (`tests/test_pick_place_mock_state.py`) with synthetic time steps, same pattern as `TriggerDetector`. |
 | `pick_place_node/python/pick_place/worker.py` | `TwinWorker` + `SharedState` — background thread advancing the simulator on a wall-clock tick into a thread-safe latest-value store. Thin timing wrapper, not unit-tested (same reasoning as `CameraWorker`). |
@@ -268,7 +295,9 @@ the dashboard only ever wants the most recent frame/status, not a backlog.
 
 ### Simulation vs real mode
 
-Not applicable yet — the acoustic module runs on the dev laptop's built-in mic, the camera module on a dev laptop webcam, and `pick_place_node/`'s twin on a `MockGantrySimulator`; no embedded/hardware target is involved for any of them. `TriggerDetector`, the `camera/` pure modules, and `MockGantrySimulator` are hardware-independent by construction (see Development Rules) — the same pure-logic / thin-wrapper split repeats as `acoustic_node/sketch/` (laser/ToF + ball-drop), `camera_node/sketch/` (tile-presence trigger, if any), and `pick_place_node/`'s real firmware + `gantry_backend.py` are built.
+Not applicable yet — the acoustic module runs on the dev laptop's built-in mic, the camera module on a dev laptop webcam, and `pick_place_node/`'s twin on a `MockGantrySimulator`; no embedded/hardware target is involved for any of them. `TriggerDetector`, the `camera/` pure modules, and `MockGantrySimulator` are hardware-independent by construction (see Development Rules) — the same pure-logic / thin-wrapper split repeats as `acoustic_node/sketch/` (laser/ToF + ball-drop) and `pick_place_node/`'s real firmware + `gantry_backend.py` are built.
+
+For the camera node the split is now backend-shaped rather than MCU-shaped: the dev laptop and the Pi station run the *same* `camera/` pure modules, and only `capture.py`'s backend differs (`WebcamCapture` vs. `PiCameraCapture`), chosen by `camera.backend` in config. `camera_node/sketch/` no longer exists — the Pi has no MCU half, so the tile-presence-trigger question (charter §6.1) is now a question about a sensor on the conveyor's Mega or a GPIO on the Pi, not about a sketch in this folder.
 
 ---
 
@@ -332,7 +361,10 @@ CLI entry point (`argparse`). `--list-devices` prints devices and exits. `--cali
 
 ### `camera/capture.py` / `camera/worker.py`
 
-- `WebcamCapture(config)` — thin `cv2.VideoCapture` wrapper around a live device (`start()`/`read_frame()`/`stop()`, context-manager support). Real hardware I/O, not unit-tested.
+- `create_capture(config)` — factory returning the backend named by `config.yaml`'s `camera.backend`: `"usb"` → `WebcamCapture`, `"picamera2"` → `PiCameraCapture`, `"auto"` (default) → the CSI module if libcamera reports one, else USB. This is what lets one config file run unchanged on the Windows dev laptop and on the Pi station.
+- `list_cameras(max_usb_index=8)` — enumerates openable USB indices (by probing) and CSI modules (by asking libcamera). Backs `live_dashboard.py --list-devices`.
+- `WebcamCapture(config)` — thin `cv2.VideoCapture` wrapper around a live USB/UVC device (`start()`/`read_frame()`/`stop()`, context-manager support). `camera.api_preference` picks the OpenCV backend — `"any"` on Windows, pin `"v4l2"` on the Pi, where OpenCV can otherwise choose a GStreamer path that silently ignores the requested resolution/FPS. Real hardware I/O, not unit-tested.
+- `PiCameraCapture(config)` — same contract, for a CSI Raspberry Pi camera module via Picamera2; returns BGR like the others so nothing downstream changes. `picamera2` is imported lazily inside `start()`/`is_available()`, so this module still imports fine on Windows. Two things are config-driven rather than hardcoded because both fail *silently*: `picamera2.format`/`swap_rb` (libcamera names formats by packing order, so `"RGB888"` already yields B,G,R — a wrong channel order would wreck the calibrated HSV range rather than raise) and `picamera2.controls` (auto-exposure/AWB left on means the sensor re-exposes per tile and the HSV range stops meaning anything). **Never run on hardware** — written 2026-09-20 with no CSI module attached.
 - `VideoFileCapture(video_path)` — same shape as `WebcamCapture` but opens a saved video file instead of a live device; `read_frame()` raises `StopIteration` at end-of-file rather than blocking (a file has a defined end). Used by `process_video.py`, not by the live dashboard.
 - `CameraWorker(capture, config, state)` — background thread: reads a frame, segments it, feeds `TileTracker`, and on tile departure runs the pipeline against the *largest-area* region seen while that tile was present (not just the last frame before departure — typically the most centered/least-blurred view), saves a snapshot if `capture_snapshots.enabled`, and publishes an annotated JPEG + results into `SharedState`. `SharedState` is the thread-safe latest-value store the Flask app reads from. Real hardware I/O + threading, not unit-tested (mirrors `AudioCapture`).
 
@@ -346,7 +378,7 @@ CLI entry point (`argparse`). `--list-devices` prints devices and exits. `--cali
 
 ### `camera/live_dashboard.py`
 
-CLI entry point. No flags — loads config, starts `CameraWorker`, runs the Flask app. Ctrl+C stops both.
+CLI entry point. No flags: load config, start `CameraWorker`, run the Flask app; Ctrl+C stops both. `--list-devices` prints every camera this machine can open and exits (same role as the acoustic module's flag of the same name). `--backend {auto,usb,picamera2}` overrides `camera.backend` for one run. `--no-dashboard` runs the vision pipeline headless (no Flask), blocking on `CameraWorker.join()` instead. `main(argv=None)` is also what `camera_node/python/main.py` — the Pi's systemd entry point — calls, so the service and the CLI are the same code path.
 
 ---
 
@@ -375,7 +407,9 @@ audio/image datasets should never be committed to git.
 - This machine enumerates several "Microphone Array" input devices (Realtek, 2ch/4ch variants, one reporting a 16000 Hz default sample rate). `device: null` picks whatever Windows considers the default; if `AudioCapture.start()` fails to open at `sample_rate: 44100`, pin an explicit device index from `--list-devices` in `config.yaml` rather than debugging the default.
 - **Windows Microphone Enhancements** (AGC / noise suppression) must be manually disabled in Sound Control Panel → input device → Properties → Enhancements tab. This cannot be controlled from Python/PortAudio. Until confirmed disabled, RMS threshold and FFT shape are not trustworthy for calibration — fine for pipeline smoke-testing, not for real threshold tuning.
 - No hardware dependencies yet (no GPIO/I2C/serial/solenoid/PLC in this repo). Those land with the acoustic tapping station, dimensional sensors, and control layer per the charter — each will need the dev-machine simulation split required by `CLAUDE-COMMON.md` when it's built.
-- `camera/config.yaml`'s `camera.device_index: 0` is OpenCV's default-webcam index — same "re-verify per machine" caveat as the mic's `device: null`. The eventual target is a separate PC-style webcam connected to the UNO Q (per the 2026-08-07 session), not this dev laptop's built-in camera — device index/backend will need re-checking once that's wired up.
+- `camera/config.yaml`'s `camera.device_index: 0` is OpenCV's default-webcam index — same "re-verify per machine" caveat as the mic's `device: null`. Use `python -m camera.live_dashboard --list-devices` to check.
+- **The camera node's real target is a Raspberry Pi 5 running Raspberry Pi OS Desktop 64-bit** (decided 2026-09-20, supersedes the 2026-08-07 "webcam connected to the UNO Q" plan). Consequences not yet exercised: `camera.api_preference` should be `"v4l2"` there, not `"any"`; a CSI camera module needs `camera.backend: "picamera2"` and the apt-installed `python3-picamera2` (a pip venv next to it is the usual route to a numpy/libcamera ABI mismatch — see `camera_node/deploy/README.md`); auto-exposure/AWB must be locked via `camera.picamera2.controls` once the rig lighting is fixed or the calibrated HSV range drifts; and a Pi 5 running continuous CV wants an active cooler (`vcgencmd get_throttled`).
+- Shell scripts and systemd units under `camera_node/deploy/` must stay LF-terminated. This repo has `core.autocrlf=true`, so `.gitattributes` (added 2026-09-20) pins `*.sh`/`*.service` to `eol=lf` — without it, a clone on the Pi gets CRLF and `install_pi.sh` fails with a misleading "bad interpreter" error.
 
 ---
 
@@ -388,6 +422,25 @@ A lab Arduino UNO Q board (aarch64 Debian, hostname `KLM`, on the owner's laptop
 - **VNC**: TigerVNC on the board binds `-localhost yes` (not exposed on the hotspot directly) — always reached through an SSH tunnel, never opened to the LAN. If `-geometry` ever seems ignored, it's a stale session lock (`tigervncserver -list` shows a `(stale)` PID) — kill and restart, which `vnc-start.bat` already does automatically.
 - This is not yet a real dev-vs-target split in the `CLAUDE-COMMON.md` sense (only bench bring-up sketches and a teammate's motor test have run on the board, no tile-line node in production) — fill in a proper table here once a node's assignment is decided and its code actually runs on it.
 
+**Raspberry Pi 5 (camera station) — decided 2026-09-20, not yet set up.** The camera node
+moved off the UNO Q to a **Raspberry Pi 5, 16 GB RAM, Raspberry Pi OS Desktop (64-bit)**
+(`Automation_Architecture.md` §5.2 has the decision and the comparison; §5.3 records that
+acoustic stays on the UNO Q). Deployment is systemd, not App Lab:
+
+| | UNO Q nodes (`acoustic_node/`, `pick_place_node/`) | Pi node (`camera_node/`) |
+|---|---|---|
+| Deploy | `arduino-app-cli app restart ~/ArduinoApps/<name>` via `tools/uno_q/*.bat` | `camera_node/deploy/install_pi.sh` → systemd unit `tile-camera` |
+| Run | App Lab Docker container + Zephyr sketch on the MCU | `/usr/bin/python3 camera_node/python/main.py` |
+| Deps | App Lab image | apt (`python3-picamera2`/`-opencv`/`-flask`/`-yaml`/`-numpy`) — deliberately **not** a venv, see `camera_node/deploy/README.md` |
+| Logs | `arduino-app-cli` output | `journalctl -u tile-camera -f` |
+
+**None of the Pi path has been executed.** No Pi has been imaged, no camera attached,
+`install_pi.sh` has never run, and `PiCameraCapture` has never opened a CSI module.
+Everything in `camera_node/deploy/` was written 2026-09-20 from documentation. Because it
+runs the *Desktop* image, the Pi can also display its own dashboard locally at
+`http://localhost:5000/` (Chromium kiosk snippet in `deploy/README.md`) — that browser is
+one more consumer of the MJPEG stream, so watch the frame rate.
+
 ---
 
 ## Known Technical Debt
@@ -397,16 +450,18 @@ A lab Arduino UNO Q board (aarch64 Debian, hostname `KLM`, on the owner's laptop
 - `acoustic_node/python/acoustic/capture.py`'s `AudioCapture` (the real hardware path) has only been smoke-tested via `--list-devices`; `--calibrate` and full trigger-to-plot flow have not yet been run against a live mic in this session — needs a manual run to confirm end-to-end.
 - `documents/requirements/requirements.md` was newly formalized (2026-07-10) from `documents/project/project_charter.md` and `Automation_Architecture.md` — it has not yet been reviewed section-by-section against the full charter for completeness, so treat it as a first pass, not an exhaustive spec.
 - Tile size and weight range from SMTW's actual product line has never been obtained. Every dimensional figure in the docs so far (e.g. the ~300mm example JSON in `Automation_Architecture.md`) is illustrative, not a spec — don't size the conveyor, gantry, gripper, or ball-drop energy off of it.
-- **App Lab deploy path verified 2026-09-01; the nodes' `python/main.py` files are still stubs.** The `arduino-app-cli` build/flash/run flow and the `Arduino_RouterBridge.h` ↔ Python `Bridge.call()` mechanism are confirmed on the lab board (see Deployment Notes) — this resolves the "how do the Python and sketch sides communicate" and "does `App.run()` work" unknowns flagged 2026-08-03. But `acoustic_node/python/main.py`, `camera_node/python/main.py`, and `pick_place_node/python/main.py` still just call `arduino.app_utils.App.run()` copied from `app-bricks-examples` and are **not** wired to their real modules; treat each node's `python/main.py` and (except `acoustic_node/sketch/sketch.ino`) each `sketch/` as an unverified stub. `acoustic_node/sketch/sketch.ino` has real tap-sequencer logic (2026-08-20) but has never been compiled or run. The generated `app.yaml` schema is known (`name` / `icon` / `ports` / `bricks`, mirrored in `pick_place_node/bench_tests/stepper_smoke_test/app.yaml`, checked on the board 2026-09-09), but App Lab's `App.run()` behaviour itself has not been exercised — the verified path used bare `arduino-app-cli` apps whose Python side is a no-op, not a real `python/main.py`.
+- **The Raspberry Pi 5 camera station exists on paper only** (added 2026-09-20). The decision is made and the code is restructured for it — `camera_node/` left the App Bricks convention (`app.yaml` + `sketch/` deleted), `python/main.py` is a real systemd entry point, `capture.py` gained `PiCameraCapture` + a `camera.backend` switch, and `deploy/` has a systemd unit and install script. **None of it has run.** No Pi has been imaged; `PiCameraCapture` has never opened a camera; `install_pi.sh`'s apt package names, the unit file, and the claim that Picamera2's `"RGB888"` already yields BGR are all from documentation, not observation. The USB path (`WebcamCapture`, `create_capture`, `--list-devices`, `main.py`) *was* exercised on the Windows dev laptop. Treat the CSI/Pi half as unverified until it runs on the bench, and expect `camera.api_preference: "v4l2"`, exposure/AWB locking, and frame-rate-under-load to all need attention there.
+- **Camera thresholds will likely need re-deriving on the Pi rig anyway.** `segmentation.min_tile_area_px` and `crack_detection.border_margin_px` are absolute pixel counts calibrated at a different resolution and working distance; a new camera, new mounting height, and new enclosure lighting invalidate them again. Re-run `development/analyze_dataset.py` once the Pi's camera position is fixed.
+- **App Lab deploy path verified 2026-09-01; the UNO Q nodes' `python/main.py` files are still stubs.** The `arduino-app-cli` build/flash/run flow and the `Arduino_RouterBridge.h` ↔ Python `Bridge.call()` mechanism are confirmed on the lab board (see Deployment Notes) — this resolves the "how do the Python and sketch sides communicate" and "does `App.run()` work" unknowns flagged 2026-08-03. But `acoustic_node/python/main.py` and `pick_place_node/python/main.py` still just call `arduino.app_utils.App.run()` copied from `app-bricks-examples` and are **not** wired to their real modules; treat each of those nodes' `python/main.py` and (except `acoustic_node/sketch/sketch.ino`) each `sketch/` as an unverified stub. (`camera_node/python/main.py` is no longer in this category — it's a real systemd entry point on the Pi as of 2026-09-20, and there is no `camera_node/sketch/` any more.) `acoustic_node/sketch/sketch.ino` has real tap-sequencer logic (2026-08-20) but has never been compiled or run. The generated `app.yaml` schema is known (`name` / `icon` / `ports` / `bricks`, mirrored in `pick_place_node/bench_tests/stepper_smoke_test/app.yaml`, checked on the board 2026-09-09), but App Lab's `App.run()` behaviour itself has not been exercised — the verified path used bare `arduino-app-cli` apps whose Python side is a no-op, not a real `python/main.py`.
 - **Acoustic tap-trigger architecture is designed and unit-tested but has never touched real hardware** (added 2026-08-20, see `documents/electrical/schematics/acoustic_station_wiring.md` for the full decision): the ToF-triggered dual-solenoid (ARM+LOCK) gravity-drop mechanism, its MCU state machine (`sketch.ino`), and the Python-side hardware-trigger audio capture path (`hardware_trigger.py`, `tap_sequencer.py`, `capture.py`'s `trigger.mode` switch) are all written and covered by synthetic-input unit tests, and the `"simulated"` trigger mode exercises the whole path end-to-end on a dev machine — but no ToF sensor, solenoid, or MOSFET driver has been wired up yet, `sketch.ino`'s `readTofDistanceMm()` is a placeholder, and the App Bricks bridge-variable read in `main.py` (`read_tap_count()`) is unconfirmed. Ball mass/drop height and the reload/reset mechanism between tiles remain undecided.
-- The `acoustic_node/`/`camera_node/`/`pick_place_node/` three-folder split assumes three physical UNO Q boards eventually; only one exists today (see Deployment Notes) — don't infer hardware procurement from the repo structure.
+- The node-folder split still outruns the hardware. As of 2026-09-20 there is **one UNO Q** and **one Raspberry Pi 5**, for three stations (`acoustic_node/`, `camera_node/`, `pick_place_node/`) — and the Pi hasn't been set up. Note that the Pi decision does *not* relieve the UNO Q shortage: acoustic (tap sequencing) and pick-and-place (step-pulse generation) both genuinely need an MCU and both want that one board; it only stops the board being spent on the node that least needed it. Pick-and-place bench bring-up currently has it. Don't infer hardware procurement from the repo structure.
 - **Pick-and-place: architecture fully designed, almost nothing built.** Decided 2026-08-31/09-01 (`documents/programming/pick_place_control_protocol.md`, `documents/electrical/schematics/pick_place_hardware_connections_plan.md`, `documents/pick_place_todo.md`): custom minimal firmware on the UNO Q MCU (**not** GRBL/Klipper — no STM32U585 port, FR-18 forbids off-the-shelf G-code), Linux owns the coordinate model + sequencer + HMI, line-based ASCII protocol between them. Hardware chosen and in hand: CNC Shield V3.10, 4× TMC2208, 4× 42HM48-1684 NEMA 17, Mean Well LRS-150-12; 3 logical axes (Y beam = 2 motors, A cloned from Y in hardware); vacuum-cup end effector. **What exists as code:** only the digital-twin HMI prototype (`pick_place_node/python/pick_place/`, driven by `MockGantrySimulator` — no real gantry) and `bench_tests/stepper_smoke_test/` (unrun). **Not started:** the firmware (`sketch.ino` is empty), every `pick_place/` module in the protocol doc's plan (`protocol.py`, `coordinate_model.py`, `sequencer.py`, `gantry_backend.py`, `job_runner.py`), and all of `documents/pick_place_todo.md` (nothing checked off — it all needs the physical rig). Gantry mechanical design, travel limits, and stack pitch (blocked on SMTW tile size) are open. Whether an accelerated stepper library (FastAccelStepper/AccelStepper) even builds under Zephyr on the UNO Q is an untested risk.
 - `.CLAUDE/CLAUDE.md` previously documented a `venv/` at the repo root; the actual local environment found during this session was `.venv/` (PyCharm default) with only `pip` installed — `requirements.txt` had not been installed into it. Re-verify which venv convention is actually in use before trusting either name blindly.
 - **Camera vision thresholds are now data-driven but still unvalidated for true-positive sensitivity** (updated 2026-08-11, was "unvalidated" as of 2026-08-07): `camera_node/python/camera/config.yaml`'s HSV segmentation range, crack-detection Canny thresholds/`border_margin_px`, and corner `min_fill_ratio` were calibrated against 311 real terracotta tile photos (`data/`, see `development/README.md`) — no longer blind guesses. But every one of those photos is a **known-intact** tile, so calibration only established a false-positive floor (loose enough not to flag a healthy tile), not whether a real crack or broken corner actually gets caught — there are no damaged-tile photos yet. `min_tile_area_px` and `border_margin_px` are also absolute pixel values tied to the close-up calibration photos' resolution, not the live 640x480 pipeline's real (undecided) camera distance — re-derive both once that's fixed. `min_crack_length_px`/`min_aspect_ratio` were not part of the calibration and remain the original placeholder guesses. See `camera_node/README.md` Known Limitations and `development/README.md` for the full reasoning. Do not trust any crack/corner detection result as a true-positive guarantee until real damaged-tile photos exist to validate against.
 - **`detect_cracks()` had a border-silhouette false-positive bug** (found 2026-08-11 while running the calibration above, fixed same day): it runs Canny on segmentation's tight bounding-box crop, so the tile's own edge against the background sits right at the crop's border — a long, thin, high-contrast line indistinguishable from a real crack by the existing length/aspect-ratio filter. Measured ~98-100% false-positive rate on known-intact tile photos before the fix. Fixed by adding `border_margin_px` (blanks a border band of the Canny edge map before contour-matching — see `crack_detection.py`'s docstring and `development/analyze_dataset.py`), which dropped the false-positive rate to ~2-11% depending on margin. Worth remembering if crack detection is ever reworked: any crop-based edge detector on this kind of tight bounding-box input needs this kind of border exclusion.
 - Crack "type" reported by the camera pipeline is severity (minor/major) + measured length, not a defect taxonomy (hairline vs. structural, edge vs. center crack) — that needs real labeled photos to design against.
 - **`detect_broken_corner()`'s `fill_ratio` check alone under-caught diagonal corner chips** (found and fixed 2026-08-11, same session as the crack bug above): a triangular chip — the realistic way ceramic actually breaks — removes much less *area* than a square notch reaching the same distance into the tile, so `fill_ratio` badly under-represents how far a diagonal break reaches. Confirmed empirically: a chip whose two legs each reach halfway across the tile's edge only dropped `fill_ratio` to ~0.87, above the production `min_fill_ratio` (0.83) — it would not have been flagged. Fixed by adding `max_missing_extent_fraction`, a second check on how *deep* the gap reaches (distance transform), which does catch it — see `corner_detection.py`'s docstring. Also added real-world missing-area/depth measurements (`missing_area_sq_inches`, `missing_depth_inches`) using the tile's known 9x9in size. **Still unvalidated against a real broken-corner photo** — only one real defect photo has turned up in the whole dataset so far (a crack, in `data/9x9-5(Cam)/DSC_0065.JPG`, correctly caught by `detect_cracks()` — see `development/README.md`), no broken-corner example yet. Localizing *which* corner is broken remains deliberately deferred.
-- The camera dashboard's live MJPEG stream is only smoke-tested via Flask's test client and manual review of the code — it has not been run against a real webcam feed end-to-end in this session (no camera hardware available to the assistant). Confirm `python -m camera.live_dashboard` actually opens a working webcam stream on the target machine before relying on it.
+- The camera dashboard's live MJPEG stream is only smoke-tested via Flask's test client and manual review of the code — it has never been watched running against a real camera feed end-to-end (no camera hardware available to the assistant). `--list-devices` does find the dev laptop's webcam, so the device opens; the streaming path itself is still unconfirmed. Confirm `python -m camera.live_dashboard` actually shows a live stream before relying on it, and re-confirm on the Pi, where a local kiosk browser is a second client on the same stream.
 
 ---
 
@@ -416,7 +471,9 @@ A lab Arduino UNO Q board (aarch64 Debian, hostname `KLM`, on the owner's laptop
 2. **No hardcoded device/sensor parameters.** Sample rate, device selection, thresholds, timing — all of it goes in a module-local `config.yaml`, never inline in source (extends the `CLAUDE-COMMON.md` hardware-address rule to audio params).
 3. **Any threshold calibrated on prototype/substitute hardware (e.g. laptop mic instead of the measurement mic + real tapping mechanism) is provisional** and must be explicitly called out as such in code/docs until recalibrated on the real acoustic station (charter §6.2, §15.2, §18.1).
 4. **New non-code artifacts get filed under the matching `documents/` subfolder in the same commit as the work that produced them** — see Documentation Architecture above. Don't leave CAD exports, schematics, or college submissions loose at the repo root or bundled into an unrelated folder.
-5. **Every UNO Q station's code lives in its own top-level `<station>_node/` folder, shaped as an Arduino App Bricks project** (`app.yaml` + `sketch/` + `python/` — see `acoustic_node/` as the reference, `Automation_Architecture.md` §5.7). Don't add new hardware-station Python packages back at the repo root the way the old `acoustic/` was — that convention was replaced 2026-08-03.
+5. **Every station's code lives in its own top-level `<station>_node/` folder.** Don't add new hardware-station Python packages back at the repo root the way the old `acoustic/` was — that convention was replaced 2026-08-03. *How* a node folder is shaped depends on what it runs on (amended 2026-09-20, `Automation_Architecture.md` §5.7):
+   - **On an Arduino UNO Q** — shape it as an Arduino App Bricks project (`app.yaml` + `sketch/` + `python/`), with `acoustic_node/` as the reference. Applies to `acoustic_node/` and `pick_place_node/`.
+   - **On anything else** — use that platform's normal packaging, and don't carry App Bricks scaffolding that describes hardware the node doesn't have. `camera_node/` (Raspberry Pi 5) is the reference: `python/` + a `deploy/` folder with a systemd unit and an install script; its `app.yaml` and `sketch/` were deleted rather than left as dead stubs.
 
 ---
 

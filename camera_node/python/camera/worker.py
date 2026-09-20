@@ -16,7 +16,7 @@ from typing import Optional
 import cv2
 import numpy as np
 
-from camera.capture import WebcamCapture
+from camera.capture import PiCameraCapture, WebcamCapture
 from camera.pipeline import TileRecord, process_tile
 from camera.segmentation import TileRegion, segment_tile
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
@@ -72,7 +72,20 @@ class SharedState:
 
 
 class CameraWorker:
-    def __init__(self, capture: WebcamCapture, config: dict, state: SharedState):
+    """Owns the per-frame pipeline on its own background thread.
+
+    `capture` is any object with capture.py's start()/read_frame()/stop()
+    contract — WebcamCapture on a USB camera, PiCameraCapture on the Pi
+    station's CSI module. The worker never asks which; it only ever wants a
+    BGR frame back, which both backends guarantee.
+    """
+
+    def __init__(
+        self,
+        capture: WebcamCapture | PiCameraCapture,
+        config: dict,
+        state: SharedState,
+    ):
         self._capture = capture
         self._config = config
         self._state = state
@@ -94,6 +107,13 @@ class CameraWorker:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         self._capture.stop()
+
+    def join(self) -> None:
+        """Block until the capture thread exits. Only used by the headless
+        (--no-dashboard) path, where there's no Flask server to block on
+        instead — the dashboard path blocks in app.run()."""
+        while self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=0.5)
 
     def _loop(self) -> None:
         seg_cfg = self._config["segmentation"]

@@ -1,0 +1,31 @@
+# Line-ending policy.
+#
+# This repo is authored on Windows with core.autocrlf=true, but parts of it are
+# checked out and executed on Linux targets — the Raspberry Pi 5 camera station
+# (camera_node/deploy/, added 2026-09-20) and the Arduino UNO Q's Linux side.
+# Without this file, git hands those machines CRLF files, and a shell script
+# with CRLF line endings fails on the first line with a bare
+# "/usr/bin/env: 'bash\r': No such file or directory" — which reads like a
+# missing interpreter, not a line-ending problem, and wastes an afternoon.
+
+# Let git decide for anything not named below.
+* text=auto
+
+# Must be LF wherever they land: executed or parsed on Linux.
+*.sh            text eol=lf
+*.service       text eol=lf
+*.bash          text eol=lf
+
+# Must stay CRLF: Windows-only dev tooling (tools/uno_q/).
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# Never touch: binary, or line-ending-sensitive on the wire.
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.wav           binary
+*.pdf           binary
+*.pt            binary
+*.onnx          binary
+*.safetensors   binary

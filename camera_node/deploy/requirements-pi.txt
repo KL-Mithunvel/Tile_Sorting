@@ -1,0 +1,36 @@
+# Runtime dependencies for the camera node on the Raspberry Pi 5 station.
+#
+# This is the USB-WEBCAM-ONLY fallback path. The recommended install is
+# deploy/install_pi.sh, which uses apt system packages instead — see the
+# reasoning in deploy/README.md (short version: python3-picamera2 is built
+# against the system numpy and libcamera, and a pip-installed second numpy in
+# an isolated venv is the standard way to get an ABI mismatch that only
+# surfaces at the first frame capture).
+#
+# Use this file only if you are running a USB webcam and do NOT need the CSI
+# camera module:
+#
+#     python3 -m venv ~/tile-camera-venv
+#     source ~/tile-camera-venv/bin/activate
+#     pip install -r camera_node/deploy/requirements-pi.txt
+#
+# and then point the systemd unit's ExecStart at that venv's python.
+#
+# This is the *runtime* slice only — the repo-root requirements.txt is the
+# full dev environment (torch, ultralytics, transformers, roboflow, pytest,
+# matplotlib, sounddevice …), none of which the camera station needs to grade
+# a tile. Versions match the repo-root pins so the Pi and the dev laptop run
+# the same code paths.
+
+Flask==3.1.3
+numpy==2.5.1
+opencv-python-headless==5.0.0.93
+PyYAML==6.0.3
+
+# Pulled in by Flask; pinned to match requirements.txt.
+blinker==1.9.0
+click==8.4.2
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+Werkzeug==3.1.8

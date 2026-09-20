@@ -24,11 +24,54 @@
 # max_missing_extent_fraction below.
 
 camera:
+  # Which capture backend to open (see camera/capture.py create_capture()):
+  #   "auto"       - use the CSI camera if libcamera actually reports one,
+  #                  otherwise fall back to a USB webcam. Lets the same config
+  #                  file work unchanged on the Windows dev laptop and on the
+  #                  Raspberry Pi 5 station.
+  #   "usb"        - force WebcamCapture (OpenCV VideoCapture).
+  #   "picamera2"  - force PiCameraCapture (Raspberry Pi CSI module).
+  # Target hardware is a Raspberry Pi 5 / Raspberry Pi OS Desktop 64-bit
+  # (decided 2026-09-20, Automation_Architecture.md 5.2) - NOT an Arduino UNO Q.
+  backend: "auto"
+
+  # --- USB / UVC webcam settings (backend "usb", or "auto" with no CSI cam) ---
   # OpenCV VideoCapture device index. 0 = first/default webcam.
+  # Re-verify per machine with: python -m camera.live_dashboard --list-devices
   device_index: 0
+  # OpenCV capture API. "any" is right on Windows. On the Pi, pin "v4l2" -
+  # OpenCV can otherwise pick a GStreamer path that silently ignores the
+  # resolution/FPS requests below.
+  api_preference: "any"
+
   frame_width: 640
   frame_height: 480
   target_fps: 15
+
+  # --- CSI Raspberry Pi camera module settings (backend "picamera2"/"auto") ---
+  # UNVERIFIED: no CSI module has been attached yet, so nothing in this block
+  # has ever run. See camera_node/README.md.
+  picamera2:
+    camera_num: 0
+    # libcamera names formats by packing order, not channel order, so
+    # "RGB888" already hands back B,G,R - exactly what OpenCV wants, no
+    # conversion. If colours look inverted on the bench, set swap_rb: true
+    # rather than editing capture.py; a wrong channel order would silently
+    # wreck the HSV segmentation range below.
+    format: "RGB888"
+    swap_rb: false
+    # Passed straight through to libcamera. LEAVE EMPTY UNTIL THE RIG'S
+    # LIGHTING IS FIXED, then lock exposure/gain/white-balance here: with
+    # auto-exposure and AWB on, the sensor re-exposes per tile and the
+    # calibrated hsv_lower/hsv_upper below stop meaning anything.
+    # Example once the enclosure lighting is final:
+    #   controls:
+    #     AeEnable: false
+    #     AwbEnable: false
+    #     ExposureTime: 8000        # microseconds
+    #     AnalogueGain: 1.0
+    #     ColourGains: [1.8, 1.6]   # [red, blue]
+    controls: {}
 
 segmentation:
   # HSV range for isolating a brown terracotta tile from its background.

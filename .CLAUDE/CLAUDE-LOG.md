@@ -457,3 +457,88 @@ plan (`octave_bands.py`, `decay.py`, `weighting.py`, `sound_level.py`, `calibrat
   ball-drop energy, and the stack pitch.
 - **This log stays a lagging record.** Prefer the memory notes + `TODO.md` +
   `documents/` for current state; treat this entry as the index, not the detail.
+
+## 2026-09-20 — Camera station moves from Arduino UNO Q to Raspberry Pi 5
+
+- **The question:** the owner acquired a Raspberry Pi 5 (16 GB) to replace one UNO Q, and
+  asked which station should take it — the visual model or the sound model. This was
+  already a logged open decision (`Automation_Architecture.md` §5.2/§5.3: "not yet
+  finalized which of camera/acoustic (not both) would move to Pi if either does",
+  `TODO.md` Not Started).
+- **Decision: camera moves to the Pi; acoustic keeps the UNO Q.** The two stations want
+  opposite things from their hardware. Acoustic's defining requirement is *timing* — ToF
+  detect → ARM solenoid → settle → LOCK release → open the mic capture window on the
+  impact instant (`acoustic_node/sketch/sketch.ino`'s FSM → `hardware_trigger.py`'s
+  `notify_tap()`), which is exactly what the UNO Q's Zephyr/STM32U585 MCU half is for; on
+  a Pi that FSM runs in Linux userspace with no real-time guarantee, or needs a separate
+  MCU bolted on, which is an UNO Q rebuilt worse. Camera's defining requirement is
+  *compute* — per-frame HSV segmentation + JPEG re-encode, plus a per-tile ViT/CNN
+  classification (`camera_models/cam_vit`, ViT-B/16 ≈ 17 GFLOPs/image) — against a quad
+  A53 on the UNO Q vs. a quad A76 + 16 GB + PCIe (Hailo-8L path) on the Pi. And
+  `camera_node/sketch/` was never more than an empty stub: its only candidate MCU job
+  (tile-presence trigger) is still undecided and may not exist. Secondary: mainstream
+  aarch64 wheels for OpenCV/PyTorch/ONNX work out of the box on Raspberry Pi OS, whereas
+  anything beyond a no-op `python/main.py` in App Lab's Docker container is still
+  unverified on the UNO Q.
+- **Explicitly noted as *not* solved by this:** the board shortage. Acoustic (tap
+  sequencing) and pick-and-place (step-pulse generation) both genuinely need an MCU and
+  both want the one physical UNO Q. This only stops that board being spent on the station
+  that least needed it. Also noted: neither board has analog audio in, so a USB mic /
+  interface is needed either way — not a differentiator, despite looking like one.
+- **Docs:** `Automation_Architecture.md` §5.2 (decision + a hardware-wants comparison
+  table + consequences + chosen/rejected hardware), §5.3 (acoustic confirmed on UNO Q,
+  with the reasoning restated from its own side), §5.7 (App Bricks convention **amended**
+  — retitled "UNO Q nodes only"; the convention now applies to a station only if that
+  station's code actually runs on an UNO Q). `.claude/CLAUDE.md`: overview station→hardware
+  map, Running the System, Architecture layout + node table, Key Modules, Platform
+  Constraints, a new Deployment Notes subsection with a UNO Q-vs-Pi deploy table, four
+  Known Technical Debt entries, and Development Rule 5 rewritten to be platform-conditional.
+- **Code — `camera_node/` left the App Bricks convention:** deleted `app.yaml` and
+  `sketch/` (they described an MCU this station will never have) rather than leaving dead
+  stubs. `python/main.py` rewritten from `App.run()` into a real systemd entry point —
+  deliberately a thin `sys.path` shim over `camera.live_dashboard.main()`, so the service
+  and the interactive CLI cannot drift apart. Kept the `python/` folder name: `pytest.ini`,
+  every documented command, and every `documents/` path reference already point at it, and
+  renaming would be churn for no behavioural gain.
+- **Code — capture backends:** `capture.py` gained `PiCameraCapture` (CSI module via
+  Picamera2, lazy import so the file still loads on Windows), `create_capture(config)`
+  (picks from the new `camera.backend`: `auto`/`usb`/`picamera2`), and `list_cameras()`.
+  `config.yaml` gained `camera.backend`, `camera.api_preference` (pin `"v4l2"` on the Pi —
+  OpenCV can otherwise choose a GStreamer path that silently ignores the requested
+  resolution/FPS), and a `picamera2` block. `live_dashboard.py` gained `--list-devices`,
+  `--backend`, `--no-dashboard`; `CameraWorker` gained `join()` for the headless path and
+  a widened capture type hint.
+- **Two Pi-specific traps put in config rather than code, because both fail *silently*:**
+  (1) channel order — libcamera names formats by packing order, so Picamera2's `"RGB888"`
+  already yields B,G,R, which is what OpenCV wants; a wrong assumption here would wreck
+  the calibrated HSV segmentation range rather than raise, hence `picamera2.swap_rb`.
+  (2) auto-exposure/AWB — left on, the sensor re-exposes per tile and the calibrated
+  `hsv_lower`/`hsv_upper` stop meaning anything, hence `picamera2.controls` with a worked
+  lock-it-down example. Neither mattered on a laptop webcam pointed at a desk.
+- **New `camera_node/deploy/`:** `tile-camera.service` (systemd unit *template* —
+  `@PYTHON_DIR@`/`@RUN_USER@` substituted at install time so no path or user is baked into
+  a checked-in file), `install_pi.sh`, `requirements-pi.txt`, and a README. Chose **apt
+  system packages over a venv** deliberately: `python3-picamera2` is built against the
+  system numpy and libcamera, and pip-installing a second numpy/OpenCV beside it is the
+  standard route to an ABI mismatch that surfaces at the first `capture_array()` on the
+  rig rather than at import. `requirements-pi.txt` remains as the USB-webcam-only venv
+  fallback, where picamera2 is out of the picture.
+- **Found and fixed a latent deployment bug while doing this:** the repo has
+  `core.autocrlf=true` and had no `.gitattributes`, so a clone on the Pi would have
+  received `install_pi.sh` with CRLF endings and failed on line 1 with
+  `/usr/bin/env: 'bash': No such file or directory` — which reads like a missing
+  interpreter, not a line-ending problem. Added `.gitattributes` pinning `*.sh`/`*.service`
+  to `eol=lf`, `*.bat`/`*.cmd` to `eol=crlf` (Windows-only `tools/uno_q/` tooling), and
+  marking the binary/media types.
+- **Verified:** 57 tests still green. On the dev laptop, smoke-tested `create_capture()`
+  across all three backend values plus both error paths, `PiCameraCapture`'s
+  not-installed message, the new argparse flags, and `main.py --list-devices` run the way
+  systemd will invoke it (it found the laptop's webcam at index 0, so the `sys.path` shim
+  works). `bash -n` on `install_pi.sh`; exec bit set in the index (100755).
+- **Not verified — nothing Pi-specific has ever run.** No Pi imaged, no CSI module
+  attached. `PiCameraCapture`, `install_pi.sh`'s apt package names, the systemd unit, and
+  the Picamera2 channel-order claim all come from documentation, not observation. Flagged
+  as such in `camera_node/README.md`, `deploy/README.md`, `config.yaml`, the class
+  docstring, `.claude/CLAUDE.md` Known Technical Debt, and five new `TODO.md` items
+  (Pi setup, camera choice, `PiCameraCapture` validation, exposure/AWB locking,
+  frame-rate load test).

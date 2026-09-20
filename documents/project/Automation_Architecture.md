@@ -194,18 +194,59 @@ Responsibilities of the master:
 
 The camera node performs visual inspection.
 
-**Decision (2026-07-10):** planned as an **Arduino UNO Q**. Open — may be swapped to a
-Raspberry Pi instead; not yet finalized which of camera/acoustic (not both) would move
-to Pi if either does.
+**Decision (2026-07-10), SUPERSEDED:** planned as an **Arduino UNO Q**, with the
+camera-vs-acoustic Pi swap left open.
 
-Possible hardware:
+**Decision (2026-09-20): the camera node runs on a Raspberry Pi 5 (16 GB RAM), under
+Raspberry Pi OS Desktop (64-bit).** This closes the open question above and in §5.3: of
+camera and acoustic, **camera** is the one that moves off the UNO Q. Acoustic stays on
+the UNO Q (§5.3).
 
-* Raspberry Pi 5
-* Arduino UNO Q
-* Mini PC
-* Jetson Nano / Jetson Orin Nano
-* USB camera with master PC
-* Industrial camera in future version
+Rationale — the two nodes want opposite things from their hardware:
+
+| | Acoustic node | Camera node |
+|---|---|---|
+| Needs a real-time MCU? | **Yes** — ToF detect → ARM solenoid → settle → LOCK release → open the mic capture window on the impact instant (`acoustic_node/sketch/sketch.ino`, §5.3) | **No** — `camera_node/sketch/` was never more than a stub; its only candidate MCU job (tile-presence trigger) is still undecided and may not exist at all (§8) |
+| Per-item compute | FFT + octave bands + decay + ~20 scalar features → rule/small classifier; milliseconds | Per-frame HSV segmentation + JPEG re-encode for the MJPEG stream, plus a per-tile CNN/ViT classification (`camera_models/cam_vit`, ViT-B/16 ≈ 17 GFLOPs/image) |
+| Benefits from 16 GB RAM? | No — working set is one audio clip | Yes — hold multiple model weights + frame buffers, A/B models on the line |
+| Accelerator upgrade path | Not needed | Pi 5 PCIe → Hailo-8L AI HAT+ if CPU inference is too slow for line rate |
+
+In short: the UNO Q's distinguishing feature is its tightly-coupled MCU, which only the
+acoustic node actually uses; the Pi 5's distinguishing feature is CPU/RAM/PCIe, which
+only the camera node actually needs. Putting the camera on the UNO Q would pay for an
+unused MCU while starving the one station that is compute-bound.
+
+Secondary reasons: mainstream aarch64 wheels for OpenCV / PyTorch / ONNX Runtime /
+Ultralytics work out of the box on Raspberry Pi OS, whereas anything beyond a no-op
+`python/main.py` inside App Lab's Docker container is still unverified on the UNO Q
+(`.claude/CLAUDE.md` Known Technical Debt); and the Pi's CSI connectors allow a camera
+module with controllable optics/exposure instead of a consumer USB webcam.
+
+Consequences:
+
+* `camera_node/` leaves the App Bricks convention (§5.7) — no `app.yaml`, no `sketch/`.
+  It is a plain Python service, started by systemd, not by `arduino-app-cli`.
+* The OS is the **Desktop (GUI)** image, not Lite — a monitor or VNC session at the
+  station can show the local dashboard directly (`http://localhost:5000/`) in addition
+  to the over-WiFi view other machines get.
+* Station→master communication is unchanged (MQTT, §12/§23). Nothing about this
+  decision touches the protocol.
+* This does **not** solve the board shortage: acoustic (tap sequencing) and
+  pick-and-place (step-pulse generation) both need an MCU, and only one physical UNO Q
+  exists (§5.7). It stops the one board being spent on the node that least needs it.
+  Pick-and-place bench bring-up currently has it.
+
+Chosen hardware:
+
+* Raspberry Pi 5, 16 GB RAM — Raspberry Pi OS Desktop (64-bit)
+* Camera: USB webcam (today) or a CSI Raspberry Pi camera module (preferred once the
+  rig's working distance is fixed) — both supported, see `camera_node/README.md`
+* Optional later: Hailo-8L AI HAT+ over PCIe, if CPU inference can't hold line rate
+
+Considered and not chosen: Arduino UNO Q (no MCU work to justify it, weakest compute),
+mini PC (cost/footprint), Jetson Orin Nano (over-specified for classical CV + one small
+classifier), USB camera on the master PC (defeats the per-station node architecture of
+§2).
 
 Responsibilities:
 
@@ -244,8 +285,24 @@ The acoustic node performs hidden-defect inspection using sound.
 **Decision (2026-07-10):** planned as an **Arduino UNO Q**, paired with a laser/ToF
 trigger sensor and a ball-drop impactor (see `project_charter.md` §6.2 Decision) — the
 UNO Q triggers the ball release on tile detection, then captures and processes the
-resulting sound locally before sending the result to master. Open — may be swapped to a
-Raspberry Pi instead, same as the camera node.
+resulting sound locally before sending the result to master.
+
+**Decision (2026-09-20): confirmed — the acoustic node stays on the Arduino UNO Q.** The
+"may be swapped to a Raspberry Pi" option is closed: the camera node took that slot
+instead (§5.2, which has the full comparison). The deciding factor is that this station's
+defining requirement is *timing*, not compute — the ToF-triggered ARM/LOCK dual-solenoid
+ball-drop FSM in `acoustic_node/sketch/sketch.ino` must fire deterministically and hand
+the impact instant to the Python capture window (`hardware_trigger.py`'s `notify_tap()`).
+That is exactly what the UNO Q's Zephyr/STM32U585 MCU half is for. On a Pi the same FSM
+would run in Linux userspace with no real-time guarantee, or need a separate MCU bolted
+on — which is a UNO Q, rebuilt worse.
+
+The analysis load here does not argue the other way: the runtime pipeline is an FFT,
+octave bands, decay and a handful of scalar features feeding a small classifier
+(`Acoustic_Analysis_Methods.md`), which is milliseconds of work and a few MB of working
+set on any CPU in this list. Note that neither board has an analog audio input — a USB
+microphone or USB audio interface is required either way, so that is not a
+differentiator.
 
 Possible hardware:
 
@@ -429,11 +486,12 @@ Example response:
 
 ---
 
-### 5.7 Node Code Delivery Convention (App Bricks)
+### 5.7 Node Code Delivery Convention (App Bricks — UNO Q nodes only)
 
-**Decision (2026-08-03):** every station running on an Arduino UNO Q — currently
-camera, acoustic, and pick-and-place (§5.2, §5.3, §5.6) — gets its own top-level repo
-folder (`camera_node/`, `acoustic_node/`, `pick_place_node/`), each structured to match
+**Decision (2026-08-03), AMENDED 2026-09-20:** every station running on an Arduino
+UNO Q — as of 2026-09-20 that is **acoustic and pick-and-place only** (§5.3, §5.6); the
+camera node moved to a Raspberry Pi 5 and left this convention, see below — gets its own
+top-level repo folder (`acoustic_node/`, `pick_place_node/`), each structured to match
 Arduino's own **App Bricks** convention (see Arduino's `app-bricks-examples` repo, e.g.
 `core-and-foundational/02-led-matrix/03-led-matrix-animation-mcu`), so each can be opened
 and run the same way as an app in Arduino App Lab:
@@ -448,14 +506,36 @@ and run the same way as an app in Arduino App Lab:
 `acoustic_node/` is the reference implementation: its `python/acoustic/` package is the
 existing tested signal-processing/capture module (moved from the old repo-root
 `acoustic/`, unchanged otherwise — see `acoustic_node/README.md`), while `sketch/` and
-`python/main.py`'s App Lab wiring are new stubs, not yet run against real App Lab or
-hardware. `camera_node/` and `pick_place_node/` are scaffolding only — no real code yet.
+`python/main.py`'s App Lab wiring are stubs, not yet run against real App Lab.
 
-**Physical hardware reality:** as of this decision, only one physical UNO Q board exists
-(the lab board described in `.CLAUDE/CLAUDE.md` Deployment Notes). The three-node-folder
-structure is a code/repo-organization decision made ahead of hardware — it does not mean
-three physical boards are in hand yet. `tools/uno_q/` dev tooling still targets that one
-board only.
+**Amendment (2026-09-20) — `camera_node/` is no longer an App Bricks node.** With the
+camera station moved to a Raspberry Pi 5 (§5.2), its `app.yaml` and `sketch/` described
+hardware it will never run on, so both were removed. `camera_node/` is now a plain Python
+service:
+
+```text
+camera_node/
+  python/         # unchanged: main.py (now a real service entry point) + camera/ package
+  deploy/         # Raspberry Pi deployment: systemd unit, install script, pinned deps
+```
+
+The `python/` folder name is kept deliberately, even though there is no `sketch/` to
+contrast it with any more: `pytest.ini`'s `pythonpath`, every documented command
+(`cd camera_node/python && python -m camera.live_dashboard`), and every path reference
+across `documents/` already point at it, and renaming it would be pure churn for no
+behavioural gain. The node's `python/main.py` is now a **real** headless service entry
+point (no App Lab `App.run()`), started by systemd on the Pi.
+
+**This convention therefore applies to a station only if that station's code actually
+runs on an Arduino UNO Q.** A station on a Pi, a Mega, or a PC follows whatever that
+platform's normal packaging is.
+
+**Physical hardware reality:** only one physical UNO Q board exists (the lab board
+described in `.claude/CLAUDE.md` Deployment Notes), plus, as of 2026-09-20, one
+Raspberry Pi 5 (16 GB). The node-folder structure is a code/repo-organization decision
+made ahead of hardware — it does not mean a board is in hand per node. `tools/uno_q/`
+dev tooling still targets that one UNO Q only; the Pi is deployed to separately
+(`camera_node/deploy/`).
 
 **Conveyor stays on the Arduino Mega** (§5.5) — not moved to UNO Q or the App Bricks
 convention, since it's not an App-Lab-class board.

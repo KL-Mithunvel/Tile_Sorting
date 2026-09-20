@@ -1,0 +1,383 @@
+{
+  "val_dir": "C:\\Users\\MithunvelKL\\PycharmProjects\\Tile_Sorting\\camera_models\\cam_yolo\\dataset\\val",
+  "class_counts": {
+    "3A": 28,
+    "3B": 22,
+    "4": 15,
+    "5": 11
+  },
+  "results": {
+    "yolo26n-cls": {
+      "accuracy": 0.8289,
+      "correct": 63,
+      "total": 76,
+      "ci95_low": 0.729,
+      "ci95_high": 0.8972,
+      "mean_conf_correct": 0.4267,
+      "mean_conf_wrong": 0.3523,
+      "per_class": {
+        "3A": {
+          "support": 28,
+          "precision": 0.9167,
+          "recall": 0.7857,
+          "f1": 0.8462
+        },
+        "3B": {
+          "support": 22,
+          "precision": 0.913,
+          "recall": 0.9545,
+          "f1": 0.9333
+        },
+        "4": {
+          "support": 15,
+          "precision": 0.5882,
+          "recall": 0.6667,
+          "f1": 0.625
+        },
+        "5": {
+          "support": 11,
+          "precision": 0.8333,
+          "recall": 0.9091,
+          "f1": 0.8696
+        }
+      },
+      "confusion": {
+        "3A": {
+          "4": 5,
+          "3A": 22,
+          "3B": 1,
+          "5": 0
+        },
+        "3B": {
+          "3B": 21,
+          "4": 1,
+          "3A": 0,
+          "5": 0
+        },
+        "4": {
+          "4": 10,
+          "3B": 1,
+          "3A": 2,
+          "5": 2
+        },
+        "5": {
+          "5": 10,
+          "4": 1,
+          "3A": 0,
+          "3B": 0
+        }
+      },
+      "onnx_mb": 6.2
+    },
+    "yolo26s-cls": {
+      "accuracy": 0.8553,
+      "correct": 65,
+      "total": 76,
+      "ci95_low": 0.7591,
+      "ci95_high": 0.9172,
+      "mean_conf_correct": 0.432,
+      "mean_conf_wrong": 0.3944,
+      "per_class": {
+        "3A": {
+          "support": 28,
+          "precision": 0.9565,
+          "recall": 0.7857,
+          "f1": 0.8627
+        },
+        "3B": {
+          "support": 22,
+          "precision": 0.9524,
+          "recall": 0.9091,
+          "f1": 0.9302
+        },
+        "4": {
+          "support": 15,
+          "precision": 0.6,
+          "recall": 0.8,
+          "f1": 0.6857
+        },
+        "5": {
+          "support": 11,
+          "precision": 0.9167,
+          "recall": 1.0,
+          "f1": 0.9565
+        }
+      },
+      "confusion": {
+        "3A": {
+          "4": 6,
+          "3A": 22,
+          "3B": 0,
+          "5": 0
+        },
+        "3B": {
+          "3B": 20,
+          "4": 2,
+          "3A": 0,
+          "5": 0
+        },
+        "4": {
+          "4": 12,
+          "3A": 1,
+          "3B": 1,
+          "5": 1
+        },
+        "5": {
+          "5": 11,
+          "3A": 0,
+          "3B": 0,
+          "4": 0
+        }
+      },
+      "onnx_mb": 21.8
+    },
+    "vit-base-p16-224": {
+      "accuracy": 0.9211,
+      "correct": 70,
+      "total": 76,
+      "ci95_low": 0.8383,
+      "ci95_high": 0.9633,
+      "mean_conf_correct": 0.9947,
+      "mean_conf_wrong": 0.9511,
+      "per_class": {
+        "3A": {
+          "support": 28,
+          "precision": 1.0,
+          "recall": 0.9643,
+          "f1": 0.9818
+        },
+        "3B": {
+          "support": 22,
+          "precision": 0.9545,
+          "recall": 0.9545,
+          "f1": 0.9545
+        },
+        "4": {
+          "support": 15,
+          "precision": 0.7778,
+          "recall": 0.9333,
+          "f1": 0.8485
+        },
+        "5": {
+          "support": 11,
+          "precision": 0.8889,
+          "recall": 0.7273,
+          "f1": 0.8
+        }
+      },
+      "confusion": {
+        "3A": {
+          "3A": 27,
+          "4": 1,
+          "3B": 0,
+          "5": 0
+        },
+        "3B": {
+          "3B": 21,
+          "5": 1,
+          "3A": 0,
+          "4": 0
+        },
+        "4": {
+          "4": 14,
+          "3B": 1,
+          "3A": 0,
+          "5": 0
+        },
+        "5": {
+          "5": 8,
+          "4": 3,
+          "3A": 0,
+          "3B": 0
+        }
+      },
+      "onnx_mb": 343.5
+    },
+    "yolo26n-cls INT8": {
+      "accuracy": 0.5789,
+      "correct": 44,
+      "total": 76,
+      "ci95_low": 0.4668,
+      "ci95_high": 0.6835,
+      "mean_conf_correct": 0.4059,
+      "mean_conf_wrong": 0.361,
+      "per_class": {
+        "3A": {
+          "support": 28,
+          "precision": 0.6552,
+          "recall": 0.6786,
+          "f1": 0.6667
+        },
+        "3B": {
+          "support": 22,
+          "precision": 0.5833,
+          "recall": 0.6364,
+          "f1": 0.6087
+        },
+        "4": {
+          "support": 15,
+          "precision": 0.3125,
+          "recall": 0.3333,
+          "f1": 0.3226
+        },
+        "5": {
+          "support": 11,
+          "precision": 0.8571,
+          "recall": 0.5455,
+          "f1": 0.6667
+        }
+      },
+      "confusion": {
+        "3A": {
+          "3A": 19,
+          "3B": 3,
+          "4": 6,
+          "5": 0
+        },
+        "3B": {
+          "3A": 3,
+          "5": 1,
+          "3B": 14,
+          "4": 4
+        },
+        "4": {
+          "3B": 6,
+          "3A": 4,
+          "4": 5,
+          "5": 0
+        },
+        "5": {
+          "5": 6,
+          "3B": 1,
+          "3A": 3,
+          "4": 1
+        }
+      },
+      "onnx_mb": 1.6
+    },
+    "yolo26s-cls INT8": {
+      "accuracy": 0.3684,
+      "correct": 28,
+      "total": 76,
+      "ci95_low": 0.2688,
+      "ci95_high": 0.4808,
+      "mean_conf_correct": 0.3931,
+      "mean_conf_wrong": 0.359,
+      "per_class": {
+        "3A": {
+          "support": 28,
+          "precision": 0.3778,
+          "recall": 0.6071,
+          "f1": 0.4658
+        },
+        "3B": {
+          "support": 22,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        "4": {
+          "support": 15,
+          "precision": 0.1333,
+          "recall": 0.1333,
+          "f1": 0.1333
+        },
+        "5": {
+          "support": 11,
+          "precision": 0.5625,
+          "recall": 0.8182,
+          "f1": 0.6667
+        }
+      },
+      "confusion": {
+        "3A": {
+          "3A": 17,
+          "4": 8,
+          "5": 3,
+          "3B": 0
+        },
+        "3B": {
+          "3A": 17,
+          "4": 4,
+          "5": 1,
+          "3B": 0
+        },
+        "4": {
+          "3A": 10,
+          "4": 2,
+          "5": 3,
+          "3B": 0
+        },
+        "5": {
+          "5": 9,
+          "3A": 1,
+          "4": 1,
+          "3B": 0
+        }
+      },
+      "onnx_mb": 5.6
+    },
+    "vit-base-p16-224 INT8": {
+      "accuracy": 0.9211,
+      "correct": 70,
+      "total": 76,
+      "ci95_low": 0.8383,
+      "ci95_high": 0.9633,
+      "mean_conf_correct": 0.9947,
+      "mean_conf_wrong": 0.9822,
+      "per_class": {
+        "3A": {
+          "support": 28,
+          "precision": 1.0,
+          "recall": 0.9643,
+          "f1": 0.9818
+        },
+        "3B": {
+          "support": 22,
+          "precision": 0.9545,
+          "recall": 0.9545,
+          "f1": 0.9545
+        },
+        "4": {
+          "support": 15,
+          "precision": 0.7368,
+          "recall": 0.9333,
+          "f1": 0.8235
+        },
+        "5": {
+          "support": 11,
+          "precision": 1.0,
+          "recall": 0.7273,
+          "f1": 0.8421
+        }
+      },
+      "confusion": {
+        "3A": {
+          "3A": 27,
+          "4": 1,
+          "3B": 0,
+          "5": 0
+        },
+        "3B": {
+          "3B": 21,
+          "4": 1,
+          "3A": 0,
+          "5": 0
+        },
+        "4": {
+          "4": 14,
+          "3B": 1,
+          "3A": 0,
+          "5": 0
+        },
+        "5": {
+          "5": 8,
+          "4": 3,
+          "3A": 0,
+          "3B": 0
+        }
+      },
+      "onnx_mb": 87.1
+    }
+  }
+}

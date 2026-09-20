@@ -1,0 +1,70 @@
+# Tunable parameters for the edge-deployment benchmark — no hardcoded model
+# paths or timing params in source, per repo Development Rule #2.
+#
+# This folder answers one question: what does each trained tile-grade model
+# actually COST to run on the camera station's Raspberry Pi 5, measured the
+# same way on the dev laptop and on the Pi so the two are comparable.
+#
+# Run the identical script on both machines:
+#     python camera_models/cam_edge/benchmark.py
+#     python camera_models/cam_edge/evaluate.py
+
+# Common held-out val split. This is cam_yolo's split, built from the
+# ORIGINAL data/roboflow_dataset (not the offline-augmented copy), seed 42,
+# val_fraction 0.2 — 76 images. Both cam_yolo runs and cam_vit's
+# results_vs_clean_baseline were scored against exactly this set, so numbers
+# from all three pipelines are comparable. cam_vit's OTHER results/ folder
+# (202 images) is scored against the augmented split and is NOT comparable:
+# augmented variants of a train image can land in that val set.
+val_dir: "../cam_yolo/dataset/val"
+
+classes: ["3A", "3B", "4", "5"]
+
+benchmark:
+  # Thread counts to sweep. The Pi 5 has 4 Cortex-A76 cores; 1 thread is the
+  # worst case (another station process pinning the other cores) and is also
+  # the cleanest number for comparing CPU architectures.
+  thread_counts: [1, 2, 4]
+  warmup_iters: 5
+  measure_iters: 50
+  # Frame size the live pipeline actually runs at (camera_node config.yaml
+  # camera.frame_width/frame_height) — used to cost the per-frame stages.
+  frame_width: 640
+  frame_height: 480
+  # camera_node config.yaml dashboard.jpeg_quality, for the MJPEG encode cost.
+  jpeg_quality: 80
+
+# Each entry is one deployable artifact. `preprocess` must match what the
+# model was TRAINED with or accuracy silently collapses:
+#   yolo_cls — Ultralytics classify: resize short side to 224, center-crop
+#              224, RGB, /255, no mean/std shift (its Normalize is mean=0
+#              std=1, i.e. a no-op — verified from classify_transforms()).
+#   vit_hf   — HF ViTImageProcessor: resize straight to 224x224 (bilinear),
+#              /255, then normalize mean=0.5 std=0.5 (verified from the
+#              exported preprocessor_config.json).
+models:
+  - name: "yolo26n-cls"
+    onnx: "../cam_yolo/runs/tile_grade_cls-aug-n/weights/best.onnx"
+    preprocess: "yolo_cls"
+    note: "1.53M params, 0.4 GFLOPs. The small-model candidate."
+
+  - name: "yolo26s-cls"
+    onnx: "../cam_yolo/runs/tile_grade_cls-aug-s-gpu/weights/best.onnx"
+    preprocess: "yolo_cls"
+    note: "The run cam_yolo/config.yaml currently points at."
+
+  - name: "vit-base-p16-224"
+    onnx: "../cam_vit/runs/tile_grade_vit/best/model.onnx"
+    preprocess: "vit_hf"
+    note: "86M params, ~17.6 GFLOPs. The accuracy ceiling so far."
+
+# Dynamic INT8 quantization, applied to each model above and benchmarked
+# alongside it. Measured, not assumed: on this repo's models INT8 is a clear
+# win for the ViT and a large LOSS for the nano YOLO (ONNX Runtime inserts
+# per-op quantize/dequantize that costs more than the conv work it saves on
+# a net that small). Set to false to skip the extra ~1 min of quantizing.
+quantize:
+  enabled: true
+  # Where quantized copies are written. Gitignored along with the rest of
+  # runs/ — these are reproducible build artifacts, not source.
+  output_dir: "runs/int8"

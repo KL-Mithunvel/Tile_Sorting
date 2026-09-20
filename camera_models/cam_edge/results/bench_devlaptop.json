@@ -1,0 +1,336 @@
+{
+  "platform": {
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "system": "Windows 11",
+    "python": "3.13.7",
+    "onnxruntime": "1.29.0",
+    "opencv": "5.0.0",
+    "cpu_count": 22
+  },
+  "cpu_reference": {
+    "matmul_n": 512,
+    "gflops": 201.5,
+    "best_ms": 1.332
+  },
+  "models": [
+    {
+      "model": "yolo26n-cls",
+      "precision": "fp32",
+      "onnx_mb": 6.2,
+      "note": "1.53M params, 0.4 GFLOPs. The small-model candidate.",
+      "threads": {
+        "1": {
+          "mean_ms": 4.36,
+          "p50_ms": 3.951,
+          "p90_ms": 5.46,
+          "p95_ms": 6.345,
+          "max_ms": 8.321,
+          "rss_delta_mb": 18.8,
+          "throughput_per_s": 253.1
+        },
+        "2": {
+          "mean_ms": 2.63,
+          "p50_ms": 2.438,
+          "p90_ms": 3.378,
+          "p95_ms": 3.459,
+          "max_ms": 3.634,
+          "rss_delta_mb": 3.0,
+          "throughput_per_s": 410.2
+        },
+        "4": {
+          "mean_ms": 1.636,
+          "p50_ms": 1.587,
+          "p90_ms": 1.808,
+          "p95_ms": 1.932,
+          "max_ms": 2.613,
+          "rss_delta_mb": 1.0,
+          "throughput_per_s": 630.1
+        }
+      }
+    },
+    {
+      "model": "yolo26s-cls",
+      "precision": "fp32",
+      "onnx_mb": 21.8,
+      "note": "The run cam_yolo/config.yaml currently points at.",
+      "threads": {
+        "1": {
+          "mean_ms": 14.896,
+          "p50_ms": 14.406,
+          "p90_ms": 18.316,
+          "p95_ms": 18.462,
+          "max_ms": 20.35,
+          "rss_delta_mb": 19.8,
+          "throughput_per_s": 69.4
+        },
+        "2": {
+          "mean_ms": 7.857,
+          "p50_ms": 7.471,
+          "p90_ms": 10.261,
+          "p95_ms": 10.563,
+          "max_ms": 11.004,
+          "rss_delta_mb": 0.3,
+          "throughput_per_s": 133.9
+        },
+        "4": {
+          "mean_ms": 4.229,
+          "p50_ms": 4.156,
+          "p90_ms": 4.509,
+          "p95_ms": 4.563,
+          "max_ms": 5.722,
+          "rss_delta_mb": 0.8,
+          "throughput_per_s": 240.6
+        }
+      }
+    },
+    {
+      "model": "vit-base-p16-224",
+      "precision": "fp32",
+      "onnx_mb": 343.5,
+      "note": "86M params, ~17.6 GFLOPs. The accuracy ceiling so far.",
+      "threads": {
+        "1": {
+          "mean_ms": 354.666,
+          "p50_ms": 350.477,
+          "p90_ms": 379.321,
+          "p95_ms": 397.737,
+          "max_ms": 410.688,
+          "rss_delta_mb": 330.4,
+          "throughput_per_s": 2.9
+        },
+        "2": {
+          "mean_ms": 205.727,
+          "p50_ms": 194.847,
+          "p90_ms": 251.926,
+          "p95_ms": 284.099,
+          "max_ms": 290.397,
+          "rss_delta_mb": 1.3,
+          "throughput_per_s": 5.1
+        },
+        "4": {
+          "mean_ms": 112.802,
+          "p50_ms": 110.194,
+          "p90_ms": 129.363,
+          "p95_ms": 142.288,
+          "max_ms": 148.988,
+          "rss_delta_mb": 0.8,
+          "throughput_per_s": 9.1
+        }
+      }
+    },
+    {
+      "model": "yolo26n-cls INT8",
+      "precision": "int8",
+      "onnx_mb": 1.6,
+      "note": "",
+      "threads": {
+        "1": {
+          "mean_ms": 64.371,
+          "p50_ms": 64.292,
+          "p90_ms": 73.249,
+          "p95_ms": 75.334,
+          "max_ms": 81.195,
+          "rss_delta_mb": -354.0,
+          "throughput_per_s": 15.6
+        },
+        "2": {
+          "mean_ms": 34.959,
+          "p50_ms": 34.556,
+          "p90_ms": 38.449,
+          "p95_ms": 38.992,
+          "max_ms": 39.807,
+          "rss_delta_mb": -0.5,
+          "throughput_per_s": 28.9
+        },
+        "4": {
+          "mean_ms": 19.31,
+          "p50_ms": 19.11,
+          "p90_ms": 20.818,
+          "p95_ms": 23.309,
+          "max_ms": 27.436,
+          "rss_delta_mb": 1.0,
+          "throughput_per_s": 52.3
+        }
+      }
+    },
+    {
+      "model": "yolo26s-cls INT8",
+      "precision": "int8",
+      "onnx_mb": 5.6,
+      "note": "",
+      "threads": {
+        "1": {
+          "mean_ms": 235.614,
+          "p50_ms": 234.36,
+          "p90_ms": 251.853,
+          "p95_ms": 255.395,
+          "max_ms": 258.061,
+          "rss_delta_mb": 8.3,
+          "throughput_per_s": 4.3
+        },
+        "2": {
+          "mean_ms": 123.955,
+          "p50_ms": 124.142,
+          "p90_ms": 133.236,
+          "p95_ms": 133.913,
+          "max_ms": 137.083,
+          "rss_delta_mb": 0.0,
+          "throughput_per_s": 8.1
+        },
+        "4": {
+          "mean_ms": 65.573,
+          "p50_ms": 64.677,
+          "p90_ms": 70.961,
+          "p95_ms": 72.359,
+          "max_ms": 80.44,
+          "rss_delta_mb": 2.3,
+          "throughput_per_s": 15.5
+        }
+      }
+    },
+    {
+      "model": "vit-base-p16-224 INT8",
+      "precision": "int8",
+      "onnx_mb": 87.1,
+      "note": "",
+      "threads": {
+        "1": {
+          "mean_ms": 166.05,
+          "p50_ms": 164.227,
+          "p90_ms": 185.026,
+          "p95_ms": 187.787,
+          "max_ms": 210.892,
+          "rss_delta_mb": 88.1,
+          "throughput_per_s": 6.1
+        },
+        "2": {
+          "mean_ms": 89.75,
+          "p50_ms": 89.354,
+          "p90_ms": 99.541,
+          "p95_ms": 101.41,
+          "max_ms": 102.81,
+          "rss_delta_mb": 2.2,
+          "throughput_per_s": 11.2
+        },
+        "4": {
+          "mean_ms": 48.558,
+          "p50_ms": 48.702,
+          "p90_ms": 51.426,
+          "p95_ms": 53.577,
+          "max_ms": 54.666,
+          "rss_delta_mb": 1.6,
+          "throughput_per_s": 20.5
+        }
+      }
+    }
+  ],
+  "preprocess": {
+    "vit_hf": {
+      "mean_ms": 1.016,
+      "p50_ms": 0.933,
+      "p90_ms": 1.405,
+      "p95_ms": 1.522,
+      "max_ms": 1.783
+    },
+    "yolo_cls": {
+      "mean_ms": 0.637,
+      "p50_ms": 0.623,
+      "p90_ms": 0.674,
+      "p95_ms": 0.735,
+      "max_ms": 0.854
+    }
+  },
+  "pipeline": {
+    "segment_tile_per_frame": {
+      "mean_ms": 0.745,
+      "p50_ms": 0.611,
+      "p90_ms": 1.293,
+      "p95_ms": 1.403,
+      "max_ms": 1.632
+    },
+    "jpeg_encode_per_frame": {
+      "mean_ms": 0.589,
+      "p50_ms": 0.564,
+      "p90_ms": 0.58,
+      "p95_ms": 0.623,
+      "max_ms": 1.279
+    },
+    "detect_cracks_per_tile": {
+      "mean_ms": 0.183,
+      "p50_ms": 0.178,
+      "p90_ms": 0.208,
+      "p95_ms": 0.211,
+      "max_ms": 0.227
+    },
+    "detect_broken_corner_per_tile": {
+      "mean_ms": 0.175,
+      "p50_ms": 0.172,
+      "p90_ms": 0.181,
+      "p95_ms": 0.187,
+      "max_ms": 0.218
+    }
+  },
+  "budget": {
+    "threads": 4,
+    "per_frame_fixed_ms": 1.17,
+    "per_frame_fixed_fps": 851.1,
+    "per_tile_classical_cv_ms": 0.35,
+    "models": [
+      {
+        "model": "yolo26n-cls",
+        "onnx_mb": 6.2,
+        "infer_p50_ms": 1.59,
+        "preprocess_p50_ms": 0.623,
+        "per_tile_total_ms": 2.56,
+        "worst_frame_ms": 3.73,
+        "worst_frame_fps": 267.7
+      },
+      {
+        "model": "yolo26s-cls",
+        "onnx_mb": 21.8,
+        "infer_p50_ms": 4.16,
+        "preprocess_p50_ms": 0.623,
+        "per_tile_total_ms": 5.13,
+        "worst_frame_ms": 6.3,
+        "worst_frame_fps": 158.6
+      },
+      {
+        "model": "vit-base-p16-224",
+        "onnx_mb": 343.5,
+        "infer_p50_ms": 110.19,
+        "preprocess_p50_ms": 0.933,
+        "per_tile_total_ms": 111.48,
+        "worst_frame_ms": 112.65,
+        "worst_frame_fps": 8.9
+      },
+      {
+        "model": "yolo26n-cls INT8",
+        "onnx_mb": 1.6,
+        "infer_p50_ms": 19.11,
+        "preprocess_p50_ms": 0.623,
+        "per_tile_total_ms": 20.08,
+        "worst_frame_ms": 21.26,
+        "worst_frame_fps": 47.0
+      },
+      {
+        "model": "yolo26s-cls INT8",
+        "onnx_mb": 5.6,
+        "infer_p50_ms": 64.68,
+        "preprocess_p50_ms": 0.623,
+        "per_tile_total_ms": 65.65,
+        "worst_frame_ms": 66.83,
+        "worst_frame_fps": 15.0
+      },
+      {
+        "model": "vit-base-p16-224 INT8",
+        "onnx_mb": 87.1,
+        "infer_p50_ms": 48.7,
+        "preprocess_p50_ms": 0.933,
+        "per_tile_total_ms": 49.98,
+        "worst_frame_ms": 51.16,
+        "worst_frame_fps": 19.5
+      }
+    ]
+  }
+}

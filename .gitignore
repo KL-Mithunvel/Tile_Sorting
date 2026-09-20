@@ -35,3 +35,10 @@ camera_models/cam_vit/.checkpoint_cache/
 !camera_node/models/
 !camera_node/models/*.onnx
 !camera_node/models/*.json
+
+# development/ generated video output. process_conveyor_video.py rewrites
+# conveyor_annotated.mp4 on every run at ~23 MB, so tracking it puts a fresh
+# 23 MB blob in history each time the script is touched. It is a rebuildable
+# artifact — run the script — and the JSON report beside it, which IS
+# committed, carries the actual findings.
+development/output/*.mp4

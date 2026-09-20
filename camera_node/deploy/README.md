@@ -14,7 +14,7 @@ like `acoustic_node/` and `pick_place_node/`.
 ## Why apt packages and not a venv
 
 `install_pi.sh` installs `python3-picamera2`, `python3-opencv`, `python3-flask`,
-`python3-yaml` and `python3-numpy` from apt, and the systemd unit runs
+`python3-yaml`, `python3-numpy` and `python3-pil` from apt, and the systemd unit runs
 `/usr/bin/python3` — no virtualenv.
 
 That's deliberate. `python3-picamera2` is compiled against the system numpy and the
@@ -27,6 +27,30 @@ Raspberry Pi OS, so there is nothing to gain from isolating it.
 If you're running a **USB webcam only** and don't need the CSI module, picamera2 is out
 of the picture and a normal venv is fine — use `requirements-pi.txt` and repoint the
 unit's `ExecStart`.
+
+## Optional: the ONNX grade model
+
+`config.yaml`'s `grading_model` block runs a small ONNX classifier as a second opinion on
+each tile (see `camera_node/README.md`). It is **off by default** and the station grades
+tiles without it, so this is an opt-in step:
+
+```bash
+./camera_node/deploy/install_pi.sh --with-grading
+```
+
+`onnxruntime` is the one dependency apt doesn't package, so that flag pip-installs it
+into the system interpreter with `--break-system-packages`. That sounds worse than it is:
+we're adding a single pure-addition wheel to the interpreter the service already runs,
+rather than building a venv that would break picamera2's numpy/libcamera ABI. Pillow
+comes from apt as `python3-pil` and is installed either way.
+
+The step is deliberately **non-fatal** — if the wheel won't install, the script warns and
+carries on, and `grading_model.from_config()` returns None with a printed reason instead
+of stopping the service. Then set `grading_model.enabled: true` in `config.yaml` and
+restart.
+
+Unverified like everything else here: if pip can't find a wheel for this Python/arch,
+reach for piwheels or a venv rather than fighting it.
 
 ## Install
 
@@ -121,4 +145,12 @@ service with `--no-dashboard` and view results another way.
 - **Thermals.** A Pi 5 running continuous CV wants an active cooler. Watch for
   `throttled` in `vcgencmd get_throttled` during a long run.
 - **Frame rate under load.** `target_fps: 15` was never load-tested; the per-frame
-  segmentation + JPEG encode is the cost, and it's untested on this CPU.
+  segmentation + JPEG encode is the cost, and it's untested on this CPU. If the grading
+  model is enabled, add its per-tile inference on top — measured at 2.5 ms on a dev
+  laptop at 2 threads, not on a Pi 5. `grading_model.threads` is pinned low on purpose:
+  the Pi has 4 cores shared with the capture thread and the Flask server, and letting
+  inference take all of them starves the MJPEG stream.
+- **The trigger line's position.** `trigger_line.position` and `direction` describe where
+  tiles cross the frame and which way they travel; both are properties of the rig's
+  camera mounting and conveyor direction, so they can only be set once the camera is
+  physically mounted. See `camera_node/README.md` → Capture trigger.

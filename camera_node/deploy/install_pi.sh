@@ -11,11 +11,31 @@
 #
 #     chmod +x camera_node/deploy/install_pi.sh
 #     ./camera_node/deploy/install_pi.sh
+#     ./camera_node/deploy/install_pi.sh --with-grading   # + ONNX grade model
 #
 # NOT YET RUN — written 2026-09-20 against the documented Raspberry Pi OS
 # package names; no Pi has been set up yet. Read it before trusting it.
 
 set -euo pipefail
+
+# --with-grading also installs onnxruntime, for config.yaml's optional
+# `grading_model` block. Off by default because the station grades tiles from
+# crack/corner geometry without it, and because onnxruntime is the one
+# dependency here that apt does not package (see the section below).
+WITH_GRADING=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-grading) WITH_GRADING=1 ;;
+        -h|--help)
+            echo "Usage: $0 [--with-grading]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg (try --help)" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # ---------------------------------------------------------------------------
 # Work out where we are and who we are, rather than hardcoding paths/users.
@@ -53,7 +73,33 @@ sudo apt install -y \
     python3-opencv \
     python3-flask \
     python3-yaml \
-    python3-numpy
+    python3-numpy \
+    python3-pil
+
+# ---------------------------------------------------------------------------
+# Optional: onnxruntime, for config.yaml's `grading_model` block.
+#
+# This is the one dependency apt does not package, so it has to come from pip.
+# On Bookworm the system interpreter is PEP 668 "externally managed", hence
+# --break-system-packages: we are deliberately adding ONE pure-addition wheel
+# to the system interpreter the service runs, rather than building a venv that
+# would break picamera2's numpy/libcamera ABI (see the note above).
+#
+# Non-fatal on purpose. `grading_model.enabled` defaults to false and
+# grading_model.from_config() returns None when onnxruntime is absent, so a Pi
+# where this step fails still inspects tiles — it just has no second opinion.
+#
+# UNVERIFIED: no Pi has run this. If the wheel is unavailable for this
+# Python/arch, prefer piwheels or a venv over fighting pip here.
+# ---------------------------------------------------------------------------
+if [ "$WITH_GRADING" -eq 1 ]; then
+    echo
+    echo "==> Installing onnxruntime (optional grading model)"
+    if ! sudo /usr/bin/python3 -m pip install --break-system-packages onnxruntime; then
+        echo "WARNING: onnxruntime install failed. The station will still run," >&2
+        echo "         with the ONNX grade model unavailable." >&2
+    fi
+fi
 
 echo
 echo "==> Verifying imports with the system interpreter"
@@ -70,6 +116,19 @@ try:
     print("picamera2: available (CSI camera module supported)")
 except ImportError:
     print("picamera2: NOT available — USB webcam only (set camera.backend: \"usb\")")
+# Both are needed only by camera/grading_model.py, which is optional; report
+# them rather than failing, so their absence is visible but not blocking.
+try:
+    import PIL  # noqa: F401
+    print("Pillow: available (required by the ONNX grade model's preprocessing)")
+except ImportError:
+    print("Pillow: NOT available — the ONNX grade model cannot run")
+try:
+    import onnxruntime  # noqa: F401
+    print("onnxruntime: available (set grading_model.enabled: true to use it)")
+except ImportError:
+    print("onnxruntime: NOT available — grading model off "
+          "(re-run with --with-grading to install it)")
 if missing:
     print("MISSING:", ", ".join(missing), file=sys.stderr)
     sys.exit(1)

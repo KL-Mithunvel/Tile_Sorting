@@ -34,3 +34,17 @@ itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.3
 Werkzeug==3.1.8
+
+# --- Optional: the ONNX tile-grade classifier ------------------------------
+#
+# Only needed if config.yaml's `grading_model.enabled` is true. The station
+# grades tiles from crack/corner geometry without these, and
+# camera/grading_model.py returns None (with a printed reason) rather than
+# failing to start when they are absent.
+#
+# Pillow is NOT interchangeable with cv2.resize here: PIL's BILINEAR
+# antialiases on downscale and cv2.INTER_LINEAR does not, which measured 8
+# accuracy points on the val split. See camera_models/cam_edge/README.md.
+#
+# onnxruntime==1.29.0
+# pillow==12.3.0

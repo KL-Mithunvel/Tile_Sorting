@@ -526,7 +526,8 @@ plan (`octave_bands.py`, `decay.py`, `weighting.py`, `sound_level.py`, `calibrat
 - **Found and fixed a latent deployment bug while doing this:** the repo has
   `core.autocrlf=true` and had no `.gitattributes`, so a clone on the Pi would have
   received `install_pi.sh` with CRLF endings and failed on line 1 with
-  `/usr/bin/env: 'bash': No such file or directory` — which reads like a missing
+  `/usr/bin/env: 'bash
+': No such file or directory` — which reads like a missing
   interpreter, not a line-ending problem. Added `.gitattributes` pinning `*.sh`/`*.service`
   to `eol=lf`, `*.bat`/`*.cmd` to `eol=crlf` (Windows-only `tools/uno_q/` tooling), and
   marking the binary/media types.
@@ -542,3 +543,62 @@ plan (`octave_bands.py`, `decay.py`, `weighting.py`, `sound_level.py`, `calibrat
   docstring, `.claude/CLAUDE.md` Known Technical Debt, and five new `TODO.md` items
   (Pi setup, camera choice, `PiCameraCapture` validation, exposure/AWB locking,
   frame-rate load test).
+
+## 2026-09-20 (cont.) — Edge-model cost measurement + line-crossing trigger groundwork
+
+- **Question asked:** can the existing tile-grade models run on the Pi 5, and what do
+  they cost? Answered by building `camera_models/cam_edge/` rather than estimating: a
+  benchmark + accuracy harness that runs unchanged on the dev laptop and on the Pi.
+- **Headline numbers** (x86, 4 threads; 76-image common val split — `cam_yolo/dataset/val`,
+  the original non-augmented data, which is the only split all three pipelines share):
+
+  | model | ONNX | accuracy | 95% CI | 1T | 4T |
+  |---|---|---|---|---|---|
+  | `yolo26n-cls` | 6.2 MB | 82.9% | [72.9, 89.7] | 3.95 ms | 1.59 ms |
+  | `yolo26s-cls` | 21.8 MB | 85.5% | [75.9, 91.7] | 14.4 ms | 4.16 ms |
+  | `vit-base` fp32 | 343 MB | 92.1% | [83.8, 96.3] | 350 ms | 110 ms |
+  | `vit-base` INT8 | 87 MB | 92.1% | [83.8, 96.3] | 164 ms | 48.7 ms |
+
+  For scale, `camera_node`'s existing cost is 1.34 ms/frame (segment + JPEG) and
+  0.49 ms/tile (crack + corner). Projected to the Pi (×4–6 per core), the nano model
+  uses ~10–15% of one frame's budget at `target_fps: 15`; the ViT needs 7–10 frame
+  budgets and would stall the capture thread, which is an architecture problem (single
+  worker thread), not a speed one.
+- **`yolo26n-cls` was already trained and unused.** The `tile_grade_cls-aug-n` run scores
+  within the confidence interval of the 7×-larger `s` model that `cam_yolo/config.yaml`
+  points at. It is now the staged default.
+- **Dynamic INT8 destroys the YOLOs — slower AND less accurate.** 1.59 → 19.1 ms and
+  82.9% → 57.9%; on `yolo26s` INT8, class 3B recall goes to 0%. On the ViT the same
+  quantization is free (accuracy identical, 2× faster, 4× smaller). Measured, not assumed.
+- **Preprocessing bug found and fixed, worth 8 accuracy points.** The first `runtime.py`
+  used `cv2.resize(INTER_LINEAR)` and scored the nano model at 75.0% with no error
+  raised. PIL's BILINEAR antialiases on downscale, `cv2.INTER_LINEAR` does not, and these
+  are large photos hitting 224 hard. Switching to PIL **with torchvision's `int()` size
+  truncation** (not `round()`, which shifts the crop a pixel on some aspect ratios) gives
+  82.9% and a byte-identical tensor to Ultralytics' own predictor (mean abs diff
+  0.000000, 100% prediction agreement). That gap is larger than the entire nano-vs-`s`
+  difference. Also confirmed along the way that the ONNX exports themselves are faithful
+  (max logit diff 2.5e-03 vs PyTorch, zero argmax disagreements) — so a wrong ONNX number
+  means suspect preprocessing, not the export.
+- **Staged the model for deployment:** `camera_models/cam_edge/stage_model.py` copies one
+  chosen artifact into `camera_node/models/` with a metadata JSON (classes, preprocessing
+  recipe, sha256, measured accuracy, provenance). `.gitignore`'s global `*.onnx` rule now
+  has a scoped exception for that folder — without it the Pi could not get a runnable
+  model from a plain clone, since `camera_models/*/runs/` is gitignored. Nothing in
+  `camera_node/` imports from `camera_models/`; the copy is manual and one-directional,
+  mirroring the `Acoustic-Analysis` → `acoustic_node` relationship.
+- **Started the line-crossing capture trigger** (owner's request): photograph and grade a
+  tile when its centre crosses a configured line, instead of when it finishes leaving the
+  frame. Added `camera/line_trigger.py` (`LineCrossingDetector` — pure, normalized
+  coordinates so one configured position is valid at any resolution, deadband hysteresis
+  so a tile jittering on the line cannot fire repeatedly, direction filter so a tile
+  nudged backwards is not double-counted) and `TileRegion.center` /
+  `.centroid` / `.center_normalized`. 25 synthetic-sequence tests, 82 total, green.
+  **Deliberately bbox centre, not area centroid:** a broken corner pulls the centroid away
+  from the tile's middle, so a chipped tile would trip the line at a different moment than
+  an intact one — the exact inconsistency the trigger exists to remove.
+- **Not done yet** (next session): `camera/grading_model.py` (the ONNX wrapper for
+  `camera_node`), wiring the trigger + model into `pipeline.py` / `worker.py` /
+  `process_video.py`, the `trigger_line` and `grading_model` config sections, and the
+  overlay drawing the line + centre point. `line_trigger.py` and the new `TileRegion`
+  properties are additive — nothing imports them yet, so the live pipeline is unchanged.

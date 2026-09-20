@@ -27,6 +27,45 @@ class TileRegion:
     mask: np.ndarray  # full-frame binary mask, same size as the source frame
     cropped_bgr: np.ndarray  # source frame cropped to bbox
 
+    @property
+    def center(self) -> tuple[float, float]:
+        """Centre of the bounding box, in source-frame pixels.
+
+        Bounding-box centre rather than the contour's centroid on purpose: it
+        is what the drawn box visually implies, and it does not shift when a
+        corner is missing. A broken corner pulls the area centroid away from
+        the tile's geometric middle, which would make a chipped tile trip the
+        line trigger at a different moment than an intact one -- exactly the
+        inconsistency the trigger exists to avoid.
+        """
+        x, y, w, h = self.bbox
+        return (x + w / 2.0, y + h / 2.0)
+
+    @property
+    def centroid(self) -> tuple[float, float]:
+        """Area centroid of the contour, in source-frame pixels.
+
+        Not used by the line trigger (see `center`), but kept because it is
+        the right anchor for anything measuring the tile's mass distribution,
+        and falls back to the bbox centre for a degenerate contour.
+        """
+        m = cv2.moments(self.contour)
+        if m["m00"] == 0:
+            return self.center
+        return (m["m10"] / m["m00"], m["m01"] / m["m00"])
+
+    @property
+    def center_normalized(self) -> tuple[float, float]:
+        """`center` as fractions of frame width/height (0.0-1.0).
+
+        This is what `line_trigger.LineCrossingDetector` consumes, so a line
+        configured at 0.5 means the middle of the frame at any resolution.
+        Frame size comes from `mask`, which is full-frame by construction.
+        """
+        frame_h, frame_w = self.mask.shape[:2]
+        cx, cy = self.center
+        return (cx / frame_w, cy / frame_h)
+
 
 def segment_tile(
     frame_bgr: np.ndarray,

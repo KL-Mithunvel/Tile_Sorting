@@ -21,6 +21,8 @@
   .badge { display: inline-block; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
   .badge-yes { background: #5c2020; }
   .badge-no { background: #204020; }
+  /* Model confidence, shown smaller than the grade it qualifies. */
+  .muted { color: #8b98a5; font-size: 0.85em; }
 </style>
 </head>
 <body>
@@ -42,6 +44,8 @@
             <th>Length (px)</th>
             <th>Corner</th>
             <th>Missing area (px)</th>
+            <th>Centre</th>
+            <th title="ONNX cosmetic grade tier. Does NOT detect cracks or broken corners - the Grade column is the station's decision.">Model</th>
           </tr>
         </thead>
         <tbody id="tile-rows"></tbody>
@@ -63,6 +67,12 @@
           const corner = t.corner_broken
             ? `<span class="badge badge-yes">broken</span>`
             : `<span class="badge badge-no">intact</span>`;
+          // Confidence is shown next to every model grade on purpose: the
+          // classifier was measured at 82.9% on a 76-image val set, so a bare
+          // label reads as more certain than it is.
+          const model = t.model_grade
+            ? `${t.model_grade} <span class="muted">${Math.round(t.model_confidence * 100)}%</span>`
+            : '-';
           return `<tr>
             <td>${t.seq}</td>
             <td class="grade-${t.grade.replace('Grade ', '')}">${t.grade}</td>
@@ -70,6 +80,8 @@
             <td>${t.crack_detected ? t.crack_length_px : '-'}</td>
             <td>${corner}</td>
             <td>${t.corner_broken ? t.corner_missing_area_px : '-'}</td>
+            <td>${t.center_x !== null ? `${t.center_x}, ${t.center_y}` : '-'}</td>
+            <td>${model}</td>
           </tr>`;
         }).join('');
         document.getElementById('tile-rows').innerHTML = rows;

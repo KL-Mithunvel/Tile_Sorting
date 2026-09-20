@@ -85,10 +85,12 @@ Mirrors `acoustic_node`'s hardware/logic split (`.claude/CLAUDE.md` Development 
 | `camera/crack_detection.py` | `detect_cracks()` — grayscale → Gaussian blur → Canny edges → keep only long/thin contours → measure length, grade severity | No — pure, synthetic-image tested |
 | `camera/corner_detection.py` | `detect_broken_corner()` — contour area vs. its own bounding rectangle's area, plus a distance-transform check on how deep any gap reaches; gives a missing-area/depth measurement | No — pure, synthetic-contour tested |
 | `camera/tile_tracker.py` | `TileTracker` — debounced presence/absence state machine, counts tiles crossing the frame | No — pure, synthetic-sequence tested |
-| `camera/pipeline.py` | `process_tile()` — wires the three detectors into one `TileRecord` per tile, plus a first-pass rule-based grade. `tile_record_to_dict()` — shared JSON serialization, used by both the dashboard and `process_video.py` | No — pure glue, `tile_record_to_dict()` unit-tested |
+| `camera/line_trigger.py` | `LineCrossingDetector` — fires once when a tile's centre crosses a configured line, in normalized (resolution-independent) coordinates, with a hysteresis deadband against segmentation jitter | No — pure, synthetic-sequence tested |
+| `camera/grading_model.py` | `TileGradeModel` — optional ONNX cosmetic grade-tier classifier (3A/3B/4/5) run as a *second opinion*. `from_config()` returns None when disabled/absent so the station runs without it | Partly — `preprocess()` + config handling unit-tested; the ONNX session is not |
+| `camera/pipeline.py` | `process_tile()` — wires the three detectors into one `TileRecord` per tile, plus a first-pass rule-based grade and (optionally) the model's prediction alongside it. `tile_record_to_dict()` — shared JSON serialization, used by both the dashboard and `process_video.py` | No — pure glue, `tile_record_to_dict()` + the model integration unit-tested |
 | `camera/snapshot.py` | `save_tile_snapshot()` — writes a departed tile's photo to `data/camera_captures/` (config: `capture_snapshots`), named by its sequence number | Yes — I/O only, not unit-tested |
 | `camera/capture.py` | `WebcamCapture` (USB/UVC via OpenCV), `PiCameraCapture` (CSI via Picamera2), `VideoFileCapture` (saved file), and `create_capture()` / `list_cameras()` | Yes — not unit-tested, and `PiCameraCapture` not even smoke-tested |
-| `camera/worker.py` | `CameraWorker` — background thread: capture → segment → track → (on tile departure) run the pipeline + save a snapshot, publish into `SharedState`. Keeps the *largest-area* sighting of each tile while it's crossing, since that's typically the most centered/least-blurred view | Yes — real hardware I/O + threading, not unit-tested |
+| `camera/worker.py` | `CameraWorker` — background thread: capture → segment → track → (on the configured trigger) run the pipeline + save a snapshot, publish into `SharedState`. See **Capture trigger** below for which frame gets graded | Yes — real hardware I/O + threading, not unit-tested |
 | `camera/process_video.py` | `process_video_file()` + CLI — offline version of `worker.py`'s loop against a saved video file: total tile flow count and a numbered per-tile result, with an optional `--report file.json` | Yes — reads a file; not unit-tested, smoke-tested against a synthetic video |
 | `camera/dashboard.py` + `camera/templates/dashboard.html` | Flask app: `/video_feed` (MJPEG stream), `/api/status` (JSON: tile count + recent results), `/` (dashboard page) | Serves over the network (`host: 0.0.0.0`), smoke-tested via Flask's test client |
 | `camera/live_dashboard.py` | CLI entry point (`--list-devices`, `--backend`, `--no-dashboard`), mirrors `acoustic_node`'s `live_monitor.py` | — |
@@ -98,9 +100,61 @@ Mirrors `acoustic_node`'s hardware/logic split (`.claude/CLAUDE.md` Development 
 crack-classification example (from Arduino's own App Lab examples) only produced a grade
 category, not a measurement — see `.claude/CLAUDE-LOG.md`, 2026-08-07. This pipeline
 measures crack length and missing-corner area directly from contours instead, which is
-what this project actually needs ("is there a crack, and how big is it"). The trained
-classifiers in `camera_models/` are a separate, still-unwired track — the Pi 5's compute
-headroom is what makes eventually running one of them on this station realistic.
+what this project actually needs ("is there a crack, and how big is it").
+
+A trained classifier is now *optionally* wired in as well (`camera/grading_model.py`,
+2026-09-20), but it does not replace any of the above — see **Capture trigger** and
+**Optional ONNX grade model** below.
+
+## Capture trigger
+
+`config.yaml`'s `processing_trigger` decides **which frame of a tile gets graded**. The
+two settings grade different frames, so the same footage gives different measurements
+under each — that is expected, not a bug.
+
+| Setting | Fires when | Use it when |
+|---|---|---|
+| `"line_crossing"` (default) | the tile's bounding-box centre crosses `trigger_line` | The real conveyor. Every tile is photographed at the same point in the frame, so scale, framing and motion blur are comparable between tiles. |
+| `"departure"` | the tile has fully left the frame; grades the largest-area sighting seen while it was crossing | Footage where the camera's mounting isn't fixed yet, since it needs no line to be positioned. |
+
+`trigger_line` is configured in **normalized** coordinates (0.0–1.0 of the frame), so one
+value stays correct at any camera resolution. `direction` should match the conveyor's
+actual travel so a tile nudged backwards isn't graded twice, and `hysteresis` is a
+deadband: without it, a tile sitting on the line jitters a pixel either side between
+frames from segmentation noise and fires repeatedly.
+
+The tile *count* follows the trigger — crossings in `"line_crossing"` mode, `TileTracker`
+departures in `"departure"` mode — while `TileTracker` runs in both, since it owns the
+presence debounce either way.
+
+## Optional ONNX grade model
+
+`camera/grading_model.py` runs the model staged into `camera_node/models/` by
+`camera_models/cam_edge/stage_model.py`. **Off by default** (`grading_model.enabled:
+false`) and imported lazily, so a station without `onnxruntime` installed runs exactly as
+before rather than failing to start.
+
+**It is a second opinion, not a replacement.** It classifies the *cosmetic grade tier*
+(3A/3B/4/5) of an intact tile and **cannot see cracks or broken corners at all** — those
+stay `crack_detection.py` and `corner_detection.py`'s job. The station's decision remains
+the rule-based `grade`; the model's answer is recorded next to it as `model_grade` so the
+two can be compared on real tiles instead of one silently overriding the other.
+
+Currently staged: `yolo26n-cls`, 6.2 MB, measured **82.9%** on a 76-image val split (95%
+CI 72.9–89.7, i.e. roughly one tile in six is misgraded — do not treat a single
+prediction as authoritative). Re-verified end-to-end through this module on 2026-09-20:
+82.89%, 100% agreement with `cam_edge`'s own runtime, and a byte-identical preprocessing
+tensor. Per-tile inference measured 2.5 ms (p50) on the dev laptop at 2 threads.
+
+Classes, preprocessing recipe and provenance are read from the sidecar `models/*.json`
+rather than re-typed into `config.yaml`, so they can't drift from the weights.
+
+> The preprocessing in this module is **deliberately copied**, not imported, from
+> `camera_models/cam_edge/runtime.py` — `camera_node` must not import from
+> `camera_models/` (dev-only tooling, gitignored `runs/`). If you change one, change both
+> and re-run `camera_models/cam_edge/evaluate.py` to prove the accuracy still holds.
+> Note that the resize filter alone is worth ~8 accuracy points: Pillow's antialiased
+> BILINEAR, not `cv2.INTER_LINEAR`.
 
 ## Running it on the dev laptop
 

@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Optional
 
 from camera.capture import VideoFileCapture, load_config
+from camera.grading_model import TileGradeModel
+from camera.line_trigger import LineCrossingDetector
 from camera.pipeline import TileRecord, process_tile, tile_record_to_dict
 from camera.segmentation import TileRegion, segment_tile
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
@@ -35,12 +37,44 @@ from camera.tile_tracker import TileTracker
 
 def process_video_file(video_path: str, config: dict, save_snapshots: bool = True) -> list[TileRecord]:
     """Runs the full video file to completion and returns one TileRecord per
-    tile that crossed the line, in the order they crossed (record.seq is
-    that tile's position in this run's flow count, 1-indexed)."""
+    tile that was graded, in order (record.seq is that tile's position in this
+    run's flow count, 1-indexed).
+
+    Honours config.yaml's `processing_trigger` exactly as worker.py does, so
+    offline results on a clip match what the live station would have produced
+    from the same footage:
+
+      "line_crossing" — grade the frame where the tile's centre crosses
+                        `trigger_line`.
+      "departure"     — grade the largest-area sighting, once the tile has
+                        fully left the frame.
+
+    These pick different frames, so the same clip will give different
+    crack/corner measurements under each. That is expected, not a bug.
+    """
     seg_cfg = config["segmentation"]
     crack_cfg = config["crack_detection"]
     corner_cfg = config["corner_detection"]
     snapshot_cfg = config["capture_snapshots"]
+
+    mode = config.get("processing_trigger", "line_crossing")
+    if mode not in ("line_crossing", "departure"):
+        raise ValueError(
+            f"processing_trigger must be 'line_crossing' or 'departure', got {mode!r}"
+        )
+
+    line_cfg = config.get("trigger_line") or {}
+    crossing: Optional[LineCrossingDetector] = None
+    if mode == "line_crossing":
+        crossing = LineCrossingDetector(
+            position=line_cfg.get("position", 0.5),
+            orientation=line_cfg.get("orientation", "vertical"),
+            direction=line_cfg.get("direction", "both"),
+            hysteresis=line_cfg.get("hysteresis", 0.02),
+        )
+
+    # Built once for the whole file, like worker.py does for the whole run.
+    model = TileGradeModel.from_config(config)
 
     tracker = TileTracker(
         min_present_frames=config["tile_tracker"]["min_present_frames"],
@@ -66,18 +100,29 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
                 morph_kernel_size=seg_cfg["morph_kernel_size"],
             )
             tile_present = region is not None
-            if tile_present:
-                # Same "largest sighting, not latest" choice as worker.py -
-                # see its _loop() comment for why.
-                if best_seen_region is None or region.area_px > best_seen_region.area_px:
-                    best_seen_region = region
-
             departed = tracker.process_frame(tile_present)
-            if departed and best_seen_region is not None:
+
+            region_to_process: Optional[TileRegion] = None
+            if mode == "line_crossing":
+                event = crossing.update(
+                    region.center_normalized if region is not None else None
+                )
+                if event and region is not None:
+                    region_to_process = region
+            else:
+                if tile_present:
+                    # Same "largest sighting, not latest" choice as worker.py -
+                    # see its _loop() comment for why.
+                    if best_seen_region is None or region.area_px > best_seen_region.area_px:
+                        best_seen_region = region
+                if departed and best_seen_region is not None:
+                    region_to_process = best_seen_region
+
+            if region_to_process is not None:
                 seq += 1
                 record = process_tile(
                     seq=seq,
-                    region=best_seen_region,
+                    region=region_to_process,
                     canny_low=crack_cfg["canny_low"],
                     canny_high=crack_cfg["canny_high"],
                     min_crack_length_px=crack_cfg["min_crack_length_px"],
@@ -88,6 +133,8 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
                     border_margin_px=crack_cfg["border_margin_px"],
                     max_missing_extent_fraction=corner_cfg["max_missing_extent_fraction"],
                     tile_size_inches=corner_cfg.get("tile_size_inches"),
+                    grading_model=model,
+                    trigger=mode,
                 )
                 if save_snapshots and snapshot_cfg["enabled"]:
                     path = save_tile_snapshot(record, resolve_output_dir(config))
@@ -98,11 +145,27 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
     return records
 
 
+def _describe_trigger(records: list[TileRecord]) -> str:
+    """How these tiles came to be graded, so a report can be read without
+    knowing what config.yaml said when it ran."""
+    trigger = records[0].trigger if records else None
+    return {
+        "line_crossing": "crossed the trigger line",
+        "departure": "left the frame",
+    }.get(trigger, "were graded")
+
+
 def _print_report(video_path: str, records: list[TileRecord]) -> None:
-    print(f"\n{video_path}: {len(records)} tile(s) crossed the line\n")
+    print(f"\n{video_path}: {len(records)} tile(s) {_describe_trigger(records)}\n")
     if not records:
         return
+    # The model column only appears when a model actually ran, so a report
+    # from a station without one is not full of empty columns.
+    has_model = any(r.model_grade for r in records)
+
     header = f"{'#':>4}  {'grade':<9} {'crack':<7} {'length_px':>10} {'corner_broken':>14} {'fill_ratio':>11} {'missing_corner':>15}"
+    if has_model:
+        header += f" {'model':>7} {'conf':>7}"
     print(header)
     print("-" * len(header))
     for r in records:
@@ -112,12 +175,22 @@ def _print_report(video_path: str, records: list[TileRecord]) -> None:
             missing_str = f"{r.corner.missing_depth_px:.0f}px deep"
         else:
             missing_str = "-"
-        print(
+        row = (
             f"{r.seq:>4}  {r.grade:<9} {r.crack.severity:<7} {r.crack.crack_length_px:>10.1f} "
             f"{str(r.corner.corner_broken):>14} {r.corner.fill_ratio:>11.3f} {missing_str:>15}"
         )
+        if has_model:
+            conf = f"{r.model_confidence * 100:.0f}%" if r.model_confidence is not None else "-"
+            row += f" {r.model_grade or '-':>7} {conf:>7}"
+        print(row)
     rejects = sum(1 for r in records if r.grade == "Reject")
     print(f"\nTotal tile flow: {len(records)}  |  Reject: {rejects}  |  Grade A/B: {len(records) - rejects}")
+    if has_model:
+        # Spelled out because the two columns are easy to conflate: 'grade' is
+        # the station's decision from measured crack/corner geometry; 'model'
+        # is a cosmetic grade-tier guess that cannot see either defect.
+        print("  grade = rule-based from crack/corner measurement (the station's decision).")
+        print("  model = ONNX cosmetic grade tier; it does NOT detect cracks or corners.")
 
 
 def main() -> None:

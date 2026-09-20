@@ -151,6 +151,68 @@ tile_tracker:
   min_present_frames: 3
   min_absent_frames: 5
 
+# Which event triggers "photograph this tile and grade it".
+#
+#   "line_crossing" - fire when the tile's bounding-box CENTRE crosses the
+#                     trigger_line below. Right for a conveyor: every tile is
+#                     photographed at the same point in the frame, so framing,
+#                     scale and motion blur are consistent between tiles.
+#   "departure"     - the original behaviour: fire when the tile has fully
+#                     left the frame, grading the largest-area sighting seen
+#                     while it was crossing. Kept because it needs no line to
+#                     be positioned, which is useful on footage where the
+#                     camera's mounting is not yet fixed.
+#
+# These grade DIFFERENT frames, so results on the same footage will differ.
+processing_trigger: "line_crossing"
+
+trigger_line:
+  # Where the line sits, as a fraction of the frame (0.0-1.0), so one value
+  # stays correct at any camera resolution. For "vertical" this is a fraction
+  # of the WIDTH (the line runs top-to-bottom; tiles cross it travelling
+  # left/right); for "horizontal", a fraction of the HEIGHT.
+  position: 0.5
+  orientation: "vertical"
+  # Which way across the line counts. Set this to the conveyor's actual travel
+  # so a tile nudged backwards is not graded twice. "forward" = the centre's
+  # coordinate increasing (left->right, or top->bottom). "both" accepts either.
+  direction: "both"
+  # How far past the line (same 0-1 units) the centre must travel before the
+  # crossing is committed. Without this, a tile sitting on the line jitters a
+  # pixel either side between frames from segmentation noise and fires
+  # repeatedly. 0.02 of a 640px frame is ~13px.
+  hysteresis: 0.02
+  # Draw the line and the tile's centre point on the dashboard's video feed.
+  # Display only - has no effect on detection.
+  draw_overlay: true
+
+# Optional ONNX tile-grade classifier. OFF by default: the station must work
+# without onnxruntime installed, and this is a second opinion rather than a
+# replacement for the crack/corner detectors.
+#
+# IMPORTANT - what this model does and does not do: it classifies the cosmetic
+# grade tier (3A/3B/4/5) of an INTACT tile. It does NOT detect cracks or broken
+# corners. The station's own decision stays the rule-based `grade` from
+# crack/corner detection; the model's answer is recorded alongside it as
+# `model_grade` so the two can be compared on real tiles. See
+# camera_models/cam_edge/README.md for the accuracy it was measured at
+# (82.9% on a 76-image val set, 95% CI 72.9-89.7 - i.e. do not treat a single
+# prediction as authoritative).
+grading_model:
+  enabled: false
+  # Relative to camera_node/. Staged by camera_models/cam_edge/stage_model.py,
+  # which also writes the sidecar .json holding classes/preprocess/provenance -
+  # those are read from there, so they need not be repeated here.
+  path: "models/tile_grade_yolo26n_cls.onnx"
+  # ONNX Runtime intra-op threads. Pinned low on purpose: the Pi has 4 cores
+  # shared with the capture thread and the Flask server, and letting inference
+  # take all of them starves the MJPEG stream.
+  threads: 2
+  # Uncomment to override the sidecar metadata (normally unnecessary):
+  # classes: ["3A", "3B", "4", "5"]
+  # preprocess: "yolo_cls"   # or "vit_hf" for a ViT export
+  # input_size: 224
+
 capture_snapshots:
   # When enabled, each tile's isolated photo is saved to disk on departure
   # (see camera/snapshot.py), named by its sequence number, so it can be

@@ -602,3 +602,77 @@ plan (`octave_bands.py`, `decay.py`, `weighting.py`, `sound_level.py`, `calibrat
   `process_video.py`, the `trigger_line` and `grading_model` config sections, and the
   overlay drawing the line + centre point. `line_trigger.py` and the new `TileRegion`
   properties are additive — nothing imports them yet, so the live pipeline is unchanged.
+
+## 2026-09-20 (cont. 2) — Finished wiring the grade model + capture trigger into camera_node
+
+Resumed after an IDE/machine crash, picking up the "Not done yet" list the previous
+entry ends with. The working tree already held uncommitted edits to `config.yaml`,
+`pipeline.py`, `process_video.py`, `worker.py` and `dashboard.html`, plus an untracked
+`camera/grading_model.py` — i.e. the wiring had been written but never tested,
+documented or committed.
+
+- **First, an environment trap worth recording.** `python -m pytest tests/` died with
+  **no output at all** and exit code 1 — not a test failure, a hard abort during
+  collection. `numpy`, `cv2` and `pytest` each imported fine on their own; a bare
+  `import onnxruntime` surfaced the real cause, `OpenBLAS error: Memory allocation still
+  failed after 10 retries`. `OPENBLAS_NUM_THREADS=1 python -m pytest tests/ -q` runs
+  clean. Root cause not chased (thread/memory pressure, almost certainly crash
+  fallout, nothing in this repo) but it is now in `CLAUDE.md` Platform Constraints,
+  because a silent zero-output pytest reads like pytest itself is broken.
+- **Verified the staged model end-to-end through `camera_node`'s own path** — the thing
+  that had never been done. `TileGradeModel.from_config()` → `.predict()` over the same
+  76-image val split reproduced **82.89%**, with **100% label agreement** against
+  `cam_edge`'s `OnnxClassifier` and a **0.00000000** max-abs preprocessing tensor
+  difference, per-class recall matching the sidecar JSON exactly. That last number is
+  the one that mattered: the preprocessing in `grading_model.py` is *deliberately
+  duplicated* from `cam_edge/runtime.py` (`camera_node` must not import dev-only
+  tooling), so silent drift between the two copies was the standing risk, and it is
+  measured absent rather than assumed. Per-tile inference 2.5 ms p50 at 2 threads.
+- **Smoke-tested both capture triggers** on a synthetic conveyor clip built from real
+  tile photos sliding across a dark belt. Four tiles, each counted exactly once in both
+  modes. The interesting result is the capture *position*: centres landed at
+  x=340/340/340/340 under `"line_crossing"` versus **120/520/520/180** under
+  `"departure"` — a direct measurement of the inconsistency the line trigger was built
+  to remove, on footage where the two modes otherwise agree on grade. Also smoke-tested
+  the dashboard routes (`/`, `/api/status`, `/video_feed`) with a mix of model-graded
+  records and a bare one, confirming a grading-off station still serializes cleanly as
+  nulls rather than tripping the template.
+- **Wrote the missing tests** — `grading_model.py` had none, unlike every other pure
+  module (Development Rule 1). 36 new tests in `tests/test_camera_grading_model.py`
+  covering both preprocessing recipes (shape/dtype/contiguity, the `[0,1]` vs `[-1,1]`
+  scaling split, BGR→RGB, crop-vs-squash behaviour, the `int()`-truncation arithmetic)
+  and every `from_config()` not-set-up path. **These deliberately do not require
+  onnxruntime**: the whole contract is that a station without it still runs, so a suite
+  that only passed with it installed would test the wrong thing. Plus 6 in
+  `test_camera_pipeline.py` for the model integration via a duck-typed stand-in —
+  including the rule that a model raising mid-run is swallowed and recorded as *no
+  prediction*, because the crack/corner measurement is what the station actually sorts
+  on and must survive a broken classifier. **82 → 124 tests, all green.**
+- **Closed the Pi deployment gap.** The model needs `onnxruntime` and Pillow, and
+  neither was in the Pi install path — so with `grading_model.enabled: true` the station
+  would have silently reported "disabled: onnxruntime is not installed" forever. Added
+  `python3-pil` to the apt list and an opt-in `install_pi.sh --with-grading` flag.
+  onnxruntime is the one dependency apt does not package, so that flag pip-installs it
+  into the system interpreter with `--break-system-packages` — a narrow, deliberate
+  choice (one pure-addition wheel into the interpreter the service already runs) over a
+  venv that would break `python3-picamera2`'s numpy/libcamera ABI, which is the trap
+  `deploy/README.md` already warns about. The step is **non-fatal**: if the wheel won't
+  install the script warns and carries on, matching `from_config()`'s own
+  never-raise-when-absent behaviour. Still **never run** — no Pi exists.
+- Documented all of it: `camera_node/README.md` gained **Capture trigger** and
+  **Optional ONNX grade model** sections and lost the now-false claim that the
+  `camera_models/` classifiers are "a separate, still-unwired track"; `deploy/README.md`
+  gained the grading install section and two new re-check-on-hardware items;
+  `.claude/CLAUDE.md` gained module-table and Key Modules entries for `line_trigger.py`,
+  `grading_model.py`, `camera_node/models/` and `cam_edge/`, an updated camera data-flow
+  diagram, and three new Known Technical Debt entries; `TODO.md` moved both pieces of
+  work to Done and added four new Not Started items.
+- **What is still not true, and is flagged everywhere it matters:** the model ships
+  `enabled: false`; it is trained on 376 photos of **intact** tiles from a camera that
+  is not the station's, measured on 76 val images (95% CI 72.9–89.7, i.e. roughly one
+  tile in six misgraded, class "4" recall 0.667); it classifies cosmetic grade tier and
+  **cannot see cracks or broken corners at all**, which is why `pipeline.py` records
+  `model_grade` strictly *alongside* the rule-based `grade` with no fusion. The line
+  trigger has never seen real conveyor footage or a live camera, its `position` and
+  `direction` are properties of a rig that does not exist yet, and it assumes one tile
+  in frame at a time (`segment_tile()` returns only the largest region).

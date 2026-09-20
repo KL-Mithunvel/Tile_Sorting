@@ -676,3 +676,55 @@ documented or committed.
   trigger has never seen real conveyor footage or a live camera, its `position` and
   `direction` are properties of a rig that does not exist yet, and it assumes one tile
   in frame at a time (`segment_tile()` returns only the largest region).
+
+## 2026-09-20 (cont. 3) — Real belt footage through the real trigger; found a live-pipeline bug
+
+Ran `data/WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4` (the real lab conveyor phone
+recording) through `camera_node`'s actual `LineCrossingDetector`, rather than the
+hand-rolled centroid check `development/process_conveyor_video.py` had carried since
+before that module existed. The trigger came out of it correct; **segmentation did not**.
+
+- **The finding: `segment_tile()` returning only the largest region makes tile identity
+  flip when two tiles share the frame.** On this clip **34.8% of frames (596/1715) hold
+  two tile-sized regions**, and the two tiles' areas land within **~0.02% of each other**
+  — measured at frame 613, 26283 px vs 26278 px, a 5-pixel margin. Whichever is
+  fractionally larger wins, so "the tile" flips between two physically different tiles on
+  nothing but segmentation noise, and the reported centre teleports ~0.6 of the frame
+  height in a single frame. The trigger then fires on a jump that never happened:
+  **12 crossings reported where 7 are real**, three of the extras inside 160 ms.
+- **This is not a trigger bug**, and the distinction matters for where it gets fixed.
+  `LineCrossingDetector` is specified for one tile in frame at a time and behaved exactly
+  to spec. Its hysteresis is a *spatial* deadband for a tile jittering **at** the line; a
+  0.6-of-frame jump clears any deadband, confirmed by sweeping it 0.0 → 0.08 with no
+  change to the count at all.
+- **The old hand-rolled logic was masking it.** It reported 9, which looked right, purely
+  because a blunt 12-frame temporal cooldown swallows repeats landing within 0.4 s. That
+  cooldown is now gone — it was hiding a real defect behind a plausible number, which is
+  worse than reporting the ugly one.
+- **The tell, worth remembering:** a genuine crossing is recorded *just past* the line
+  (`cy≈0.52` with the line at 0.5 + 0.02 hysteresis); an identity flip is recorded *far*
+  from it (`cy≈0.83-0.86`), because the centre jumped there instead of travelling there.
+  That single column separates the 7 real crossings from the 5 artifacts by inspection.
+- **Changes made.** `process_conveyor_video.py` now drives the real `LineCrossingDetector`
+  (duplicate logic deleted, DRY) and gained `_find_tile_candidates()`, a diagnostic that
+  applies the same HSV/area/aspect filters but keeps the runners-up `segment_tile()`
+  throws away. The trigger is still driven by `_find_tile_bbox()` — i.e. by the real
+  `segment_tile()` — so the script exercises the production path and the diagnostic only
+  observes it; both paths were confirmed to agree (identical 12 crossings either way).
+  The annotated video now draws every candidate, green for the chosen one and amber for
+  the discarded, so the flip is visible as the green box jumping between two tiles, and
+  the run prints a loud warning with the multi-region frame count. `TileTracker`'s
+  departure count (3) is printed alongside as a cross-check — it debounces presence only
+  and is blind to which tile it is looking at, so it cannot see the flip either.
+- **Why this is the most important thing found about the live pipeline so far:**
+  everything downstream attaches to whichever region happened to be largest — tile
+  counts, per-tile crack/corner grades, saved snapshots, and the ONNX model's second
+  opinion. All of it is untrustworthy whenever two tiles share the frame, which on a real
+  production conveyor is the normal case, not the exception. The fix belongs upstream
+  (return N regions, associate them frame-to-frame, give each tracked tile its own
+  trigger state) and is a design decision rather than a tweak, so it is recorded in
+  `TODO.md` and `CLAUDE.md` rather than improvised here.
+- 124 tests still green — nothing in `camera_node` changed this session, only the dev
+  harness and the documentation. `camera_node`'s own config keeps
+  `processing_trigger: "line_crossing"`, which remains correct for the single-tile case
+  it is specified for.

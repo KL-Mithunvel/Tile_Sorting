@@ -1,51 +1,103 @@
 {
   "video_path": "C:\\Users\\MithunvelKL\\PycharmProjects\\Tile_Sorting\\data\\WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4",
-  "line_crossing_count": 9,
+  "line_crossing_count": 12,
   "crossings": [
     {
       "seq": 1,
-      "frame_index": 507,
-      "timestamp_s": 16.92
+      "frame_index": 511,
+      "timestamp_s": 17.05,
+      "center_y_normalized": 0.5234,
+      "direction": "forward"
     },
     {
       "seq": 2,
       "frame_index": 613,
-      "timestamp_s": 20.46
+      "timestamp_s": 20.46,
+      "center_y_normalized": 0.8496,
+      "direction": "forward"
     },
     {
       "seq": 3,
-      "frame_index": 672,
-      "timestamp_s": 22.43
+      "frame_index": 615,
+      "timestamp_s": 20.52,
+      "center_y_normalized": 0.8516,
+      "direction": "forward"
     },
     {
       "seq": 4,
-      "frame_index": 827,
-      "timestamp_s": 27.6
+      "frame_index": 618,
+      "timestamp_s": 20.62,
+      "center_y_normalized": 0.856,
+      "direction": "forward"
     },
     {
       "seq": 5,
-      "frame_index": 931,
-      "timestamp_s": 31.07
+      "frame_index": 682,
+      "timestamp_s": 22.76,
+      "center_y_normalized": 0.5215,
+      "direction": "forward"
     },
     {
       "seq": 6,
-      "frame_index": 992,
-      "timestamp_s": 33.11
+      "frame_index": 831,
+      "timestamp_s": 27.73,
+      "center_y_normalized": 0.5234,
+      "direction": "forward"
     },
     {
       "seq": 7,
-      "frame_index": 1184,
-      "timestamp_s": 39.51
+      "frame_index": 931,
+      "timestamp_s": 31.07,
+      "center_y_normalized": 0.8262,
+      "direction": "forward"
     },
     {
       "seq": 8,
-      "frame_index": 1484,
-      "timestamp_s": 49.52
+      "frame_index": 934,
+      "timestamp_s": 31.17,
+      "center_y_normalized": 0.8418,
+      "direction": "forward"
     },
     {
       "seq": 9,
-      "frame_index": 1602,
-      "timestamp_s": 53.46
+      "frame_index": 1016,
+      "timestamp_s": 33.91,
+      "center_y_normalized": 0.52,
+      "direction": "forward"
+    },
+    {
+      "seq": 10,
+      "frame_index": 1188,
+      "timestamp_s": 39.65,
+      "center_y_normalized": 0.521,
+      "direction": "forward"
+    },
+    {
+      "seq": 11,
+      "frame_index": 1487,
+      "timestamp_s": 49.62,
+      "center_y_normalized": 0.5244,
+      "direction": "forward"
+    },
+    {
+      "seq": 12,
+      "frame_index": 1604,
+      "timestamp_s": 53.53,
+      "center_y_normalized": 0.5205,
+      "direction": "forward"
     }
-  ]
+  ],
+  "diagnostics": {
+    "frames": 1715,
+    "frames_with_tile": 1364,
+    "multi_region_frames": 596,
+    "max_regions_in_one_frame": 2,
+    "tracker_departures": 3,
+    "trigger": {
+      "position": 0.5,
+      "orientation": "horizontal",
+      "direction": "forward",
+      "hysteresis": 0.02
+    }
+  }
 }

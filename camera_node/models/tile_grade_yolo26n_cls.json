@@ -1,0 +1,32 @@
+{
+  "name": "yolo26n-cls",
+  "staged_on": "2026-09-20",
+  "source": "camera_models/cam_yolo/runs/tile_grade_cls-aug-n/weights/best.onnx",
+  "onnx_mb": 6.15,
+  "sha256": "c97f946188835d8df14ecd711aeaa43632d2b919c58544163939dc62b5df380d",
+  "classes": [
+    "3A",
+    "3B",
+    "4",
+    "5"
+  ],
+  "preprocess": "yolo_cls",
+  "input_size": 224,
+  "note": "1.53M params, 0.4 GFLOPs. The small-model candidate.",
+  "measured": {
+    "val_split": "C:\\Users\\MithunvelKL\\PycharmProjects\\Tile_Sorting\\camera_models\\cam_yolo\\dataset\\val",
+    "val_images": 76,
+    "accuracy": 0.8289,
+    "ci95": [
+      0.729,
+      0.8972
+    ],
+    "per_class_recall": {
+      "3A": 0.7857,
+      "3B": 0.9545,
+      "4": 0.6667,
+      "5": 0.9091
+    }
+  },
+  "what_it_classifies": "Cosmetic grade tier (3A/3B/4/5) of an intact tile. This model does NOT detect cracks or broken corners - that is camera_node's classical CV path (crack_detection.py / corner_detection.py). Trained on 376 photos of intact tiles; see camera_models/cam_edge/README.md before trusting any single prediction."
+}

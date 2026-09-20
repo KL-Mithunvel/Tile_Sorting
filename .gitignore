@@ -25,3 +25,13 @@ camera_models/cam_vit/runs/
 camera_models/cam_vit/.checkpoint_cache/
 *.safetensors
 *.onnx
+
+# ...but the ONE model staged for deployment IS committed: camera_node/models/
+# is how the Raspberry Pi station gets a runnable model from a plain git clone
+# (camera_models/*/runs/ above are gitignored, so it cannot get one otherwise).
+# Staged by camera_models/cam_edge/stage_model.py, which also writes the .json
+# metadata beside it. Keep this small - a nano classifier is ~6 MB; do not
+# promote a 343 MB ViT here without deciding to carry it in git history.
+!camera_node/models/
+!camera_node/models/*.onnx
+!camera_node/models/*.json

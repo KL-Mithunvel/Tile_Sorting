@@ -174,13 +174,16 @@ by `acoustic_node` — code moves the other way, by hand, copy-as-needed (mirror
 and use its own git; Tile_Sorting only records the pinned commit. After pulling
 Tile_Sorting fresh, run `git submodule update --init` to populate the folder.
 
-**Status (as of 2026-09-09): v0.1 built and working end-to-end** — full pure-DSP suite
+**Status (as of 2026-09-20): v0.2 built and working end-to-end** — full pure-DSP suite
 (`dsp/`: conditioning, spectrum, octave bands, Schroeder decay, IEC 61672 weighting,
 sound level, filter chain, spectral-subtraction denoise, NC/Ln environment), feature
 extraction + validity gate, `classify/` reference profile + rule-based grader, SQLite
 dataset store + WAV I/O, a headless CLI (`python -m acoustic_analysis.cli`), and a
-12-screen Tkinter GUI (dark instrument-look shell, left sidebar nav, opens on a Home
-launcher/session-summary screen). 133 tests. **Not done / not trusted:** never run
+13-screen Tkinter GUI (dark instrument-look shell, left sidebar nav, opens on a Home
+launcher/session-summary screen), and — new in v0.2 — a **Slice screen** that imports a
+tap-test video, detects every strike, and cuts/labels one snippet per tap into the dataset
+(two label axes: defect class + grade tier 3A/3B/4/5; needs ffmpeg via `imageio-ffmpeg`).
+197 tests. Slice has only seen *generated* videos, never real footage. **Not done / not trusted:** never run
 against a real microphone; no pistonphone calibration measured (levels are relative, not
 dB SPL); no real good-vs-defective tile recordings so the grader and every `config.yaml`
 threshold are unvalidated; `dsp/loudness.py` (phon/sone) deferred; no PyInstaller build.
@@ -188,7 +191,7 @@ See `Acoustic-Analysis/TODO.md` and its `.CLAUDE/CLAUDE.md` Known Technical Debt
 
 | Folder | Status |
 |---|---|
-| `Acoustic-Analysis/` | Submodule — standalone acoustic analysis + data-labelling desktop app (independent repo). **v0.1 built** (DSP suite, feature extraction, rule-based grader, SQLite dataset, CLI, 12-screen Tkinter GUI; 133 tests) as of 2026-09-09. Pending: real-mic run, pistonphone calibration, real-tile threshold tuning. |
+| `Acoustic-Analysis/` | Submodule — standalone acoustic analysis + data-labelling desktop app (independent repo). **v0.2 built** (DSP suite, feature extraction, rule-based grader, SQLite dataset, CLI, 13-screen Tkinter GUI incl. video Slice screen; 197 tests) as of 2026-09-20. Pending: real-mic run, pistonphone calibration, real-tile threshold tuning. |
 | `camera_models/cam_yolo/` | Real code — fine-tunes a YOLO26 classification model (`yolo26s-cls`, Ultralytics) on the tile-grade dataset. 85.5% top1 on its own val split. See `camera_models/cam_yolo/README.md`. |
 | `camera_models/cam_edge/` | Real code (added 2026-09-20) — **trains nothing**; measures what the other two produced. What each trained model *costs to run* on the Pi 5 station (speed/memory via `benchmark.py`, accuracy on one common val split with Wilson 95% CIs via `evaluate.py`), for the exact `.onnx` that would be deployed, plus `stage_model.py`, which promotes one chosen artifact into `camera_node/models/`. Depends only on onnxruntime/opencv/numpy/Pillow/psutil — deliberately not torch/ultralytics/transformers — so the identical script runs on the Pi. Headline results in `camera_models/cam_edge/README.md`: `yolo26n-cls` 82.9% @ 1.59 ms, `yolo26s-cls` 85.5% @ 4.16 ms, `vit-base` 92.1% @ 110 ms; dynamic INT8 makes the YOLO nets both slower *and* much worse (82.9% → 57.9%). |
 | `camera_models/cam_vit/` | Real code — fine-tunes `google/vit-base-patch16-224-in21k` (HuggingFace `transformers`) on the same dataset, matching the augmentation config of the Roboflow-hosted `tile-grade-classification` model but with real exportable weights (Roboflow's hosted ViT training doesn't export weights). 93.4% top1 (76-image val split) trained on the original dataset; retrained 2026-08-26 on an offline-augmented copy (`development/augment_dataset.py`) with no measurable improvement (92.1% on the same val split, apples-to-apples) — see `camera_models/cam_vit/README.md`. |

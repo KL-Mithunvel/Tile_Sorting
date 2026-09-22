@@ -329,8 +329,11 @@ Rule 3).
   Blocked on SMTW tile size/weight (`requirements.md` Open Items).
 - **Homing switch type/placement** — mechanical vs. optical vs. inductive; min-only vs.
   min+max per axis.
-- **A-socket clone jumper positions** — exact jumper layout differs slightly between CNC
-  Shield V3 clones; confirm against the actual board.
+- **A-socket clone jumper positions** — **confirmed 2026-09-22** on the actual board: the
+  A-clone header's STEP-select and DIR-select jumper caps were initially seated on the
+  **X** pins (A was cloning X, not Y) and have been moved to the **Y** pins, matching §4.
+  If re-seating on a different CNC Shield V3 clone, re-verify against that board's own
+  silkscreen — the layout is known to differ between clones.
 - **E-stop contactor** — part not selected; must be rated for the motor PSU and fail-open.
 - **Load cell (§7)** — go/no-go deferred to the dimensional-module scope decision.
 - **Idle current reduction** — whether to drop `EN` at idle to cut motor heat, and how to

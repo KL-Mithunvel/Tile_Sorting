@@ -1,0 +1,23 @@
+# io_smoke_test bench app configuration.
+# All tunables live here so the code never hardcodes device/threshold values
+# (see .claude/CLAUDE.md Development Rule 2).
+
+serial:
+  # PLACEHOLDER -- the real device node for the sketch's Serial link from the
+  # UNO Q's own Linux side is unverified (see serial_backend.py's docstring
+  # and this app's README "Known unverified" section). Try candidates with
+  # `ls /dev/tty*` over SSH (tools/uno_q/ssh.bat) before trusting this value.
+  port: "/dev/ttyACM0"
+  baud: 115200
+  timeout_s: 1.0
+
+dashboard:
+  # 0.0.0.0 so the GUI is reachable from a browser anywhere on the same WiFi
+  # (the owner's hotspot), not just localhost -- same convention as
+  # camera_node/acoustic_node/pick_place_node's other dashboards.
+  host: "0.0.0.0"
+  # Distinct from camera_node (5000) and pick_place's twin (5050) so all
+  # three could run at once during bring-up.
+  port: 5060
+  # How often the browser polls /api/status for live readings.
+  poll_interval_s: 0.2

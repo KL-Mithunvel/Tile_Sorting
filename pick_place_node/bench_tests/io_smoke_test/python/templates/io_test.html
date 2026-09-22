@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pick &amp; Place Node — I/O Smoke Test</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, sans-serif; padding: 1.5rem; background: #111; color: #eee; box-sizing: border-box; }
+  h1 { font-size: 1.3rem; margin: 0 0 0.25rem; }
+  .notice { color: #f0c93d; font-size: 0.8rem; margin: 0 0 1.25rem; max-width: 46rem; line-height: 1.4; }
+  #conn-banner { display: none; background: #5c2020; color: #fff; padding: 0.6rem 1rem; border-radius: 4px; margin: 0 0 1rem; font-size: 0.85rem; }
+  #conn-banner.stale { display: block; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; max-width: 46rem; margin-bottom: 1.5rem; }
+  .tile { background: #1b1b1b; border: 1px solid #333; border-radius: 6px; padding: 0.9rem; text-align: center; }
+  .tile .label { color: #aaa; font-size: 0.8rem; margin-bottom: 0.5rem; }
+  .tile .level { font-family: ui-monospace, monospace; font-size: 1.6rem; font-weight: bold; }
+  .level-low { color: #5cc8ff; }
+  .level-high { color: #f0c93d; }
+  .level-unknown { color: #555; }
+
+  .vac-panel { max-width: 20rem; }
+  .vac-panel h2 { font-size: 1rem; margin: 0 0 0.6rem; color: #aaa; }
+  #vac-toggle { width: 100%; padding: 0.9rem; font-size: 1.1rem; font-weight: bold; border-radius: 6px; border: 1px solid #333; cursor: pointer; }
+  #vac-toggle.off { background: #222; color: #eee; }
+  #vac-toggle.on { background: #2f6b2f; color: #fff; }
+  #vac-toggle:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+  <h1>Pick &amp; Place Node — I/O Smoke Test</h1>
+  <p class="notice">
+    Raw digitalRead levels for E-stop and the 3 limit switches — <strong>not</strong>
+    pre-interpreted as triggered/ok. The wiring doc's stated polarity
+    ("LOW = triggered") looks backwards for an NC switch wired to GND with
+    INPUT_PULLUP; press each switch by hand and watch which level it shows to
+    find the real polarity for this wiring. See sketch/sketch.ino's header comment.
+  </p>
+
+  <div id="conn-banner"></div>
+
+  <div class="grid">
+    <div class="tile"><div class="label">E-STOP (A0)</div><div class="level level-unknown" id="v-estop">—</div></div>
+    <div class="tile"><div class="label">LIM X (D9)</div><div class="level level-unknown" id="v-lim_x">—</div></div>
+    <div class="tile"><div class="label">LIM Y (D10)</div><div class="level level-unknown" id="v-lim_y">—</div></div>
+    <div class="tile"><div class="label">LIM Z (D11)</div><div class="level level-unknown" id="v-lim_z">—</div></div>
+  </div>
+
+  <div class="vac-panel">
+    <h2>Vacuum solenoid (D12)</h2>
+    <button id="vac-toggle" class="off" disabled>...</button>
+  </div>
+
+  <script>
+    const POLL_INTERVAL_MS = {{ poll_interval_ms }};
+    const banner = document.getElementById('conn-banner');
+    const vacButton = document.getElementById('vac-toggle');
+    let vacBusy = false;
+    let currentVacOn = false;
+
+    function setLevel(id, value) {
+      const el = document.getElementById(id);
+      if (value === undefined || value === null) {
+        el.textContent = '—';
+        el.className = 'level level-unknown';
+        return;
+      }
+      el.textContent = value ? 'HIGH' : 'LOW';
+      el.className = 'level ' + (value ? 'level-high' : 'level-low');
+    }
+
+    function updateVacButton(on) {
+      currentVacOn = on;
+      vacButton.textContent = on ? 'VACUUM: ON (tap to turn off)' : 'VACUUM: OFF (tap to turn on)';
+      vacButton.className = on ? 'on' : 'off';
+    }
+
+    async function poll() {
+      try {
+        const res = await fetch('/api/status');
+        const status = await res.json();
+
+        if (!status.connected || status.stale) {
+          banner.classList.add('stale');
+          banner.textContent = status.connected
+            ? 'No fresh status from the board in over a second — check the serial link.'
+            : 'Not connected to the board\'s serial port yet.';
+        } else {
+          banner.classList.remove('stale');
+        }
+
+        setLevel('v-estop', status.estop);
+        setLevel('v-lim_x', status.lim_x);
+        setLevel('v-lim_y', status.lim_y);
+        setLevel('v-lim_z', status.lim_z);
+
+        if (!vacBusy) {
+          updateVacButton(!!status.vac);
+          vacButton.disabled = !status.connected;
+        }
+      } catch (err) {
+        banner.classList.add('stale');
+        banner.textContent = 'Lost contact with the dashboard server itself: ' + err;
+      }
+    }
+
+    vacButton.addEventListener('click', async () => {
+      vacBusy = true;
+      vacButton.disabled = true;
+      const next = !currentVacOn;
+      try {
+        await fetch('/api/vac', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ on: next }),
+        });
+        updateVacButton(next);
+      } catch (err) {
+        banner.classList.add('stale');
+        banner.textContent = 'Failed to send vacuum command: ' + err;
+      } finally {
+        vacBusy = false;
+        vacButton.disabled = false;
+      }
+    });
+
+    poll();
+    setInterval(poll, POLL_INTERVAL_MS);
+  </script>
+</body>
+</html>

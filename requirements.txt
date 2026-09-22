@@ -55,6 +55,7 @@ pydantic_core==2.46.4
 protobuf==7.36.0
 Pygments==2.20.0
 pyparsing==3.3.2
+pyserial==3.5
 pytest==9.1.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.3

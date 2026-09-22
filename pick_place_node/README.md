@@ -25,6 +25,12 @@ X, Y+A(clone), and Z to confirm all 4 CNC Shield V3 stepper motors move (checkli
 task 0.5, `documents/pick_place_todo.md`). Not the real firmware. Push with
 `tools\uno_q\push-stepper-test.bat`; see that folder's `README.md`.
 
+`bench_tests/io_smoke_test/` — a standalone `arduino-app-cli` app with a browser GUI
+for the E-stop loop, the 3 limit switches, and the vacuum solenoid (checklist tasks
+0.1/0.6). Not the real firmware. Push with `tools\uno_q\push-io-test.bat`; see that
+folder's `README.md`, including a real discrepancy it found in the wiring doc's stated
+LOW/HIGH trigger polarity.
+
 ## HMI / digital twin dashboard (design in progress, 2026-08-11)
 
 Full feature sketch for this node's local HMI (control panel, status panel, live digital

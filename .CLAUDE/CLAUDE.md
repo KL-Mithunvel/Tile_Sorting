@@ -15,7 +15,7 @@ Automated ceramic/terracotta tile inspection, grading, sorting, and packing syst
 - Real-world basis: proposed for Sree Murugan Tile Works (SMTW), a clay tile manufacturer currently doing inspection/grading/sorting/packing manually. Tile size/weight range not yet obtained from SMTW — see Known Technical Debt.
 - License: see `LICENSE`
 - Runtime: Python 3.13 (venv at repo root)
-- Current build phase: Phase 1 (Laboratory Proof of Concept, charter §12.1) — acoustic capture and camera vision pipeline exist, plus a standalone acoustic analysis/labelling workbench (`Acoustic-Analysis/` submodule, v0.1); dimensional, control, sorting, and database layers are not started. None of it has run against real tiles or the real measurement hardware yet.
+- Current build phase: Phase 1 (Laboratory Proof of Concept, charter §12.1) — acoustic capture and camera vision pipeline exist, plus a standalone acoustic analysis/labelling workbench (`Acoustic-Analysis/` submodule, v0.3); dimensional, control, sorting, and database layers are not started. None of it has run against real tiles or the real measurement hardware yet.
 - Entry point (acoustic module): `python -m acoustic.live_monitor`, run from `acoustic_node/python/` (see Architecture below — the module moved out of a repo-root `acoustic/` package into this App Bricks-shaped node folder on 2026-08-03).
 - Entry point (camera module): `python -m camera.live_dashboard`, run from `camera_node/python/` — opens a WiFi-reachable Flask dashboard (added 2026-08-07). Flags: `--list-devices`, `--backend {auto,usb,picamera2}`, `--no-dashboard`. On the Pi station it is started by systemd via `camera_node/python/main.py` instead (see Deployment Notes).
 - **Station→hardware map (updated 2026-09-20):** the camera station moved off the Arduino UNO Q to a **Raspberry Pi 5 (16 GB), Raspberry Pi OS Desktop 64-bit**; acoustic and pick-and-place stay on the UNO Q. Reasoning in `documents/project/Automation_Architecture.md` §5.2/§5.3 — in short, only acoustic uses the UNO Q's real-time MCU half (ToF trigger → solenoid ball-drop → capture window) and only camera is compute-bound (per-frame segmentation + a per-tile CNN/ViT classifier).
@@ -174,16 +174,25 @@ by `acoustic_node` — code moves the other way, by hand, copy-as-needed (mirror
 and use its own git; Tile_Sorting only records the pinned commit. After pulling
 Tile_Sorting fresh, run `git submodule update --init` to populate the folder.
 
-**Status (as of 2026-09-20): v0.2 built and working end-to-end** — full pure-DSP suite
+**Status (as of 2026-10-08): v0.3 built and working end-to-end** — full pure-DSP suite
 (`dsp/`: conditioning, spectrum, octave bands, Schroeder decay, IEC 61672 weighting,
 sound level, filter chain, spectral-subtraction denoise, NC/Ln environment), feature
 extraction + validity gate, `classify/` reference profile + rule-based grader, SQLite
 dataset store + WAV I/O, a headless CLI (`python -m acoustic_analysis.cli`), and a
-13-screen Tkinter GUI (dark instrument-look shell, left sidebar nav, opens on a Home
-launcher/session-summary screen), and — new in v0.2 — a **Slice screen** that imports a
-tap-test video, detects every strike, and cuts/labels one snippet per tap into the dataset
-(two label axes: defect class + grade tier 3A/3B/4/5; needs ffmpeg via `imageio-ffmpeg`).
-197 tests. Slice has only seen *generated* videos, never real footage. **Not done / not trusted:** never run
+15-screen Tkinter GUI (dark instrument-look shell, left sidebar nav), a **Slice screen**
+(v0.2) that imports a tap-test video, detects every strike, and cuts/labels one snippet per
+tap into the dataset (two label axes: defect class + grade tier 3A/3B/4/5; needs ffmpeg via
+`imageio-ffmpeg`), and — new in v0.3 (2026-10-08) — a collection workflow: a guided
+**Collect** screen (Setup / Listen / Review: sound-triggered capture with an adaptive
+threshold, motor spectral profile + striker time-domain template subtracted from every
+strike, automatic tile / no-tile sort, one-key labelling), a **Library** file manager
+(real folders; rename / move / drag-drop / delete with undo; keeps wav + sidecar + database
+path in step), a sidebar cut to Collect / Library / Analyze / Export with the rest under a
+collapsible ADVANCED group (the app now opens on Collect, not Home), plain-language Basic
+settings saved to `data/user_settings.yaml`, and a step-by-step README with screenshots.
+237 tests. Slice has only seen *generated* videos, never real footage, and **Collect /
+machine-noise removal has only been tested on synthetic signals — never on the real mic or
+the real striker rig.** **Not done / not trusted:** never run
 against a real microphone; no pistonphone calibration measured (levels are relative, not
 dB SPL); no real good-vs-defective tile recordings so the grader and every `config.yaml`
 threshold are unvalidated; `dsp/loudness.py` (phon/sone) deferred; no PyInstaller build.
@@ -191,7 +200,7 @@ See `Acoustic-Analysis/TODO.md` and its `.CLAUDE/CLAUDE.md` Known Technical Debt
 
 | Folder | Status |
 |---|---|
-| `Acoustic-Analysis/` | Submodule — standalone acoustic analysis + data-labelling desktop app (independent repo). **v0.2 built** (DSP suite, feature extraction, rule-based grader, SQLite dataset, CLI, 13-screen Tkinter GUI incl. video Slice screen; 197 tests) as of 2026-09-20. Pending: real-mic run, pistonphone calibration, real-tile threshold tuning. |
+| `Acoustic-Analysis/` | Submodule — standalone acoustic analysis + data-labelling desktop app (independent repo). **v0.3 built** (DSP suite, feature extraction, rule-based grader, SQLite dataset, CLI, 15-screen Tkinter GUI incl. video Slice, guided Collect with machine-noise removal, and a Library file manager; 237 tests) as of 2026-10-08. Pending: first run of Collect on the real mic + striker rig, pistonphone calibration, real-tile threshold tuning. |
 | `camera_models/cam_yolo/` | Real code — fine-tunes a YOLO26 classification model (`yolo26s-cls`, Ultralytics) on the tile-grade dataset. 85.5% top1 on its own val split. See `camera_models/cam_yolo/README.md`. |
 | `camera_models/cam_edge/` | Real code (added 2026-09-20) — **trains nothing**; measures what the other two produced. What each trained model *costs to run* on the Pi 5 station (speed/memory via `benchmark.py`, accuracy on one common val split with Wilson 95% CIs via `evaluate.py`), for the exact `.onnx` that would be deployed, plus `stage_model.py`, which promotes one chosen artifact into `camera_node/models/`. Depends only on onnxruntime/opencv/numpy/Pillow/psutil — deliberately not torch/ultralytics/transformers — so the identical script runs on the Pi. Headline results in `camera_models/cam_edge/README.md`: `yolo26n-cls` 82.9% @ 1.59 ms, `yolo26s-cls` 85.5% @ 4.16 ms, `vit-base` 92.1% @ 110 ms; dynamic INT8 makes the YOLO nets both slower *and* much worse (82.9% → 57.9%). |
 | `camera_models/cam_vit/` | Real code — fine-tunes `google/vit-base-patch16-224-in21k` (HuggingFace `transformers`) on the same dataset, matching the augmentation config of the Roboflow-hosted `tile-grade-classification` model but with real exportable weights (Roboflow's hosted ViT training doesn't export weights). 93.4% top1 (76-image val split) trained on the original dataset; retrained 2026-08-26 on an offline-augmented copy (`development/augment_dataset.py`) with no measurable improvement (92.1% on the same val split, apples-to-apples) — see `camera_models/cam_vit/README.md`. |

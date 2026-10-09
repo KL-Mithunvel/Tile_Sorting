@@ -11,6 +11,7 @@ acoustic/capture.py's TriggerDetector is testable with synthetic audio blocks.
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -67,8 +68,17 @@ def build_default_patrol(config: dict) -> list[Waypoint]:
     ]
 
 
+AXES = ("x", "y", "z")
+MODES = ("auto", "manual")
+
+
 class MockGantrySimulator:
-    def __init__(self, waypoints: list[Waypoint], travel_speed_mm_s: float):
+    """Two modes: "auto" loops the patrol; "manual" holds still until jog()/
+    set_vacuum() are called. All public methods take an internal lock, since
+    advance() runs on the worker thread while jog() etc. come from Flask's."""
+
+    def __init__(self, waypoints: list[Waypoint], travel_speed_mm_s: float,
+                 workspace: Optional[dict] = None):
         if not waypoints:
             raise ValueError("waypoints must be non-empty")
         if travel_speed_mm_s <= 0:
@@ -84,11 +94,77 @@ class MockGantrySimulator:
         self._index = 1 % len(waypoints)
         self._dwelling = False
         self._dwell_remaining = 0.0
+        self._lock = threading.RLock()
+        self._mode = "auto"
+        self._manual_target = (self._x, self._y, self._z)
+        self._limits = {
+            a: (workspace[f"{a}_min_mm"], workspace[f"{a}_max_mm"]) for a in AXES
+        } if workspace else None
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}")
+        with self._lock:
+            if mode == self._mode:
+                return
+            self._mode = mode
+            if mode == "manual":
+                self._manual_target = (self._x, self._y, self._z)
+                self._machine_state = "IDLE"
+            else:
+                # Resume the patrol from its first waypoint (home).
+                self._index = 0
+                self._dwelling = False
+
+    def jog(self, axis: str, delta_mm: float) -> None:
+        """Shift the manual target by delta_mm on one axis (clamped to the
+        workspace). Switches to manual mode if needed."""
+        if axis not in AXES:
+            raise ValueError(f"axis must be one of {AXES}")
+        with self._lock:
+            self.set_mode("manual")
+            target = list(self._manual_target)
+            i = AXES.index(axis)
+            target[i] += delta_mm
+            if self._limits:
+                lo, hi = self._limits[axis]
+                target[i] = min(max(target[i], lo), hi)
+            self._manual_target = tuple(target)
+
+    def set_vacuum(self, on: bool) -> None:
+        with self._lock:
+            self.set_mode("manual")
+            self._vacuum_on = bool(on)
 
     def advance(self, dt_s: float) -> GantryPose:
         if dt_s < 0:
             raise ValueError("dt_s must be non-negative")
+        with self._lock:
+            if self._mode == "manual":
+                return self._advance_manual(dt_s)
+            return self._advance_auto(dt_s)
 
+    def _advance_manual(self, dt_s: float) -> GantryPose:
+        tx, ty, tz = self._manual_target
+        dx, dy, dz = tx - self._x, ty - self._y, tz - self._z
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        step = self._speed * dt_s
+        if dist <= step:
+            self._x, self._y, self._z = tx, ty, tz
+            self._machine_state = "IDLE"
+        else:
+            r = step / dist
+            self._x += dx * r
+            self._y += dy * r
+            self._z += dz * r
+            self._machine_state = "MOVING"
+        return self._pose()
+
+    def _advance_auto(self, dt_s: float) -> GantryPose:
         if self._dwelling:
             self._dwell_remaining -= dt_s
             if self._dwell_remaining <= 0:

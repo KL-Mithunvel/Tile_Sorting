@@ -22,7 +22,8 @@ def main() -> None:
     config = load_config()
 
     waypoints = build_default_patrol(config)
-    simulator = MockGantrySimulator(waypoints, travel_speed_mm_s=config["mock"]["travel_speed_mm_s"])
+    simulator = MockGantrySimulator(waypoints, travel_speed_mm_s=config["mock"]["travel_speed_mm_s"],
+                                  workspace=config["workspace"])
     state = SharedState()
     dash_cfg = config["dashboard"]
     worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"])

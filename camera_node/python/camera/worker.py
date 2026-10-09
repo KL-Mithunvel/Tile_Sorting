@@ -9,7 +9,9 @@ re-testing on its own (see .claude/CLAUDE.md Development Rule 1).
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from collections import deque
 from typing import Optional
 
@@ -23,6 +25,8 @@ from camera.pipeline import TileRecord, process_tile
 from camera.segmentation import TileRegion, locate_tile
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
+
+log = logging.getLogger(__name__)
 
 _OVERLAY_OK_COLOR = (0, 200, 0)  # BGR
 _OVERLAY_BAD_COLOR = (0, 0, 220)
@@ -125,6 +129,16 @@ class SharedState:
         self._last_tile_png: Optional[bytes] = None
         self._station_state = "waiting"
         self._info: dict = {}
+        # Per-frame failures the worker survived (see CameraWorker._safe_step).
+        # Surfaced so a station that is quietly failing is visible on the
+        # dashboard instead of just looking like "no tiles yet".
+        self._error_count = 0
+        self._last_error: Optional[str] = None
+
+    def record_error(self, message: str) -> None:
+        with self._lock:
+            self._error_count += 1
+            self._last_error = message
 
     def set_info(self, info: dict) -> None:
         """Static facts about this run (trigger mode, model on/off, line)."""
@@ -165,6 +179,7 @@ class SharedState:
                 "tally": dict(self._tally),
                 "station_state": self._station_state,
                 "info": dict(self._info),
+                "errors": {"count": self._error_count, "last": self._last_error},
             }
 
 
@@ -230,6 +245,13 @@ class CameraWorker:
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
+        # Per-run state the frame step carries from one frame to the next.
+        self._seq = 0
+        self._best_seen_region: Optional[TileRegion] = None
+        self._last_grade: Optional[str] = None
+        self._last_model_grade: Optional[str] = None
+        self._seen_errors: set[str] = set()
+
     def start(self) -> None:
         self._capture.start()
         self._running = True
@@ -250,110 +272,135 @@ class CameraWorker:
             self._thread.join(timeout=0.5)
 
     def _loop(self) -> None:
+        while self._running:
+            try:
+                frame = self._capture.read_frame()
+            except StopIteration:
+                # A saved video file ran out. That is the end of the input, not
+                # a fault: stop cleanly instead of dying with a traceback.
+                self._running = False
+                break
+            except RuntimeError:
+                time.sleep(0.01)  # transient capture hiccup; do not spin the CPU
+                continue
+            self._safe_step(frame)
+
+    def _safe_step(self, frame: np.ndarray) -> None:
+        """Run one frame through the pipeline, surviving anything it raises.
+
+        Before this guard, one exception anywhere in segment / grade / snapshot
+        killed the capture thread silently: the dashboard stayed up, the last
+        frame froze, and nothing said why. A station must keep inspecting the
+        next tile. The failure is counted and shown on the dashboard
+        (SharedState.record_error), and the full traceback is logged once per
+        distinct message so a fault that repeats every frame cannot flood the
+        log.
+        """
+        try:
+            self._step(frame)
+        except Exception as exc:  # noqa: BLE001 - deliberately broad, see above
+            message = f"{type(exc).__name__}: {exc}"
+            self._state.record_error(message)
+            if message not in self._seen_errors:
+                self._seen_errors.add(message)
+                log.exception("frame processing failed (first occurrence of this error)")
+            # Never leave the station showing "processing" for a tile that failed.
+            self._state.set_station_state("waiting")
+
+    def _step(self, frame: np.ndarray) -> None:
         seg_cfg = self._config["segmentation"]
         crack_cfg = self._config["crack_detection"]
         corner_cfg = self._config["corner_detection"]
         snapshot_cfg = self._config["capture_snapshots"]
         jpeg_quality = self._config["dashboard"]["jpeg_quality"]
 
-        seq = 0
-        best_seen_region: Optional[TileRegion] = None
-        last_grade: Optional[str] = None
-        last_model_grade: Optional[str] = None
+        region, belt_roi = locate_tile(frame, seg_cfg)
+        tile_present = region is not None
 
-        while self._running:
-            try:
-                frame = self._capture.read_frame()
-            except RuntimeError:
-                continue
+        # The tracker runs in both modes: it owns the presence debounce
+        # and the departure count, independently of what triggers grading.
+        departed = self._tracker.process_frame(tile_present)
 
-            region, belt_roi = locate_tile(frame, seg_cfg)
-            tile_present = region is not None
+        region_to_process: Optional[TileRegion] = None
 
-            # The tracker runs in both modes: it owns the presence debounce
-            # and the departure count, independently of what triggers grading.
-            departed = self._tracker.process_frame(tile_present)
-
-            region_to_process: Optional[TileRegion] = None
-
-            if self._mode == "line_crossing":
-                event = self._crossing.update(
-                    region.center_normalized if region is not None else None
-                )
-                if event and region is not None:
-                    # Grade THIS frame. That is the point of the line: every
-                    # tile is captured at the same place in the frame, so
-                    # scale, framing and motion blur are comparable between
-                    # tiles in a way "whatever the last frame was" is not.
-                    region_to_process = region
-            else:
-                if tile_present:
-                    # Keep the largest-area sighting, not just the latest one:
-                    # the frame right before departure is often partially
-                    # exited (or motion-blurred at the frame edge), while the
-                    # largest-area frame is typically the most centered,
-                    # fully visible, least-blurred picture of the tile.
-                    if best_seen_region is None or region.area_px > best_seen_region.area_px:
-                        best_seen_region = region
-                if departed and best_seen_region is not None:
-                    region_to_process = best_seen_region
-
-            fired = region_to_process is not None
-
-            if fired:
-                self._state.set_station_state("processing")
-                seq += 1
-                record = process_tile(
-                    seq=seq,
-                    region=region_to_process,
-                    canny_low=crack_cfg["canny_low"],
-                    canny_high=crack_cfg["canny_high"],
-                    min_crack_length_px=crack_cfg["min_crack_length_px"],
-                    min_aspect_ratio=crack_cfg["min_aspect_ratio"],
-                    minor_severity_max_length_px=crack_cfg["minor_severity_max_length_px"],
-                    blur_kernel_size=crack_cfg["blur_kernel_size"],
-                    min_fill_ratio=corner_cfg["min_fill_ratio"],
-                    border_margin_px=crack_cfg["border_margin_px"],
-                    max_missing_extent_fraction=corner_cfg["max_missing_extent_fraction"],
-                    tile_size_inches=corner_cfg.get("tile_size_inches"),
-                    grading_model=self._model,
-                    trigger=self._mode,
-                )
-                if snapshot_cfg["enabled"]:
-                    path = save_tile_snapshot(record, resolve_output_dir(self._config))
-                    record.snapshot_path = str(path)
-
-                count = (
-                    self._crossing.crossing_count
-                    if self._mode == "line_crossing"
-                    else self._tracker.tile_count
-                )
-                self._state.record_tile(record, count)
-                self._state.set_station_state("result")
-                last_grade = record.grade
-                last_model_grade = record.model_grade
-                best_seen_region = None
-
-            # Clear the labels once the tile has gone, so a result stays
-            # readable while its tile is still on screen but does not get
-            # painted onto the next tile's box.
-            if not tile_present:
-                last_grade = None
-                last_model_grade = None
-                self._state.set_station_state("waiting")
-            elif not fired and last_grade is None:
-                # A tile is in view but hasn't reached the trigger yet.
-                self._state.set_station_state("in_view")
-
-            annotated = _draw_overlay(
-                frame,
-                region,
-                grade=last_grade,
-                model_grade=last_model_grade,
-                line=self._line_cfg if self._crossing is not None else None,
-                fired=fired,
-                roi=belt_roi,
+        if self._mode == "line_crossing":
+            event = self._crossing.update(
+                region.center_normalized if region is not None else None
             )
-            ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
-            if ok:
-                self._state.update_frame(buf.tobytes())
+            if event and region is not None:
+                # Grade THIS frame. That is the point of the line: every
+                # tile is captured at the same place in the frame, so
+                # scale, framing and motion blur are comparable between
+                # tiles in a way "whatever the last frame was" is not.
+                region_to_process = region
+        else:
+            if tile_present:
+                # Keep the largest-area sighting, not just the latest one:
+                # the frame right before departure is often partially
+                # exited (or motion-blurred at the frame edge), while the
+                # largest-area frame is typically the most centered,
+                # fully visible, least-blurred picture of the tile.
+                if self._best_seen_region is None or region.area_px > self._best_seen_region.area_px:
+                    self._best_seen_region = region
+            if departed and self._best_seen_region is not None:
+                region_to_process = self._best_seen_region
+
+        fired = region_to_process is not None
+
+        if fired:
+            self._state.set_station_state("processing")
+            self._seq += 1
+            record = process_tile(
+                seq=self._seq,
+                region=region_to_process,
+                canny_low=crack_cfg["canny_low"],
+                canny_high=crack_cfg["canny_high"],
+                min_crack_length_px=crack_cfg["min_crack_length_px"],
+                min_aspect_ratio=crack_cfg["min_aspect_ratio"],
+                minor_severity_max_length_px=crack_cfg["minor_severity_max_length_px"],
+                blur_kernel_size=crack_cfg["blur_kernel_size"],
+                min_fill_ratio=corner_cfg["min_fill_ratio"],
+                border_margin_px=crack_cfg["border_margin_px"],
+                max_missing_extent_fraction=corner_cfg["max_missing_extent_fraction"],
+                tile_size_inches=corner_cfg.get("tile_size_inches"),
+                grading_model=self._model,
+                trigger=self._mode,
+            )
+            if snapshot_cfg["enabled"]:
+                path = save_tile_snapshot(record, resolve_output_dir(self._config))
+                record.snapshot_path = str(path)
+
+            count = (
+                self._crossing.crossing_count
+                if self._mode == "line_crossing"
+                else self._tracker.tile_count
+            )
+            self._state.record_tile(record, count)
+            self._state.set_station_state("result")
+            self._last_grade = record.grade
+            self._last_model_grade = record.model_grade
+            self._best_seen_region = None
+
+        # Clear the labels once the tile has gone, so a result stays
+        # readable while its tile is still on screen but does not get
+        # painted onto the next tile's box.
+        if not tile_present:
+            self._last_grade = None
+            self._last_model_grade = None
+            self._state.set_station_state("waiting")
+        elif not fired and self._last_grade is None:
+            # A tile is in view but hasn't reached the trigger yet.
+            self._state.set_station_state("in_view")
+
+        annotated = _draw_overlay(
+            frame,
+            region,
+            grade=self._last_grade,
+            model_grade=self._last_model_grade,
+            line=self._line_cfg if self._crossing is not None else None,
+            fired=fired,
+            roi=belt_roi,
+        )
+        ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+        if ok:
+            self._state.update_frame(buf.tobytes())

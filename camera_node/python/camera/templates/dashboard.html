@@ -28,6 +28,8 @@
   .tally .chip.a b { color: var(--ok); } .tally .chip.b b { color: var(--warn); } .tally .chip.r b { color: var(--bad); }
   .spacer { flex: 1; }
   .state { padding: 0.4rem 0.9rem; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); }
+  .errbadge { color: var(--bad); border: 1px solid var(--bad); border-radius: 6px; padding: 0.3rem 0.7rem;
+              font-size: 0.85rem; max-width: 28rem; overflow-wrap: anywhere; }
   .state.waiting { color: var(--muted); }
   .state.in_view { color: var(--accent); border-color: var(--accent); }
   .state.processing { color: var(--warn); border-color: var(--warn); }
@@ -100,6 +102,7 @@
       <div class="label">reject rate</div>
     </div>
     <div class="spacer"></div>
+    <div class="errbadge" id="err-badge" hidden></div>
     <div class="state waiting" id="station-state">Waiting for tile</div>
   </div>
 
@@ -211,6 +214,13 @@
       $('tally-a').textContent = a; $('tally-b').textContent = b; $('tally-r').textContent = r;
       const graded = a + b + r;
       $('reject-pct').textContent = graded ? Math.round(100 * r / graded) + '%' : '-';
+
+      // A station that is failing frame after frame must say so; otherwise it
+      // just looks like "no tiles yet".
+      const errs = data.errors || {};
+      const eb = $('err-badge');
+      eb.hidden = !errs.count;
+      if (errs.count) eb.textContent = errs.count + ' frame error' + (errs.count > 1 ? 's' : '') + ' - last: ' + errs.last;
 
       const st = $('station-state');
       st.className = 'state ' + data.station_state;

@@ -52,6 +52,7 @@ def create_app(state: SharedState) -> Flask:
                 "tally": status["tally"],
                 "station_state": status["station_state"],
                 "info": status["info"],
+                "errors": status["errors"],
             }
         )
 

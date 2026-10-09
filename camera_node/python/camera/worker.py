@@ -20,7 +20,7 @@ from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
 from camera.line_trigger import LineCrossingDetector
 from camera.pipeline import TileRecord, process_tile
-from camera.segmentation import TileRegion, segment_tile
+from camera.segmentation import TileRegion, segment_from_config
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
@@ -261,13 +261,7 @@ class CameraWorker:
             except RuntimeError:
                 continue
 
-            region = segment_tile(
-                frame,
-                hsv_lower=tuple(seg_cfg["hsv_lower"]),
-                hsv_upper=tuple(seg_cfg["hsv_upper"]),
-                min_area_px=seg_cfg["min_tile_area_px"],
-                morph_kernel_size=seg_cfg["morph_kernel_size"],
-            )
+            region = segment_from_config(frame, seg_cfg)
             tile_present = region is not None
 
             # The tracker runs in both modes: it owns the presence debounce

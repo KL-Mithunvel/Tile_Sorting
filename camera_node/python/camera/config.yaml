@@ -88,6 +88,17 @@ segmentation:
   min_tile_area_px: 3000
   # Morphological close/open kernel size, to clean up the threshold mask.
   morph_kernel_size: 5
+  # Shape gate (added 2026-10-09): colour alone cannot tell a tile from a brown
+  # sandal or the dark wood rim beside the belt, so a colour-matched blob must
+  # also be tile-SHAPED. Measured on the real belt clip: tiles fill 0.93-0.96 of
+  # their rotated bounding rectangle with aspect 1.00-1.02; the sandal/rim blob
+  # filled 0.28 with aspect 0.23. Kept deliberately looser than
+  # corner_detection.min_fill_ratio so a chipped tile is still segmented and
+  # then flagged by the corner check rather than silently dropped here.
+  # Widen the aspect range for non-square tiles. null disables a check.
+  min_fill_ratio: 0.6
+  min_aspect: 0.5
+  max_aspect: 2.0
 
 crack_detection:
   blur_kernel_size: 5

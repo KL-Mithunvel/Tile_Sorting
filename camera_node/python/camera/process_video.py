@@ -30,7 +30,7 @@ from camera.capture import VideoFileCapture, load_config
 from camera.grading_model import TileGradeModel
 from camera.line_trigger import LineCrossingDetector
 from camera.pipeline import TileRecord, process_tile, tile_record_to_dict
-from camera.segmentation import TileRegion, segment_tile
+from camera.segmentation import TileRegion, segment_from_config
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
@@ -92,13 +92,7 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
             except StopIteration:
                 break
 
-            region = segment_tile(
-                frame,
-                hsv_lower=tuple(seg_cfg["hsv_lower"]),
-                hsv_upper=tuple(seg_cfg["hsv_upper"]),
-                min_area_px=seg_cfg["min_tile_area_px"],
-                morph_kernel_size=seg_cfg["morph_kernel_size"],
-            )
+            region = segment_from_config(frame, seg_cfg)
             tile_present = region is not None
             departed = tracker.process_frame(tile_present)
 

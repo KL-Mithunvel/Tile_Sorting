@@ -67,16 +67,65 @@ class TileRegion:
         return (cx / frame_w, cy / frame_h)
 
 
+def is_tile_shaped(
+    contour: np.ndarray,
+    min_fill_ratio: Optional[float] = None,
+    min_aspect: Optional[float] = None,
+    max_aspect: Optional[float] = None,
+) -> bool:
+    """Is this colour-matched blob shaped like a tile?
+
+    Colour alone cannot tell a tile from a brown sandal or the dark wood rim
+    beside the belt: on the real belt clip a sandal merged with the rim into a
+    68x291 px blob, 28% filled, and was graded as a tile. A tile is close to a
+    filled rectangle, so two cheap checks separate them by a wide margin
+    (tiles on that clip: fill 0.93-0.96, aspect 1.00-1.02):
+
+    * fill ratio -- contour area / its own minAreaRect area. Low means ragged,
+      L-shaped or hollow, not a tile.
+    * aspect -- bounding-box width/height. Extreme means a sliver (a rail, a
+      shadow edge, a rim), not a tile.
+
+    Set deliberately LOOSER than `corner_detection.min_fill_ratio`: a chipped
+    tile must still be segmented so the corner check can flag it. This gate
+    only has to reject things that are not tiles at all. Any argument left None
+    disables that check, so existing callers keep their old behaviour.
+    """
+    if min_fill_ratio is not None:
+        (_, _), (rw, rh), _ = cv2.minAreaRect(contour)
+        rect_area = rw * rh
+        if rect_area <= 0 or cv2.contourArea(contour) / rect_area < min_fill_ratio:
+            return False
+
+    if min_aspect is not None or max_aspect is not None:
+        _, _, w, h = cv2.boundingRect(contour)
+        if h == 0:
+            return False
+        aspect = w / h
+        if min_aspect is not None and aspect < min_aspect:
+            return False
+        if max_aspect is not None and aspect > max_aspect:
+            return False
+
+    return True
+
+
 def segment_tile(
     frame_bgr: np.ndarray,
     hsv_lower: tuple[int, int, int],
     hsv_upper: tuple[int, int, int],
     min_area_px: float,
     morph_kernel_size: int = 5,
+    min_fill_ratio: Optional[float] = None,
+    min_aspect: Optional[float] = None,
+    max_aspect: Optional[float] = None,
 ) -> Optional[TileRegion]:
-    """Find the largest tile-colored region in a frame.
+    """Find the largest tile-colored, tile-shaped region in a frame.
 
-    Returns None if nothing large enough matches the given HSV range.
+    Returns None if nothing large enough matches the given HSV range. The
+    shape arguments (see `is_tile_shaped`) are optional; with them, the result
+    is the largest region that PASSES the gate -- not the largest region that
+    then gets rejected -- so a sandal bigger than a real tile cannot hide it.
     """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array(hsv_lower, dtype=np.uint8), np.array(hsv_upper, dtype=np.uint8))
@@ -87,19 +136,35 @@ def segment_tile(
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
 
-    largest = max(contours, key=cv2.contourArea)
-    area = cv2.contourArea(largest)
-    if area < min_area_px:
-        return None
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+        area = cv2.contourArea(contour)
+        if area < min_area_px:
+            return None  # sorted descending: nothing after this is big enough
+        if not is_tile_shaped(contour, min_fill_ratio, min_aspect, max_aspect):
+            continue
+        x, y, w, h = cv2.boundingRect(contour)
+        return TileRegion(
+            bbox=(x, y, w, h),
+            area_px=float(area),
+            contour=contour,
+            mask=mask,
+            cropped_bgr=frame_bgr[y : y + h, x : x + w].copy(),
+        )
+    return None
 
-    x, y, w, h = cv2.boundingRect(largest)
-    return TileRegion(
-        bbox=(x, y, w, h),
-        area_px=float(area),
-        contour=largest,
-        mask=mask,
-        cropped_bgr=frame_bgr[y : y + h, x : x + w].copy(),
+
+def segment_from_config(frame_bgr: np.ndarray, seg_cfg: dict) -> Optional[TileRegion]:
+    """`segment_tile()` driven by config.yaml's `segmentation` block, so the
+    live worker and the offline video processor cannot drift apart in which
+    keys they pass."""
+    return segment_tile(
+        frame_bgr,
+        hsv_lower=tuple(seg_cfg["hsv_lower"]),
+        hsv_upper=tuple(seg_cfg["hsv_upper"]),
+        min_area_px=seg_cfg["min_tile_area_px"],
+        morph_kernel_size=seg_cfg["morph_kernel_size"],
+        min_fill_ratio=seg_cfg.get("min_fill_ratio"),
+        min_aspect=seg_cfg.get("min_aspect"),
+        max_aspect=seg_cfg.get("max_aspect"),
     )

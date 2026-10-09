@@ -48,3 +48,61 @@ def test_segment_tile_rejects_regions_smaller_than_min_area():
     lower, upper = hsv_bounds_for_bgr(tile_bgr)
     region = segment_tile(frame, hsv_lower=lower, hsv_upper=upper, min_area_px=1000, morph_kernel_size=3)
     assert region is None
+
+
+# ---- shape gate (added 2026-10-09) -------------------------------------
+# The real failure: a brown sandal merged with the wood rim beside the belt
+# into a thin, ragged, tile-coloured blob and was graded as a tile.
+
+TILE = (30, 90, 180)
+GATE = dict(min_fill_ratio=0.6, min_aspect=0.5, max_aspect=2.0)
+
+
+def seg(frame, **kw):
+    lower, upper = hsv_bounds_for_bgr(TILE)
+    return segment_tile(frame, hsv_lower=lower, hsv_upper=upper, min_area_px=1000, morph_kernel_size=3, **kw)
+
+
+def test_gate_rejects_a_thin_sliver_that_colour_alone_accepts():
+    frame = make_frame(300, 400)
+    cv2.rectangle(frame, (200, 20), (232, 380), TILE, thickness=-1)  # 33x361 rim-like strip
+    assert seg(frame) is not None          # colour + area alone: accepted (the bug)
+    assert seg(frame, **GATE) is None      # shape gate: rejected
+
+
+def test_gate_rejects_a_ragged_l_shaped_blob():
+    frame = make_frame(300, 300)
+    cv2.rectangle(frame, (50, 50), (250, 100), TILE, thickness=-1)   # an L: 200x50 + 50x150
+    cv2.rectangle(frame, (50, 50), (100, 250), TILE, thickness=-1)
+    assert seg(frame) is not None
+    assert seg(frame, **GATE) is None      # fill ~0.45 of its bounding rectangle
+
+
+def test_gate_keeps_a_normal_square_tile():
+    frame = make_frame(300, 300)
+    cv2.rectangle(frame, (80, 80), (220, 220), TILE, thickness=-1)
+    assert seg(frame, **GATE) is not None
+
+
+def test_gate_keeps_a_chipped_tile_so_the_corner_check_can_flag_it():
+    frame = make_frame(300, 300)
+    cv2.rectangle(frame, (80, 80), (220, 220), TILE, thickness=-1)
+    cv2.fillPoly(frame, [np.array([[80, 80], [140, 80], [80, 140]])], (40, 40, 40))  # diagonal chip
+    assert seg(frame, **GATE) is not None
+
+
+def test_gate_picks_the_largest_region_that_passes_not_the_largest_overall():
+    # A sliver bigger than the tile must not hide the real tile behind it.
+    frame = make_frame(400, 500)
+    cv2.rectangle(frame, (20, 20), (60, 480), TILE, thickness=-1)       # 41x461 sliver, bigger area
+    cv2.rectangle(frame, (200, 150), (320, 270), TILE, thickness=-1)    # 121x121 tile
+    region = seg(frame, **GATE)
+    assert region is not None
+    x, y, w, h = region.bbox
+    assert x >= 190 and abs(w - 121) <= 3
+
+
+def test_gate_arguments_default_to_off():
+    frame = make_frame(300, 400)
+    cv2.rectangle(frame, (200, 20), (232, 380), TILE, thickness=-1)
+    assert seg(frame, min_fill_ratio=None, min_aspect=None, max_aspect=None) is not None

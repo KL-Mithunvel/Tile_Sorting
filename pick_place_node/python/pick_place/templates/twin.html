@@ -43,7 +43,7 @@
 </head>
 <body>
   <h1>Pick &amp; Place Node — Digital Twin Prototype</h1>
-  <p class="notice">Mock/simulated position data — no real gantry hardware exists yet
+  <p class="notice">Simulated gantry — the controls drive the mock, no real hardware exists yet
     (see documents/project/Pick_Place_Sorting_Subsystem.md §3.1).</p>
   <div id="error-banner"></div>
 
@@ -459,7 +459,8 @@
 
     // ---- Control panel -------------------------------------------------
     const CONTROLS_ENABLED = {{ 'true' if controls_enabled else 'false' }};
-    let jogStep = Number(document.querySelector('#step-row button')?.dataset.step || 10);
+    let jogStep = Number(document.querySelector('#step-row button[data-step="10"]')?.dataset.step
+      || document.querySelector('#step-row button')?.dataset.step || 10);
     const ctlMsg = document.getElementById('ctl-msg');
 
     async function sendCommand(path, body) {

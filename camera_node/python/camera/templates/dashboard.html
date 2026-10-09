@@ -2,95 +2,258 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Camera Node — Tile Inspection Dashboard</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; background: #111; color: #eee; }
-  h1 { font-size: 1.3rem; margin: 0 0 1rem; }
-  .layout { display: flex; gap: 1.5rem; flex-wrap: wrap; }
-  .video-panel { flex: 0 0 auto; }
-  .video-panel img { max-width: 640px; width: 100%; border: 1px solid #333; border-radius: 4px; }
-  .stats-panel { flex: 1 1 300px; }
-  .count { font-size: 2.5rem; font-weight: bold; }
-  .count-label { color: #aaa; font-size: 0.9rem; }
-  table { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.85rem; }
-  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid #333; }
-  th { color: #aaa; font-weight: normal; }
-  .grade-Reject { color: #ff5c5c; font-weight: bold; }
-  .grade-B { color: #f0c93d; }
-  .grade-A { color: #5cd65c; }
+  :root {
+    --bg: #0f1216; --panel: #181d23; --line: #2a313a; --text: #e8ecf0; --muted: #8b98a5;
+    --ok: #4cd964; --warn: #f0c93d; --bad: #ff5c5c; --accent: #4aa8ff;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 1rem 16px 2rem; }
+
+  /* ---- top bar ---- */
+  @media (max-width: 600px) { .wrap { padding: 0.5rem 8px 1.5rem; } .big { font-size: 1.6rem; } .clock .time { font-size: 1.4rem; } }
+  .topbar { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: center;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+            padding: 0.8rem 1.1rem; margin-bottom: 1rem; }
+  .clock .time { font-size: 1.9rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .clock .date { color: var(--muted); font-size: 0.9rem; }
+  .big { font-size: 2.2rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .label { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .tally { display: flex; gap: 0.6rem; }
+  .tally .chip { text-align: center; min-width: 4.2rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #0f1216; border: 1px solid var(--line); }
+  .tally .chip b { display: block; font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+  .tally .chip.a b { color: var(--ok); } .tally .chip.b b { color: var(--warn); } .tally .chip.r b { color: var(--bad); }
+  .spacer { flex: 1; }
+  .state { padding: 0.4rem 0.9rem; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); }
+  .state.waiting { color: var(--muted); }
+  .state.in_view { color: var(--accent); border-color: var(--accent); }
+  .state.processing { color: var(--warn); border-color: var(--warn); }
+  .state.result { color: var(--ok); border-color: var(--ok); }
+
+  /* ---- main grid ---- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0.8rem; min-width: 0; }
+  .panel h2 { font-size: 0.85rem; margin: 0 0 0.6rem; color: var(--muted); font-weight: 600;
+              text-transform: uppercase; letter-spacing: 0.04em; }
+  .panel img { display: block; border-radius: 4px; background: #000; }
+  /* The camera may be landscape (640x480) or portrait (belt running down a
+     phone-shaped frame). Never stretch the feed: fit it inside a box whose
+     height follows the window, letterboxed on black, so a tall frame can't
+     push the rest of the page off-screen and a wide one can't overflow. */
+  .video-box { height: clamp(260px, calc(100vh - 190px), 900px); background: #000; border-radius: 4px; }
+  .video-box img { width: 100%; height: 100%; object-fit: contain; }
+  @media (max-width: 900px) { .video-box { height: clamp(240px, 60vh, 640px); } }
+  .tile-box { position: relative; min-height: 120px; background: #000; border-radius: 4px; }
+  .tile-box img { width: 100%; max-height: clamp(160px, 32vh, 340px); object-fit: contain; }
+  .tile-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.85rem; margin-top: 0.4rem; }
+  .empty { color: var(--muted); padding: 2.5rem 0; text-align: center; }
+
+  /* ---- pipeline stages ---- */
+  .stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr)); gap: 0.4rem; margin-top: 0.8rem; }
+  .stage { border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.4rem 0.5rem; background: #0f1216; min-width: 0; }
+  .stage .name { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+  .stage .val { font-weight: 600; font-size: 0.95rem; margin-top: 0.15rem; overflow-wrap: anywhere; }
+  .stage .ms { font-size: 0.72rem; color: var(--muted); }
+  .stage.done { border-color: #2e5a3a; } .stage.off { opacity: 0.45; }
+  .stage.bad .val { color: var(--bad); } .stage.good .val { color: var(--ok); } .stage.warn .val { color: var(--warn); }
+  .total { margin-top: 0.5rem; color: var(--muted); font-size: 0.8rem; }
+  .probs { margin-top: 0.6rem; font-size: 0.8rem; color: var(--muted); }
+  .probs .bar { display: flex; align-items: center; gap: 0.5rem; margin: 2px 0; }
+  .probs .bar i { display: block; height: 6px; background: var(--accent); border-radius: 3px; }
+  .probs .bar span { width: 2.2rem; }
+
+  /* ---- table ---- */
+  .table-wrap { margin-top: 1rem; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: normal; }
+  .grade-Reject { color: var(--bad); font-weight: bold; }
+  .grade-B { color: var(--warn); } .grade-A { color: var(--ok); }
   .badge { display: inline-block; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
-  .badge-yes { background: #5c2020; }
-  .badge-no { background: #204020; }
-  /* Model confidence, shown smaller than the grade it qualifies. */
-  .muted { color: #8b98a5; font-size: 0.85em; }
+  .badge-yes { background: #5c2020; } .badge-no { background: #204020; }
+  .muted { color: var(--muted); font-size: 0.85em; }
 </style>
 </head>
 <body>
-  <h1>Camera Node — Live Tile Inspection</h1>
-  <div class="layout">
-    <div class="video-panel">
-      <img src="/video_feed" alt="live camera feed">
-    </div>
-    <div class="stats-panel">
-      <div class="count" id="tile-count">0</div>
-      <div class="count-label">tiles crossed the belt</div>
+<div class="wrap">
 
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Grade</th>
-            <th>Crack</th>
-            <th>Length (px)</th>
-            <th>Corner</th>
-            <th>Missing area (px)</th>
-            <th>Centre</th>
-            <th title="ONNX cosmetic grade tier. Does NOT detect cracks or broken corners - the Grade column is the station's decision.">Model</th>
-          </tr>
-        </thead>
-        <tbody id="tile-rows"></tbody>
-      </table>
+  <div class="topbar">
+    <div class="clock">
+      <div class="time" id="clock-time">--:--:--</div>
+      <div class="date" id="clock-date">&nbsp;</div>
+    </div>
+    <div>
+      <div class="big" id="tile-count">0</div>
+      <div class="label">tiles crossed</div>
+    </div>
+    <div class="tally">
+      <div class="chip a"><b id="tally-a">0</b><span class="label">Grade A</span></div>
+      <div class="chip b"><b id="tally-b">0</b><span class="label">Grade B</span></div>
+      <div class="chip r"><b id="tally-r">0</b><span class="label">Reject</span></div>
+    </div>
+    <div>
+      <div class="big" id="reject-pct">-</div>
+      <div class="label">reject rate</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="state waiting" id="station-state">Waiting for tile</div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Live camera <span class="muted" id="trigger-info"></span></h2>
+      <div class="video-box"><img src="/video_feed" alt="live camera feed"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Last captured tile <span class="muted">(image sent to the vision model)</span></h2>
+      <div class="tile-box">
+        <div class="empty" id="tile-empty">No tile has crossed the line yet</div>
+        <img id="tile-img" alt="last captured tile" hidden>
+      </div>
+      <div class="tile-meta"><span id="tile-seq"></span><span id="tile-time"></span></div>
+
+      <div class="stages" id="stages">
+        <div class="stage off" id="st-capture"><div class="name">Captured</div><div class="val">-</div><div class="ms">&nbsp;</div></div>
+        <div class="stage off" id="st-crack"><div class="name">Cracks</div><div class="val">-</div><div class="ms">&nbsp;</div></div>
+        <div class="stage off" id="st-corner"><div class="name">Corner</div><div class="val">-</div><div class="ms">&nbsp;</div></div>
+        <div class="stage off" id="st-model"><div class="name">Model</div><div class="val">-</div><div class="ms">&nbsp;</div></div>
+        <div class="stage off" id="st-grade"><div class="name">Grade</div><div class="val">-</div><div class="ms">&nbsp;</div></div>
+      </div>
+      <div class="total" id="total-ms"></div>
+      <div class="probs" id="probs"></div>
     </div>
   </div>
 
-  <script>
-    async function refresh() {
-      try {
-        const res = await fetch('/api/status');
-        const data = await res.json();
-        document.getElementById('tile-count').textContent = data.tile_count;
+  <div class="panel table-wrap">
+    <h2>Recent tiles</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Time</th><th>Grade</th><th>Crack</th><th>Length (px)</th>
+          <th>Corner</th><th>Missing area (px)</th><th>Centre</th>
+          <th title="ONNX cosmetic grade tier. Does NOT detect cracks or broken corners - the Grade column is the station's decision.">Model</th>
+          <th>Time (ms)</th>
+        </tr>
+      </thead>
+      <tbody id="tile-rows"></tbody>
+    </table>
+  </div>
+</div>
 
-        const rows = data.recent_tiles.map(t => {
-          const crack = t.crack_detected
-            ? `<span class="badge badge-yes">${t.crack_severity}</span>`
-            : `<span class="badge badge-no">none</span>`;
-          const corner = t.corner_broken
-            ? `<span class="badge badge-yes">broken</span>`
-            : `<span class="badge badge-no">intact</span>`;
-          // Confidence is shown next to every model grade on purpose: the
-          // classifier was measured at 82.9% on a 76-image val set, so a bare
-          // label reads as more certain than it is.
-          const model = t.model_grade
-            ? `${t.model_grade} <span class="muted">${Math.round(t.model_confidence * 100)}%</span>`
-            : '-';
-          return `<tr>
-            <td>${t.seq}</td>
-            <td class="grade-${t.grade.replace('Grade ', '')}">${t.grade}</td>
-            <td>${crack}</td>
-            <td>${t.crack_detected ? t.crack_length_px : '-'}</td>
-            <td>${corner}</td>
-            <td>${t.corner_broken ? t.corner_missing_area_px : '-'}</td>
-            <td>${t.center_x !== null ? `${t.center_x}, ${t.center_y}` : '-'}</td>
-            <td>${model}</td>
-          </tr>`;
-        }).join('');
-        document.getElementById('tile-rows').innerHTML = rows;
-      } catch (err) {
-        console.error('status refresh failed', err);
-      }
+<script>
+  const $ = id => document.getElementById(id);
+  const DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const STATE_TEXT = {waiting: 'Waiting for tile', in_view: 'Tile in view',
+                      processing: 'Processing', result: 'Result ready'};
+
+  function tickClock() {
+    const d = new Date();
+    $('clock-time').textContent = d.toLocaleTimeString([], {hour12: false});
+    $('clock-date').textContent = DAYS[d.getDay()] + ', ' +
+      d.toLocaleDateString([], {day: '2-digit', month: 'short', year: 'numeric'});
+  }
+  tickClock(); setInterval(tickClock, 1000);
+
+  function setStage(id, cls, val, ms) {
+    const el = $(id);
+    el.className = 'stage ' + cls;
+    el.querySelector('.val').textContent = val;
+    el.querySelector('.ms').textContent = ms || ' ';
+  }
+  const fmtMs = v => (v === null || v === undefined) ? '' : v.toFixed(1) + ' ms';
+
+  let shownSeq = null;
+  function renderLatest(t, info) {
+    if (!t) return;
+    if (t.seq !== shownSeq) {          // only re-fetch the image for a new tile
+      shownSeq = t.seq;
+      const img = $('tile-img');
+      img.src = '/last_tile.png?seq=' + t.seq;
+      img.hidden = false;
+      $('tile-empty').hidden = true;
     }
-    refresh();
-    setInterval(refresh, 1000);
-  </script>
+    $('tile-seq').textContent = 'Tile #' + t.seq;
+    $('tile-time').textContent = new Date(t.timestamp * 1000).toLocaleTimeString([], {hour12: false});
+
+    setStage('st-capture', 'done good', 'OK', info.trigger === 'line_crossing' ? 'at line' : 'on exit');
+    setStage('st-crack', 'done ' + (t.crack_detected ? (t.crack_severity === 'major' ? 'bad' : 'warn') : 'good'),
+      t.crack_detected ? t.crack_severity + ' ' + t.crack_length_px + 'px' : 'none', fmtMs(t.crack_ms));
+    setStage('st-corner', 'done ' + (t.corner_broken ? 'bad' : 'good'),
+      t.corner_broken ? 'broken' : 'intact', fmtMs(t.corner_ms));
+    if (t.model_grade) {
+      setStage('st-model', 'done', t.model_grade + ' ' + Math.round(t.model_confidence * 100) + '%', fmtMs(t.model_inference_ms));
+    } else {
+      setStage('st-model', 'off', info.model_enabled ? 'no result' : 'off', '');
+    }
+    setStage('st-grade', 'done ' + (t.grade === 'Reject' ? 'bad' : t.grade === 'Grade B' ? 'warn' : 'good'), t.grade, '');
+    $('total-ms').textContent = t.total_ms !== null ? 'Total processing time: ' + t.total_ms.toFixed(1) + ' ms' : '';
+
+    const probs = t.model_probabilities;
+    $('probs').innerHTML = probs ? Object.entries(probs).map(([k, v]) =>
+      `<div class="bar"><span>${k}</span><i style="width:${Math.round(v * 100)}%"></i><span>${Math.round(v * 100)}%</span></div>`
+    ).join('') : '';
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      const info = data.info || {};
+
+      $('tile-count').textContent = data.tile_count;
+      const tl = data.tally || {};
+      const a = tl['Grade A'] || 0, b = tl['Grade B'] || 0, r = tl['Reject'] || 0;
+      $('tally-a').textContent = a; $('tally-b').textContent = b; $('tally-r').textContent = r;
+      const graded = a + b + r;
+      $('reject-pct').textContent = graded ? Math.round(100 * r / graded) + '%' : '-';
+
+      const st = $('station-state');
+      st.className = 'state ' + data.station_state;
+      st.textContent = STATE_TEXT[data.station_state] || data.station_state;
+
+      $('trigger-info').textContent = info.trigger === 'line_crossing'
+        ? '- trigger: line at ' + Math.round(info.line_position * 100) + '% (' + info.line_orientation + ')'
+        : info.trigger ? '- trigger: on exit' : '';
+
+      renderLatest(data.recent_tiles[0], info);
+
+      $('tile-rows').innerHTML = data.recent_tiles.map(t => {
+        const crack = t.crack_detected
+          ? `<span class="badge badge-yes">${t.crack_severity}</span>`
+          : `<span class="badge badge-no">none</span>`;
+        const corner = t.corner_broken
+          ? `<span class="badge badge-yes">broken</span>`
+          : `<span class="badge badge-no">intact</span>`;
+        // Confidence sits next to every model grade on purpose: the classifier
+        // was measured at 82.9% on a 76-image val set, so a bare label reads
+        // as more certain than it is.
+        const model = t.model_grade
+          ? `${t.model_grade} <span class="muted">${Math.round(t.model_confidence * 100)}%</span>`
+          : '-';
+        return `<tr>
+          <td>${t.seq}</td>
+          <td>${new Date(t.timestamp * 1000).toLocaleTimeString([], {hour12: false})}</td>
+          <td class="grade-${t.grade.replace('Grade ', '')}">${t.grade}</td>
+          <td>${crack}</td>
+          <td>${t.crack_detected ? t.crack_length_px : '-'}</td>
+          <td>${corner}</td>
+          <td>${t.corner_broken ? t.corner_missing_area_px : '-'}</td>
+          <td>${t.center_x !== null ? `${t.center_x}, ${t.center_y}` : '-'}</td>
+          <td>${model}</td>
+          <td>${t.total_ms !== null ? t.total_ms.toFixed(1) : '-'}</td>
+        </tr>`;
+      }).join('');
+    } catch (err) {
+      console.error('status refresh failed', err);
+    }
+  }
+  refresh();
+  setInterval(refresh, 1000);
+</script>
 </body>
 </html>

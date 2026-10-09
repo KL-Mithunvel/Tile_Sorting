@@ -49,6 +49,13 @@ class TileRecord:
     model_probabilities: Optional[dict] = None
     model_inference_ms: Optional[float] = None
 
+    # Wall-clock cost of each stage, for the dashboard's pipeline view. The
+    # model's own time is model_inference_ms above; total_ms covers everything
+    # process_tile did for this tile.
+    crack_ms: Optional[float] = None
+    corner_ms: Optional[float] = None
+    total_ms: Optional[float] = None
+
 
 def grade_tile(crack: CrackResult, corner: CornerResult) -> str:
     """First-pass rule-based grading — see project_charter.md §10.1 for the
@@ -89,6 +96,7 @@ def process_tile(
     propagated: a classifier that cannot load an image must not stop the
     station from reporting the crack/corner result it already computed.
     """
+    t_start = time.perf_counter()
     crack = detect_cracks(
         region.cropped_bgr,
         canny_low=canny_low,
@@ -99,12 +107,14 @@ def process_tile(
         blur_kernel_size=blur_kernel_size,
         border_margin_px=border_margin_px,
     )
+    t_crack_done = time.perf_counter()
     corner = detect_broken_corner(
         region.contour,
         min_fill_ratio=min_fill_ratio,
         max_missing_extent_fraction=max_missing_extent_fraction,
         tile_size_inches=tile_size_inches,
     )
+    t_corner_done = time.perf_counter()
     grade = grade_tile(crack, corner)
 
     record = TileRecord(
@@ -116,6 +126,8 @@ def process_tile(
         tile_bgr=region.cropped_bgr,
         center=region.center,
         trigger=trigger,
+        crack_ms=(t_crack_done - t_start) * 1000.0,
+        corner_ms=(t_corner_done - t_crack_done) * 1000.0,
     )
 
     if grading_model is not None:
@@ -129,6 +141,7 @@ def process_tile(
             record.model_probabilities = prediction.probabilities
             record.model_inference_ms = prediction.inference_ms
 
+    record.total_ms = (time.perf_counter() - t_start) * 1000.0
     return record
 
 
@@ -173,4 +186,7 @@ def tile_record_to_dict(record: TileRecord) -> dict:
         "model_inference_ms": (
             round(record.model_inference_ms, 2) if record.model_inference_ms is not None else None
         ),
+        "crack_ms": round(record.crack_ms, 2) if record.crack_ms is not None else None,
+        "corner_ms": round(record.corner_ms, 2) if record.corner_ms is not None else None,
+        "total_ms": round(record.total_ms, 2) if record.total_ms is not None else None,
     }

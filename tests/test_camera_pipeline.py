@@ -216,3 +216,25 @@ def test_tile_record_to_dict_handles_a_record_with_no_model_or_centre():
     assert result["center_x"] is None
     assert result["center_y"] is None
     assert result["trigger"] is None
+
+
+def test_process_tile_records_stage_timings():
+    record = run_process_tile(grading_model=FakeModel(label="4"))
+
+    assert record.crack_ms >= 0.0
+    assert record.corner_ms >= 0.0
+    # total covers crack + corner + model + grading, so it can't be smaller
+    # than the two detector stages it contains.
+    assert record.total_ms >= record.crack_ms + record.corner_ms
+
+
+def test_tile_record_to_dict_includes_stage_timings_and_tolerates_missing_ones():
+    timed = tile_record_to_dict(run_process_tile())
+    assert timed["crack_ms"] is not None and timed["total_ms"] is not None
+
+    untimed = tile_record_to_dict(
+        TileRecord(seq=1, timestamp=0.0, crack=OK_CRACK, corner=OK_CORNER, grade="Grade A", tile_bgr=None)
+    )
+    assert untimed["crack_ms"] is None
+    assert untimed["corner_ms"] is None
+    assert untimed["total_ms"] is None

@@ -35,6 +35,13 @@ def create_app(state: SharedState) -> Flask:
     def video_feed():
         return Response(_mjpeg_stream(state), mimetype="multipart/x-mixed-replace; boundary=frame")
 
+    @app.route("/last_tile.png")
+    def last_tile():
+        png = state.get_last_tile_png()
+        if png is None:
+            return Response(status=204)
+        return Response(png, mimetype="image/png", headers={"Cache-Control": "no-store"})
+
     @app.route("/api/status")
     def api_status():
         status = state.status()
@@ -42,6 +49,9 @@ def create_app(state: SharedState) -> Flask:
             {
                 "tile_count": status["tile_count"],
                 "recent_tiles": [tile_record_to_dict(r) for r in status["recent_tiles"]],
+                "tally": status["tally"],
+                "station_state": status["station_state"],
+                "info": status["info"],
             }
         )
 

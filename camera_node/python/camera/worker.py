@@ -110,6 +110,28 @@ class SharedState:
         self._latest_jpeg: Optional[bytes] = None
         self._tile_count = 0
         self._recent_tiles: deque[TileRecord] = deque(maxlen=max_recent_tiles)
+        # Cumulative since start-up, deliberately NOT derived from
+        # _recent_tiles: that deque only holds the last N records, so counting
+        # it would make the tally shrink once old tiles scroll off.
+        self._tally: dict[str, int] = {}
+        # PNG, not JPEG: this is shown as "the exact image the model receives",
+        # so it must not pick up compression artefacts the model never saw.
+        self._last_tile_png: Optional[bytes] = None
+        self._station_state = "waiting"
+        self._info: dict = {}
+
+    def set_info(self, info: dict) -> None:
+        """Static facts about this run (trigger mode, model on/off, line)."""
+        with self._lock:
+            self._info = dict(info)
+
+    def set_station_state(self, state: str) -> None:
+        with self._lock:
+            self._station_state = state
+
+    def get_last_tile_png(self) -> Optional[bytes]:
+        with self._lock:
+            return self._last_tile_png
 
     def update_frame(self, jpeg_bytes: bytes) -> None:
         with self._lock:
@@ -120,15 +142,23 @@ class SharedState:
             return self._latest_jpeg
 
     def record_tile(self, record: TileRecord, tile_count: int) -> None:
+        # Encode outside the lock; it is the slow part.
+        ok, buf = cv2.imencode(".png", record.tile_bgr)
         with self._lock:
             self._tile_count = tile_count
             self._recent_tiles.appendleft(record)
+            self._tally[record.grade] = self._tally.get(record.grade, 0) + 1
+            if ok:
+                self._last_tile_png = buf.tobytes()
 
     def status(self) -> dict:
         with self._lock:
             return {
                 "tile_count": self._tile_count,
                 "recent_tiles": list(self._recent_tiles),
+                "tally": dict(self._tally),
+                "station_state": self._station_state,
+                "info": dict(self._info),
             }
 
 
@@ -176,6 +206,19 @@ class CameraWorker:
         # of milliseconds and holds the weights, so rebuilding it per tile
         # would dwarf the inference it exists to run.
         self._model = TileGradeModel.from_config(config)
+
+        self._state.set_info(
+            {
+                "trigger": self._mode,
+                "model_enabled": self._model is not None,
+                "line_position": self._line_cfg.get("position")
+                if self._mode == "line_crossing"
+                else None,
+                "line_orientation": self._line_cfg.get("orientation")
+                if self._mode == "line_crossing"
+                else None,
+            }
+        )
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -257,6 +300,7 @@ class CameraWorker:
             fired = region_to_process is not None
 
             if fired:
+                self._state.set_station_state("processing")
                 seq += 1
                 record = process_tile(
                     seq=seq,
@@ -284,6 +328,7 @@ class CameraWorker:
                     else self._tracker.tile_count
                 )
                 self._state.record_tile(record, count)
+                self._state.set_station_state("result")
                 last_grade = record.grade
                 last_model_grade = record.model_grade
                 best_seen_region = None
@@ -294,6 +339,10 @@ class CameraWorker:
             if not tile_present:
                 last_grade = None
                 last_model_grade = None
+                self._state.set_station_state("waiting")
+            elif not fired and last_grade is None:
+                # A tile is in view but hasn't reached the trigger yet.
+                self._state.set_station_state("in_view")
 
             annotated = _draw_overlay(
                 frame,

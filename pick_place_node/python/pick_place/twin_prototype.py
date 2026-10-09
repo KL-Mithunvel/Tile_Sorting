@@ -14,7 +14,8 @@ shape.
 from __future__ import annotations
 
 from pick_place.dashboard import create_app
-from pick_place.mock_state import MockGantrySimulator, build_default_patrol, load_config
+from pick_place.gantry_backend import create_backend
+from pick_place.mock_state import load_config
 from pick_place.worker import SharedState, TwinWorker
 
 
@@ -26,9 +27,7 @@ def _scene(config: dict) -> dict:
 def main() -> None:
     config = load_config()
 
-    waypoints = build_default_patrol(config)
-    simulator = MockGantrySimulator(waypoints, travel_speed_mm_s=config["mock"]["travel_speed_mm_s"],
-                                  workspace=config["workspace"])
+    simulator = create_backend(config)
     state = SharedState()
     dash_cfg = config["dashboard"]
     worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"])

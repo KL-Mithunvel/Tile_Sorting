@@ -55,3 +55,22 @@ def test_page_renders_control_panel(client_and_sim):
 def test_page_view_only_without_backend():
     html = create_app(SharedState(), WS, 0.1).test_client().get("/").get_data(as_text=True)
     assert "CONTROLS_ENABLED = false" in html
+
+
+def test_mock_conforms_to_backend_protocol_via_factory():
+    from pick_place.gantry_backend import GantryBackend, create_backend
+    from pick_place.mock_state import load_config
+
+    backend = create_backend(load_config())
+    assert isinstance(backend, GantryBackend)
+
+
+def test_factory_rejects_serial_and_unknown():
+    from pick_place.gantry_backend import create_backend
+    from pick_place.mock_state import load_config
+
+    cfg = load_config()
+    with pytest.raises(NotImplementedError):
+        create_backend({**cfg, "backend": "serial"})
+    with pytest.raises(ValueError):
+        create_backend({**cfg, "backend": "nope"})

@@ -8,6 +8,9 @@
 # — those are blocked on SMTW tile size/weight data (.claude/CLAUDE.md Known Technical
 # Debt). Re-derive once real gantry dimensions are known.
 
+# 'mock' = MockGantrySimulator; 'serial' (real gantry) is not implemented yet.
+backend: mock
+
 workspace:
   x_min_mm: 0
   x_max_mm: 600

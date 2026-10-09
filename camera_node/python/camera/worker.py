@@ -20,7 +20,7 @@ from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
 from camera.line_trigger import LineCrossingDetector
 from camera.pipeline import TileRecord, process_tile
-from camera.segmentation import TileRegion, segment_from_config
+from camera.segmentation import TileRegion, locate_tile
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
@@ -29,6 +29,7 @@ _OVERLAY_BAD_COLOR = (0, 0, 220)
 _LINE_COLOR = (0, 200, 255)  # amber — the armed trigger line
 _LINE_FIRED_COLOR = (255, 255, 255)  # flashes white on the frame that fires
 _CENTER_COLOR = (255, 120, 0)
+_ROI_COLOR = (160, 160, 160)  # grey outline of the belt search area
 
 
 def _draw_trigger_line(
@@ -63,12 +64,17 @@ def _draw_overlay(
     model_grade: Optional[str] = None,
     line: Optional[dict] = None,
     fired: bool = False,
+    roi: Optional[tuple[int, int, int, int]] = None,
 ) -> np.ndarray:
     """Best-effort live-view annotation: trigger line, tile bounding box, the
     box's centre point, and the last grade. Not part of the detection logic —
     purely visual, so it isn't unit-tested (mirrors acoustic_node's
     plotting.py, which is also display-only)."""
     annotated = frame.copy()
+
+    if roi is not None:
+        # Thin outline of where tiles are searched for. Display only.
+        cv2.rectangle(annotated, (roi[0], roi[1]), (roi[2] - 1, roi[3] - 1), _ROI_COLOR, 1)
 
     if line is not None and line.get("draw_overlay", True):
         _draw_trigger_line(
@@ -261,7 +267,7 @@ class CameraWorker:
             except RuntimeError:
                 continue
 
-            region = segment_from_config(frame, seg_cfg)
+            region, belt_roi = locate_tile(frame, seg_cfg)
             tile_present = region is not None
 
             # The tracker runs in both modes: it owns the presence debounce
@@ -346,6 +352,7 @@ class CameraWorker:
                 model_grade=last_model_grade,
                 line=self._line_cfg if self._crossing is not None else None,
                 fired=fired,
+                roi=belt_roi,
             )
             ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
             if ok:

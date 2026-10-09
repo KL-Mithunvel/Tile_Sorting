@@ -99,6 +99,25 @@ segmentation:
   min_fill_ratio: 0.6
   min_aspect: 0.5
   max_aspect: 2.0
+  # Belt region of interest (added 2026-10-09). The camera looks straight down
+  # at the conveyor, so a tile can only be on the belt; everything else (wooden
+  # bench, rails, a person's feet) is excluded BEFORE colour matching. On the
+  # real clip the bench and a sandal both matched the tile hue.
+  #   mode "off"   - search the whole frame (bench tests with no belt in view).
+  #   mode "fixed" - a normalised rect [x0, y0, x1, y1]; right for the bolted-down
+  #                  rig where the belt never moves in frame.
+  #   mode "color" - find the belt by its own hue each frame; survives a hand-held
+  #                  camera. If the belt is NOT visible this frame, NO tile is
+  #                  seen (it does not fall back to the whole frame) - so with a
+  #                  wrong belt colour the station sees nothing, loudly, rather
+  #                  than grading the bench.
+  belt_roi:
+    mode: "color"
+    rect: [0.0, 0.0, 1.0, 1.0]       # used by mode "fixed"
+    hsv_lower: [45, 60, 40]          # the lab conveyor's saturated green mat
+    hsv_upper: [85, 255, 255]
+    margin_px: 25                    # a tile can overhang the belt edge
+    min_area_px: 2000                # ignore specks of belt colour
 
 crack_detection:
   blur_kernel_size: 5

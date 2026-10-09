@@ -16,6 +16,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from camera.belt_roi import find_belt_roi, roi_applies
+
 
 @dataclass
 class TileRegion:
@@ -119,6 +121,7 @@ def segment_tile(
     min_fill_ratio: Optional[float] = None,
     min_aspect: Optional[float] = None,
     max_aspect: Optional[float] = None,
+    roi: Optional[tuple[int, int, int, int]] = None,
 ) -> Optional[TileRegion]:
     """Find the largest tile-colored, tile-shaped region in a frame.
 
@@ -126,9 +129,19 @@ def segment_tile(
     shape arguments (see `is_tile_shaped`) are optional; with them, the result
     is the largest region that PASSES the gate -- not the largest region that
     then gets rejected -- so a sandal bigger than a real tile cannot hide it.
+
+    `roi` (x0, y0, x1, y1 pixels) restricts the search to the belt: anything
+    outside it is blanked from the mask. The mask stays full-frame so every
+    coordinate in the returned region is still in source-frame pixels.
     """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array(hsv_lower, dtype=np.uint8), np.array(hsv_upper, dtype=np.uint8))
+
+    if roi is not None:
+        x0, y0, x1, y1 = roi
+        keep = np.zeros_like(mask)
+        keep[max(0, y0) : y1, max(0, x0) : x1] = 255
+        mask = cv2.bitwise_and(mask, keep)
 
     if morph_kernel_size > 0:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_kernel_size, morph_kernel_size))
@@ -155,10 +168,29 @@ def segment_tile(
 
 
 def segment_from_config(frame_bgr: np.ndarray, seg_cfg: dict) -> Optional[TileRegion]:
-    """`segment_tile()` driven by config.yaml's `segmentation` block, so the
-    live worker and the offline video processor cannot drift apart in which
-    keys they pass."""
-    return segment_tile(
+    """`locate_tile()` without the ROI -- for callers that only want the tile."""
+    return locate_tile(frame_bgr, seg_cfg)[0]
+
+
+def locate_tile(
+    frame_bgr: np.ndarray, seg_cfg: dict
+) -> tuple[Optional[TileRegion], Optional[tuple[int, int, int, int]]]:
+    """`segment_tile()` driven by config.yaml's `segmentation` block, plus the
+    belt ROI it searched (None when the ROI is off), so the live worker and
+    the offline video processor cannot drift apart in which keys they pass and
+    the dashboard can draw the ROI.
+
+    If a belt ROI is configured but the belt cannot be seen this frame (colour
+    mode, nothing belt-coloured in view) the answer is NO tile -- deliberately
+    not "search the whole frame": that fallback is exactly what lets the bench
+    and a sandal be graded as tiles whenever the belt is momentarily lost.
+    """
+    belt_cfg = seg_cfg.get("belt_roi")
+    roi = find_belt_roi(frame_bgr, belt_cfg)
+    if roi is None and roi_applies(belt_cfg):
+        return None, None
+
+    region = segment_tile(
         frame_bgr,
         hsv_lower=tuple(seg_cfg["hsv_lower"]),
         hsv_upper=tuple(seg_cfg["hsv_upper"]),
@@ -167,4 +199,6 @@ def segment_from_config(frame_bgr: np.ndarray, seg_cfg: dict) -> Optional[TileRe
         min_fill_ratio=seg_cfg.get("min_fill_ratio"),
         min_aspect=seg_cfg.get("min_aspect"),
         max_aspect=seg_cfg.get("max_aspect"),
+        roi=roi,
     )
+    return region, roi

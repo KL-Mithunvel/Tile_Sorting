@@ -35,6 +35,7 @@ class SharedState:
             "z": round(pose.z, 2),
             "vacuum_on": pose.vacuum_on,
             "machine_state": pose.machine_state,
+            "mode": pose.mode,
         }
 
 

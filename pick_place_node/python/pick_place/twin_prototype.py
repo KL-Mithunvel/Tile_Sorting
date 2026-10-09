@@ -29,7 +29,8 @@ def main() -> None:
     worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"])
     worker.start()
 
-    app = create_app(state, workspace=config["workspace"], poll_interval_s=dash_cfg["poll_interval_s"])
+    app = create_app(state, workspace=config["workspace"], poll_interval_s=dash_cfg["poll_interval_s"],
+                     backend=simulator, jog_steps_mm=dash_cfg["jog_steps_mm"])
     print(f"Digital twin prototype running at http://{dash_cfg['host']}:{dash_cfg['port']}/ — Ctrl+C to stop.")
 
     try:

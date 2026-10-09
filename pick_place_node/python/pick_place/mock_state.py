@@ -33,6 +33,7 @@ class GantryPose:
     z: float
     vacuum_on: bool
     machine_state: str
+    mode: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -199,4 +200,5 @@ class MockGantrySimulator:
         return GantryPose(
             x=self._x, y=self._y, z=self._z,
             vacuum_on=self._vacuum_on, machine_state=self._machine_state,
+            mode=self._mode,
         )

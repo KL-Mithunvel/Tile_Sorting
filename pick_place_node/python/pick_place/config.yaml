@@ -40,3 +40,5 @@ dashboard:
   poll_interval_s: 0.1
   # How often the background worker advances the simulator.
   tick_hz: 30
+  # Jog step sizes offered as buttons in the twin's control panel, mm.
+  jog_steps_mm: [1, 10, 50]

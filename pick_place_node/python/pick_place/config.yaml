@@ -30,6 +30,14 @@ mock:
   # How long to pause at pick/place/home before moving on, seconds.
   dwell_s: 0.6
 
+# Visual-only props for the twin (stacks, tile size). The stack positions are
+# the mock patrol's pick/place points so the picture matches the motion.
+# PLACEHOLDER tile size/thickness: real SMTW tile data not obtained yet.
+scene:
+  tile_size_mm: 100
+  tile_thickness_mm: 5
+  pick_stack_count: 4
+
 dashboard:
   # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not just
   # localhost — same convention as camera_node/acoustic_node.

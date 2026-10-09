@@ -13,7 +13,7 @@ from pick_place.worker import SharedState
 
 
 def create_app(state: SharedState, workspace: dict, poll_interval_s: float,
-               backend=None, jog_steps_mm=(1, 10, 50)) -> Flask:
+               backend=None, jog_steps_mm=(1, 10, 50), scene=None) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
@@ -31,7 +31,7 @@ def create_app(state: SharedState, workspace: dict, poll_interval_s: float,
 
     @app.route("/api/config")
     def api_config():
-        return jsonify({"workspace": workspace})
+        return jsonify({"workspace": workspace, "scene": scene or {}})
 
     def _command(fn):
         """Run a backend command; ValueError -> 400, no backend -> 503."""

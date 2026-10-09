@@ -148,11 +148,86 @@
 
     // Gantry meshes, built once workspace bounds are known (setupGantry()).
     let xMin, xMax, yMin, yMax, zMin, zMax, center, maxDim;
-    let beam, column, endEffector;
+    let beam, column, cup, cupBody, heldTile;
     const railColor = 0x666666, beamColor = 0x888888, columnColor = 0xaaaaaa;
     const vacuumOffColor = 0x999999, vacuumOnColor = 0x5cd65c;
+    const CUP_H = 14;
 
-    function setupGantry(ws) {
+    // Props: pick/place stacks and tiles. Tile bookkeeping lives client-side
+    // (purely visual) and is driven by vacuum edges + where the cup is.
+    let sceneCfg = { tile_size_mm: 100, tile_thickness_mm: 5, pick_stack_count: 4 };
+    let pickCount = 0, placeCount = 0, holding = false;
+    let pickStack, placeStack;
+    const looseTiles = [];
+    const tileMat = new THREE.MeshStandardMaterial({ color: 0xc8643c });
+    const padMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+
+    function tileGeom() {
+      return new THREE.BoxGeometry(sceneCfg.tile_size_mm, sceneCfg.tile_thickness_mm - 0.6, sceneCfg.tile_size_mm);
+    }
+
+    function makeStack(xy) {
+      const g = new THREE.Group();
+      const s = sceneCfg.tile_size_mm;
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(s + 20, 2, s + 20), padMat);
+      pad.position.y = zMin - 1;
+      g.add(pad);
+      g.tiles = new THREE.Group();
+      g.add(g.tiles);
+      g.position.set(xy.x, 0, xy.y);
+      scene.add(g);
+      return g;
+    }
+
+    function rebuildStack(stack, count) {
+      stack.tiles.clear();
+      const t = sceneCfg.tile_thickness_mm;
+      for (let i = 0; i < count; i++) {
+        const m = new THREE.Mesh(tileGeom(), tileMat);
+        m.position.y = zMin + t * i + t / 2;
+        stack.tiles.add(m);
+      }
+    }
+
+    function stackTopZ(count) { return zMin + sceneCfg.tile_thickness_mm * count; }
+
+    function nearStack(stack, pose) {
+      const half = sceneCfg.tile_size_mm / 2;
+      return Math.abs(pose.x - stack.position.x) < half && Math.abs(pose.y - stack.position.z) < half;
+    }
+
+    function onVacuumEdge(on, pose) {
+      if (on && !holding && nearStack(pickStack, pose) && pickCount > 0
+          && pose.z <= stackTopZ(pickCount) + 15) {
+        holding = true;
+        pickCount--;
+        rebuildStack(pickStack, pickCount);
+        heldTile.visible = true;
+      } else if (!on && holding) {
+        holding = false;
+        heldTile.visible = false;
+        if (nearStack(placeStack, pose)) {
+          placeCount++;
+          rebuildStack(placeStack, placeCount);
+        } else {
+          // Released away from the stack: the tile drops to the floor.
+          const m = new THREE.Mesh(tileGeom(), tileMat);
+          m.position.set(pose.x, zMin + sceneCfg.tile_thickness_mm / 2, pose.y);
+          scene.add(m);
+          looseTiles.push(m);
+        }
+      }
+      // The auto patrol loops forever: once the pick stack is spent, restock.
+      if (pickCount === 0 && !holding && placeCount > 0 && lastMode === 'auto') {
+        pickCount = sceneCfg.pick_stack_count;
+        placeCount = 0;
+        rebuildStack(pickStack, pickCount);
+        rebuildStack(placeStack, 0);
+      }
+    }
+
+    function setupGantry(ws, cfg) {
+      Object.assign(sceneCfg, cfg.scene || {});
       xMin = ws.x_min_mm; xMax = ws.x_max_mm;
       yMin = ws.y_min_mm; yMax = ws.y_max_mm;
       zMin = ws.z_min_mm; zMax = ws.z_max_mm;
@@ -197,22 +272,81 @@
       );
       scene.add(column);
 
-      // End effector.
-      endEffector = new THREE.Mesh(
-        new THREE.SphereGeometry(8, 16, 12),
+      // Vacuum cup: a flared cone whose tip (group origin) is the contact
+      // point, so "z" in the readout is where the cup touches.
+      cup = new THREE.Group();
+      cupBody = new THREE.Mesh(
+        new THREE.CylinderGeometry(6, 14, CUP_H, 20),
         new THREE.MeshStandardMaterial({ color: vacuumOffColor }),
       );
-      scene.add(endEffector);
+      cupBody.position.y = CUP_H / 2;
+      cup.add(cupBody);
+      scene.add(cup);
+
+      // Tile carried by the cup (hangs below the contact point).
+      heldTile = new THREE.Mesh(tileGeom(), tileMat);
+      heldTile.visible = false;
+      scene.add(heldTile);
+
+      // Pick / place stacks at the patrol's pick/place points.
+      pickStack = makeStack(cfg.scene.pick_xy);
+      placeStack = makeStack(cfg.scene.place_xy);
+      pickCount = sceneCfg.pick_stack_count;
+      rebuildStack(pickStack, pickCount);
+      rebuildStack(placeStack, 0);
+
+      // Motion trail.
+      trailPositions = new Float32Array(TRAIL_MAX * 3);
+      trailGeom = new THREE.BufferGeometry();
+      trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+      trailGeom.setDrawRange(0, 0);
+      trail = new THREE.Line(trailGeom, new THREE.LineBasicMaterial({ color: 0x5cc8ff, transparent: true, opacity: 0.6 }));
+      trail.frustumCulled = false;
+      scene.add(trail);
     }
 
+    // Trail: ring buffer of recent cup positions, a point per ~3 mm of travel.
+    const TRAIL_MAX = 400;
+    let trail, trailGeom, trailPositions, trailCount = 0, lastTrail = null;
+    function addTrailPoint(x, y, z) {
+      if (lastTrail && Math.hypot(x - lastTrail.x, y - lastTrail.y, z - lastTrail.z) < 3) return;
+      lastTrail = { x, y, z };
+      if (trailCount === TRAIL_MAX) {
+        trailPositions.copyWithin(0, 3);
+        trailCount--;
+      }
+      trailPositions.set([x, z, y], trailCount * 3); // gantry (x,y,z) -> scene (x,z,y)
+      trailCount++;
+      trailGeom.setDrawRange(0, trailCount);
+      trailGeom.attributes.position.needsUpdate = true;
+    }
+
+    // Latest polled pose is the target; the drawn pose eases toward it every
+    // frame so motion looks smooth between 10 Hz polls.
+    let targetPose = null, shownPose = null, lastVacuum = false, lastMode = 'auto';
     function updateGantryPose(pose) {
-      if (!beam) return;
+      targetPose = pose;
+      if (!shownPose) shownPose = { x: pose.x, y: pose.y, z: pose.z };
+      lastMode = pose.mode || lastMode;
+      if (pose.vacuum_on !== lastVacuum) {
+        lastVacuum = pose.vacuum_on;
+        onVacuumEdge(pose.vacuum_on, shownPose);
+      }
+    }
+
+    function stepSmoothing(dtS) {
+      if (!beam || !targetPose || !shownPose) return;
+      const k = 1 - Math.exp(-dtS * 18);
+      for (const a of ['x', 'y', 'z']) shownPose[a] += (targetPose[a] - shownPose[a]) * k;
+      const p = shownPose;
       // gantry (x, y, z) -> scene (x, z, y): Three.js is Y-up.
-      beam.position.z = pose.y;
-      column.position.set(pose.x, (zMax + pose.z) / 2, pose.y);
-      column.scale.y = Math.max(zMax - pose.z, 0.001);
-      endEffector.position.set(pose.x, pose.z, pose.y);
-      endEffector.material.color.setHex(pose.vacuum_on ? vacuumOnColor : vacuumOffColor);
+      beam.position.z = p.y;
+      column.position.set(p.x, (zMax + p.z + CUP_H) / 2, p.y);
+      column.scale.y = Math.max(zMax - p.z - CUP_H, 0.001);
+      cup.position.set(p.x, p.z, p.y);
+      cupBody.material.color.setHex(targetPose.vacuum_on ? vacuumOnColor : vacuumOffColor);
+      heldTile.position.set(p.x, p.z - sceneCfg.tile_thickness_mm / 2, p.y);
+      addTrailPoint(p.x, p.y, p.z);
     }
 
     // Three cameras (+ matched OrbitControls) sharing one renderer/canvas —
@@ -296,9 +430,13 @@
     }
     new ResizeObserver(onResize).observe(container);
 
+    let lastFrame = performance.now();
     function animate() {
       requestAnimationFrame(animate);
       try {
+        const now = performance.now();
+        stepSmoothing(Math.min((now - lastFrame) / 1000, 0.25));
+        lastFrame = now;
         const [camera, controls] = activeCameraAndControls();
         controls.update();
         renderer.render(scene, camera);
@@ -390,7 +528,7 @@
       const res = await fetch('/api/config');
       if (!res.ok) throw new Error('/api/config returned HTTP ' + res.status);
       const cfg = await res.json();
-      setupGantry(cfg.workspace);
+      setupGantry(cfg.workspace, cfg);
       setupCameras();
       setupControls();
       onResize();

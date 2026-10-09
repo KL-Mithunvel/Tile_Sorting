@@ -18,6 +18,11 @@ from pick_place.mock_state import MockGantrySimulator, build_default_patrol, loa
 from pick_place.worker import SharedState, TwinWorker
 
 
+def _scene(config: dict) -> dict:
+    mock = config["mock"]
+    return {**config["scene"], "pick_xy": mock["pick_xy"], "place_xy": mock["place_xy"]}
+
+
 def main() -> None:
     config = load_config()
 
@@ -30,7 +35,7 @@ def main() -> None:
     worker.start()
 
     app = create_app(state, workspace=config["workspace"], poll_interval_s=dash_cfg["poll_interval_s"],
-                     backend=simulator, jog_steps_mm=dash_cfg["jog_steps_mm"])
+                     backend=simulator, scene=_scene(config), jog_steps_mm=dash_cfg["jog_steps_mm"])
     print(f"Digital twin prototype running at http://{dash_cfg['host']}:{dash_cfg['port']}/ — Ctrl+C to stop.")
 
     try:

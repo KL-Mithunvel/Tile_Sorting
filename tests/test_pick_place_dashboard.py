@@ -44,3 +44,14 @@ def test_bad_requests_rejected(client_and_sim):
 def test_no_backend_returns_503():
     app = create_app(SharedState(), WS, 0.1)
     assert app.test_client().post("/api/jog", json={"axis": "x", "delta_mm": 1}).status_code == 503
+
+
+def test_page_renders_control_panel(client_and_sim):
+    html = client_and_sim[0].get("/").get_data(as_text=True)
+    for label in ("+X", "-X", "+Y", "-Y", "Z+", "Z-", "Vacuum ON", "Vacuum OFF"):
+        assert label in html
+
+
+def test_page_view_only_without_backend():
+    html = create_app(SharedState(), WS, 0.1).test_client().get("/").get_data(as_text=True)
+    assert "CONTROLS_ENABLED = false" in html

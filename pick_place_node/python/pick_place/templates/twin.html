@@ -25,6 +25,19 @@
   .state-PICKING, .state-PLACING { color: #5cd65c; }
   .vacuum-on { color: #5cd65c; font-weight: bold; }
   .vacuum-off { color: #aaa; }
+  .controls { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #333; }
+  .controls h2 { font-size: 0.85rem; color: #aaa; margin: 0 0 0.5rem; font-weight: 600; }
+  .controls button { background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 0.5rem; cursor: pointer; font-size: 0.85rem; font-family: ui-monospace, monospace; }
+  .controls button:hover:not(:disabled) { background: #333; }
+  .controls button:active:not(:disabled) { background: #3a6ea5; }
+  .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .controls button.on { background: #2e7d32; border-color: #2e7d32; }
+  .controls button.off-active { background: #555; }
+  .btn-row { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; }
+  .btn-row > button { flex: 1; }
+  .jog-grid { display: grid; grid-template-columns: repeat(3, 1fr) 0.4fr 1fr; gap: 0.4rem; margin-bottom: 0.5rem; }
+  .jog-grid .spacer { visibility: hidden; }
+  #ctl-msg { color: #f08080; font-size: 0.75rem; min-height: 1em; margin-top: 0.25rem; }
   #error-banner { display: none; background: #5c2020; color: #fff; padding: 0.75rem 1rem; border-radius: 4px; margin: 0 0 1rem; font-family: ui-monospace, monospace; font-size: 0.85rem; white-space: pre-wrap; }
 </style>
 </head>
@@ -69,6 +82,30 @@
       <div class="stat-row"><span class="stat-label">Z (mm)</span><span class="stat-value" id="stat-z">0</span></div>
       <div class="stat-row"><span class="stat-label">Vacuum</span><span class="stat-value" id="stat-vacuum">OFF</span></div>
       <div class="stat-row"><span class="stat-label">State</span><span class="stat-value" id="stat-state">IDLE</span></div>
+
+      <div class="controls">
+        <h2>Control</h2>
+        <div class="btn-row">
+          <button id="mode-auto" data-mode="auto">Auto patrol</button>
+          <button id="mode-manual" data-mode="manual">Manual</button>
+        </div>
+        <h2>Jog step (mm)</h2>
+        <div class="btn-row" id="step-row">
+          {% for s in jog_steps_mm %}<button data-step="{{ s }}">{{ s }}</button>{% endfor %}
+        </div>
+        <h2>Jog</h2>
+        <div class="jog-grid">
+          <span class="spacer"></span><button data-axis="y" data-sign="1">+Y</button><span class="spacer"></span><span></span><button data-axis="z" data-sign="1">Z+</button>
+          <button data-axis="x" data-sign="-1">-X</button><span class="spacer"></span><button data-axis="x" data-sign="1">+X</button><span></span><span class="spacer"></span>
+          <span class="spacer"></span><button data-axis="y" data-sign="-1">-Y</button><span class="spacer"></span><span></span><button data-axis="z" data-sign="-1">Z-</button>
+        </div>
+        <h2>Vacuum</h2>
+        <div class="btn-row">
+          <button id="vac-on">Vacuum ON</button>
+          <button id="vac-off">Vacuum OFF</button>
+        </div>
+        <div id="ctl-msg"></div>
+      </div>
     </div>
   </div>
 
@@ -282,6 +319,60 @@
       st.className = 'stat-value state-' + pose.machine_state;
     }
 
+    // ---- Control panel -------------------------------------------------
+    const CONTROLS_ENABLED = {{ 'true' if controls_enabled else 'false' }};
+    let jogStep = Number(document.querySelector('#step-row button')?.dataset.step || 10);
+    const ctlMsg = document.getElementById('ctl-msg');
+
+    async function sendCommand(path, body) {
+      try {
+        const res = await fetch(path, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        ctlMsg.textContent = '';
+        updateGantryPose(data);
+        updateReadout(data);
+        updateControls(data);
+      } catch (err) {
+        ctlMsg.textContent = 'Command failed: ' + err.message;
+      }
+    }
+
+    function setupControls() {
+      const all = document.querySelectorAll('.controls button');
+      if (!CONTROLS_ENABLED) {
+        all.forEach((b) => (b.disabled = true));
+        ctlMsg.textContent = 'No control backend attached (view-only).';
+        return;
+      }
+      const stepBtns = document.querySelectorAll('#step-row button');
+      function markStep() {
+        stepBtns.forEach((b) => b.classList.toggle('on', Number(b.dataset.step) === jogStep));
+      }
+      stepBtns.forEach((b) => b.addEventListener('click', () => { jogStep = Number(b.dataset.step); markStep(); }));
+      markStep();
+      document.querySelectorAll('[data-axis]').forEach((b) => {
+        b.addEventListener('click', () => sendCommand('/api/jog', {
+          axis: b.dataset.axis, delta_mm: Number(b.dataset.sign) * jogStep,
+        }));
+      });
+      document.querySelectorAll('[data-mode]').forEach((b) => {
+        b.addEventListener('click', () => sendCommand('/api/mode', { mode: b.dataset.mode }));
+      });
+      document.getElementById('vac-on').addEventListener('click', () => sendCommand('/api/vacuum', { on: true }));
+      document.getElementById('vac-off').addEventListener('click', () => sendCommand('/api/vacuum', { on: false }));
+    }
+
+    function updateControls(pose) {
+      document.getElementById('mode-auto').classList.toggle('on', pose.mode === 'auto');
+      document.getElementById('mode-manual').classList.toggle('on', pose.mode === 'manual');
+      document.getElementById('vac-on').classList.toggle('on', pose.vacuum_on);
+      document.getElementById('vac-off').classList.toggle('off-active', !pose.vacuum_on);
+    }
+
     async function pollStatus() {
       try {
         const res = await fetch('/api/status');
@@ -289,6 +380,7 @@
         const pose = await res.json();
         updateGantryPose(pose);
         updateReadout(pose);
+        updateControls(pose);
       } catch (err) {
         console.error('status poll failed', err);
       }
@@ -300,6 +392,7 @@
       const cfg = await res.json();
       setupGantry(cfg.workspace);
       setupCameras();
+      setupControls();
       onResize();
       animate();
       pollStatus();

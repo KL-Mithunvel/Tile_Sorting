@@ -161,3 +161,29 @@ class TestEventObject:
         assert event.crossed
         assert event.direction == "forward"
         assert event.coordinate == pytest.approx(0.7)
+
+
+class TestMaxStep:
+    """A jump too big for real belt travel is a different tile, not a crossing."""
+
+    def test_identity_flip_across_the_line_does_not_fire(self):
+        # Tile A sits at 0.30; the segmenter flips to tile B at 0.85 (past the
+        # line at 0.5). Without max_step that jump reads as a crossing.
+        xs = [0.28, 0.30, 0.31, 0.85, 0.86]
+        assert run(LineCrossingDetector(position=0.5, hysteresis=0.0), xs) == [3]
+        assert run(LineCrossingDetector(position=0.5, hysteresis=0.0, max_step=0.15), xs) == []
+
+    def test_smooth_crossing_still_fires(self):
+        xs = [0.30, 0.38, 0.46, 0.54, 0.62]
+        det = LineCrossingDetector(position=0.5, hysteresis=0.0, max_step=0.15)
+        assert run(det, xs) == [3]
+
+    def test_real_crossing_after_a_flip_still_fires(self):
+        # Flip to the far side, then that tile travels back across the line.
+        xs = [0.30, 0.31, 0.85, 0.75, 0.65, 0.55, 0.45]
+        det = LineCrossingDetector(position=0.5, hysteresis=0.0, max_step=0.15)
+        assert run(det, xs) == [6]
+
+    def test_rejects_non_positive_max_step(self):
+        with pytest.raises(ValueError, match="max_step"):
+            LineCrossingDetector(max_step=0)

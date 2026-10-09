@@ -73,6 +73,7 @@ class LineCrossingDetector:
         orientation: str = "vertical",
         direction: str = "both",
         hysteresis: float = 0.02,
+        max_step: Optional[float] = None,
     ):
         if not 0.0 <= position <= 1.0:
             raise ValueError(f"LineCrossingDetector: position must be 0.0-1.0, got {position}")
@@ -93,7 +94,11 @@ class LineCrossingDetector:
         self.orientation = orientation
         self.direction = direction
         self.hysteresis = float(hysteresis)
+        if max_step is not None and max_step <= 0:
+            raise ValueError(f"LineCrossingDetector: max_step must be > 0 or None, got {max_step}")
+        self.max_step = max_step
 
+        self._last_coord: Optional[float] = None
         self._side: Optional[int] = None
         self._crossing_count = 0
 
@@ -111,6 +116,7 @@ class LineCrossingDetector:
         """Forget which side the current tile was on, without touching the
         count. Called when the tile leaves, so the next tile starts clean."""
         self._side = None
+        self._last_coord = None
 
     def coordinate_of(self, center_normalized: tuple[float, float]) -> float:
         """The one coordinate this detector cares about: x for a vertical
@@ -135,6 +141,19 @@ class LineCrossingDetector:
 
         coord = self.coordinate_of(center_normalized)
         delta = coord - self.position
+
+        # A real tile moves a few percent of the frame per frame. A jump far
+        # bigger than that means the segmenter handed us a *different* tile
+        # (two in frame, areas near-equal, the larger one flips on noise), so
+        # the previous side says nothing about this one: forget it and never
+        # call the jump a crossing. Teleporting across the line is not one.
+        if (
+            self.max_step is not None
+            and self._last_coord is not None
+            and abs(coord - self._last_coord) > self.max_step
+        ):
+            self._side = None
+        self._last_coord = coord
 
         # Inside the deadband the tile has no committed side yet; hold
         # whatever we last knew and wait for it to travel clear of the line.

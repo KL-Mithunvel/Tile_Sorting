@@ -200,6 +200,7 @@ class CameraWorker:
                 orientation=self._line_cfg.get("orientation", "vertical"),
                 direction=self._line_cfg.get("direction", "both"),
                 hysteresis=self._line_cfg.get("hysteresis", 0.02),
+                max_step=self._line_cfg.get("max_step"),
             )
 
         # Loaded once here, not per tile: building an ONNX session takes tens

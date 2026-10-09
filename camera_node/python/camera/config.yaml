@@ -182,6 +182,12 @@ trigger_line:
   # pixel either side between frames from segmentation noise and fires
   # repeatedly. 0.02 of a 640px frame is ~13px.
   hysteresis: 0.02
+  # Largest believable movement of the tile's centre between two frames (same
+  # 0-1 units). A bigger jump means the segmenter switched to a different tile
+  # (two in frame, near-equal areas), so it is NOT a crossing: the remembered
+  # side is dropped and nothing fires. Real belt travel is a few % per frame.
+  # Measured on real footage: identity flips jump ~0.6. null disables.
+  max_step: 0.15
   # Draw the line and the tile's centre point on the dashboard's video feed.
   # Display only - has no effect on detection.
   draw_overlay: true

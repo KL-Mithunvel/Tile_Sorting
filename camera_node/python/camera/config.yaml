@@ -218,6 +218,16 @@ trigger_line:
   # side is dropped and nothing fires. Real belt travel is a few % per frame.
   # Measured on real footage: identity flips jump ~0.6. null disables.
   max_step: 0.15
+  # Tile identity (region_tracker.py). Every tile in view is matched to the tile
+  # seen in the previous frame by nearest centre, so each gets its own id and
+  # its own crossing - two tiles in frame can no longer be mistaken for one.
+  # match_distance: farthest a centre may move between frames and still be the
+  #   same tile, in 0-1 frame units. Must exceed belt travel per frame and stay
+  #   well below the gap between neighbouring tiles (~10x apart on the real
+  #   clip). Re-derive on the rig once belt speed and frame rate are known.
+  # max_missed_frames: how long a tile may go unseen before its id is dropped.
+  match_distance: 0.15
+  max_missed_frames: 3
   # Draw the line and the tile's centre point on the dashboard's video feed.
   # Display only - has no effect on detection.
   draw_overlay: true

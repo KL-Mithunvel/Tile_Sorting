@@ -28,9 +28,9 @@ from typing import Optional
 
 from camera.capture import VideoFileCapture, load_config
 from camera.grading_model import TileGradeModel
-from camera.line_trigger import LineCrossingDetector
+from camera.region_tracker import LineCrossingTracker
 from camera.pipeline import TileRecord, process_tile, tile_record_to_dict
-from camera.segmentation import TileRegion, segment_from_config
+from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
@@ -64,13 +64,21 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
         )
 
     line_cfg = config.get("trigger_line") or {}
-    crossing: Optional[LineCrossingDetector] = None
+    crossing: Optional[LineCrossingTracker] = None
     if mode == "line_crossing":
-        crossing = LineCrossingDetector(
-            position=line_cfg.get("position", 0.5),
-            orientation=line_cfg.get("orientation", "vertical"),
-            direction=line_cfg.get("direction", "both"),
-            hysteresis=line_cfg.get("hysteresis", 0.02),
+        # Same tracker the live worker uses, so an offline run on a clip gives
+        # the count the station would have: each tile keeps its identity and
+        # fires once, even with two tiles in frame.
+        crossing = LineCrossingTracker(
+            line=dict(
+                position=line_cfg.get("position", 0.5),
+                orientation=line_cfg.get("orientation", "vertical"),
+                direction=line_cfg.get("direction", "both"),
+                hysteresis=line_cfg.get("hysteresis", 0.02),
+                max_step=line_cfg.get("max_step"),
+            ),
+            match_distance=line_cfg.get("match_distance", 0.15),
+            max_missed_frames=line_cfg.get("max_missed_frames", 3),
         )
 
     # Built once for the whole file, like worker.py does for the whole run.
@@ -92,17 +100,14 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
             except StopIteration:
                 break
 
-            region = segment_from_config(frame, seg_cfg)
+            regions, _roi = locate_tiles(frame, seg_cfg)
+            region = regions[0] if regions else None
             tile_present = region is not None
             departed = tracker.process_frame(tile_present)
 
-            region_to_process: Optional[TileRegion] = None
+            regions_to_process: list[TileRegion] = []
             if mode == "line_crossing":
-                event = crossing.update(
-                    region.center_normalized if region is not None else None
-                )
-                if event and region is not None:
-                    region_to_process = region
+                regions_to_process = [o.region for o in crossing.update(regions) if o.crossed]
             else:
                 if tile_present:
                     # Same "largest sighting, not latest" choice as worker.py -
@@ -110,9 +115,9 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
                     if best_seen_region is None or region.area_px > best_seen_region.area_px:
                         best_seen_region = region
                 if departed and best_seen_region is not None:
-                    region_to_process = best_seen_region
+                    regions_to_process = [best_seen_region]
 
-            if region_to_process is not None:
+            for region_to_process in regions_to_process:
                 seq += 1
                 record = process_tile(
                     seq=seq,
@@ -134,6 +139,7 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
                     path = save_tile_snapshot(record, resolve_output_dir(config))
                     record.snapshot_path = str(path)
                 records.append(record)
+            if regions_to_process:
                 best_seen_region = None
 
     return records

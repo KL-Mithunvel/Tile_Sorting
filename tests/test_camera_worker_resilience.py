@@ -100,7 +100,7 @@ def test_the_next_tile_is_still_inspected_after_a_failed_one(monkeypatch):
 def test_failure_in_segmentation_is_also_survived(monkeypatch):
     state = SharedState()
     w = CameraWorker(FakeCapture([]), make_config(), state)
-    monkeypatch.setattr(worker_mod, "locate_tile", lambda *a, **k: (_ for _ in ()).throw(IndexError("bad frame")))
+    monkeypatch.setattr(worker_mod, "locate_tiles", lambda *a, **k: (_ for _ in ()).throw(IndexError("bad frame")))
     for _ in range(3):
         w._safe_step(frame_with_tile(100))
     assert state.status()["errors"]["count"] == 3
@@ -141,3 +141,29 @@ def test_api_status_reports_errors():
     state.record_error("ValueError: x")
     body = create_app(state).test_client().get("/api/status").get_json()
     assert body["errors"] == {"count": 1, "last": "ValueError: x"}
+
+
+# ---- two tiles in frame (step 4) ---------------------------------------
+
+def frame_with_two_tiles(cy_a, cy_b, size_a=60, size_b=60):
+    """Two tiles of (near-)identical area -- the real clip's failure case."""
+    f = np.full((600, 200, 3), (40, 40, 40), np.uint8)
+    for cy, size, x in ((cy_a, size_a, 20), (cy_b, size_b, 110)):
+        cv2.rectangle(f, (x, cy - size // 2), (x + size, cy + size // 2), TILE_BGR, -1)
+    return f
+
+
+def test_two_tiles_of_equal_area_each_cross_once_and_are_graded_separately():
+    cfg = make_config()
+    state = SharedState()
+    w = CameraWorker(FakeCapture([]), cfg, state)
+    # Tile A travels 120 -> 480 and tile B 20 -> 380 (both crossing y=300), with
+    # B's size jittering by a pixel so "which is larger" flips -- the old failure.
+    for i, ya in enumerate(range(120, 481, 30)):
+        yb = ya - 100
+        size_b = 60 + (i % 2)                    # 60/61: the "largest" alternates
+        w._safe_step(frame_with_two_tiles(ya, max(yb, 30), size_b=size_b))
+    s = state.status()
+    assert s["errors"]["count"] == 0
+    assert s["tile_count"] == 2                  # not 12 identity-flip "crossings"
+    assert len(s["recent_tiles"]) == 2

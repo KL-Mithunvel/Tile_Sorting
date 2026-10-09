@@ -112,7 +112,7 @@ def is_tile_shaped(
     return True
 
 
-def segment_tile(
+def segment_tiles(
     frame_bgr: np.ndarray,
     hsv_lower: tuple[int, int, int],
     hsv_upper: tuple[int, int, int],
@@ -122,17 +122,20 @@ def segment_tile(
     min_aspect: Optional[float] = None,
     max_aspect: Optional[float] = None,
     roi: Optional[tuple[int, int, int, int]] = None,
-) -> Optional[TileRegion]:
-    """Find the largest tile-colored, tile-shaped region in a frame.
+) -> list[TileRegion]:
+    """Find EVERY tile-colored, tile-shaped region in a frame, largest first.
 
-    Returns None if nothing large enough matches the given HSV range. The
-    shape arguments (see `is_tile_shaped`) are optional; with them, the result
-    is the largest region that PASSES the gate -- not the largest region that
-    then gets rejected -- so a sandal bigger than a real tile cannot hide it.
+    Returning all of them (not just the biggest) is what makes tile identity
+    possible: with two tiles in frame and areas within ~0.02% of each other,
+    "the largest" flips between two physically different tiles on pure noise,
+    so something downstream has to see both and keep them apart
+    (see `region_tracker.py`).
 
-    `roi` (x0, y0, x1, y1 pixels) restricts the search to the belt: anything
-    outside it is blanked from the mask. The mask stays full-frame so every
-    coordinate in the returned region is still in source-frame pixels.
+    The shape arguments (see `is_tile_shaped`) are optional; a region that
+    fails the gate is skipped, so a sandal bigger than a real tile cannot hide
+    it. `roi` (x0, y0, x1, y1 pixels) restricts the search to the belt:
+    anything outside it is blanked from the mask. The mask stays full-frame so
+    every coordinate in a returned region is still in source-frame pixels.
     """
     hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array(hsv_lower, dtype=np.uint8), np.array(hsv_upper, dtype=np.uint8))
@@ -150,21 +153,35 @@ def segment_tile(
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    regions: list[TileRegion] = []
     for contour in sorted(contours, key=cv2.contourArea, reverse=True):
         area = cv2.contourArea(contour)
         if area < min_area_px:
-            return None  # sorted descending: nothing after this is big enough
+            break  # sorted descending: nothing after this is big enough
         if not is_tile_shaped(contour, min_fill_ratio, min_aspect, max_aspect):
             continue
         x, y, w, h = cv2.boundingRect(contour)
-        return TileRegion(
-            bbox=(x, y, w, h),
-            area_px=float(area),
-            contour=contour,
-            mask=mask,
-            cropped_bgr=frame_bgr[y : y + h, x : x + w].copy(),
+        regions.append(
+            TileRegion(
+                bbox=(x, y, w, h),
+                area_px=float(area),
+                contour=contour,
+                mask=mask,
+                cropped_bgr=frame_bgr[y : y + h, x : x + w].copy(),
+            )
         )
-    return None
+    return regions
+
+
+def segment_tile(*args, **kwargs) -> Optional[TileRegion]:
+    """The largest region `segment_tiles()` finds, or None. Same arguments.
+
+    Kept for callers that only want one tile (the offline calibration scripts,
+    the model benchmark). The live pipeline uses `segment_tiles()` so it can
+    tell two tiles apart.
+    """
+    regions = segment_tiles(*args, **kwargs)
+    return regions[0] if regions else None
 
 
 def segment_from_config(frame_bgr: np.ndarray, seg_cfg: dict) -> Optional[TileRegion]:
@@ -172,10 +189,10 @@ def segment_from_config(frame_bgr: np.ndarray, seg_cfg: dict) -> Optional[TileRe
     return locate_tile(frame_bgr, seg_cfg)[0]
 
 
-def locate_tile(
+def locate_tiles(
     frame_bgr: np.ndarray, seg_cfg: dict
-) -> tuple[Optional[TileRegion], Optional[tuple[int, int, int, int]]]:
-    """`segment_tile()` driven by config.yaml's `segmentation` block, plus the
+) -> tuple[list[TileRegion], Optional[tuple[int, int, int, int]]]:
+    """`segment_tiles()` driven by config.yaml's `segmentation` block, plus the
     belt ROI it searched (None when the ROI is off), so the live worker and
     the offline video processor cannot drift apart in which keys they pass and
     the dashboard can draw the ROI.
@@ -188,9 +205,9 @@ def locate_tile(
     belt_cfg = seg_cfg.get("belt_roi")
     roi = find_belt_roi(frame_bgr, belt_cfg)
     if roi is None and roi_applies(belt_cfg):
-        return None, None
+        return [], None
 
-    region = segment_tile(
+    regions = segment_tiles(
         frame_bgr,
         hsv_lower=tuple(seg_cfg["hsv_lower"]),
         hsv_upper=tuple(seg_cfg["hsv_upper"]),
@@ -201,4 +218,12 @@ def locate_tile(
         max_aspect=seg_cfg.get("max_aspect"),
         roi=roi,
     )
-    return region, roi
+    return regions, roi
+
+
+def locate_tile(
+    frame_bgr: np.ndarray, seg_cfg: dict
+) -> tuple[Optional[TileRegion], Optional[tuple[int, int, int, int]]]:
+    """`locate_tiles()` reduced to its largest region."""
+    regions, roi = locate_tiles(frame_bgr, seg_cfg)
+    return (regions[0] if regions else None), roi

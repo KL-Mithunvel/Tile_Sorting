@@ -20,9 +20,9 @@ import numpy as np
 
 from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
-from camera.line_trigger import LineCrossingDetector
 from camera.pipeline import TileRecord, process_tile
-from camera.segmentation import TileRegion, locate_tile
+from camera.region_tracker import LineCrossingTracker
+from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
@@ -63,17 +63,16 @@ def _draw_center(frame: np.ndarray, center: tuple[float, float]) -> None:
 
 def _draw_overlay(
     frame: np.ndarray,
-    region: Optional[TileRegion],
-    grade: Optional[str] = None,
-    model_grade: Optional[str] = None,
+    tiles: list[tuple[TileRegion, Optional[int], Optional[str], Optional[str]]],
     line: Optional[dict] = None,
     fired: bool = False,
     roi: Optional[tuple[int, int, int, int]] = None,
 ) -> np.ndarray:
-    """Best-effort live-view annotation: trigger line, tile bounding box, the
-    box's centre point, and the last grade. Not part of the detection logic —
-    purely visual, so it isn't unit-tested (mirrors acoustic_node's
-    plotting.py, which is also display-only)."""
+    """Best-effort live-view annotation: belt outline, trigger line, and for
+    EVERY tile in view its box, centre point, track id and grade. `tiles` is a
+    list of (region, track_id, grade, model_grade); grade is None until that
+    tile has crossed the line. Not part of the detection logic -- purely
+    visual, so it isn't unit-tested (mirrors acoustic_node's plotting.py)."""
     annotated = frame.copy()
 
     if roi is not None:
@@ -88,27 +87,28 @@ def _draw_overlay(
             fired,
         )
 
-    if region is None:
-        return annotated
+    for region, track_id, grade, model_grade in tiles:
+        x, y, w, h = region.bbox
+        color = _OVERLAY_BAD_COLOR if grade == "Reject" else _OVERLAY_OK_COLOR
+        cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
+        _draw_center(annotated, region.center)
 
-    x, y, w, h = region.bbox
-    color = _OVERLAY_BAD_COLOR if grade == "Reject" else _OVERLAY_OK_COLOR
-    cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
-    _draw_center(annotated, region.center)
-
-    label_y = max(14, y - 8)
-    if grade:
-        cv2.putText(annotated, grade, (x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-    if model_grade:
-        cv2.putText(
-            annotated,
-            f"model: {model_grade}",
-            (x, label_y + 22),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            _CENTER_COLOR,
-            2,
-        )
+        label_y = max(14, y - 8)
+        label = grade or ""
+        if track_id is not None:
+            label = f"#{track_id} {label}".strip()
+        if label:
+            cv2.putText(annotated, label, (x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        if model_grade:
+            cv2.putText(
+                annotated,
+                f"model: {model_grade}",
+                (x, label_y + 22),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                _CENTER_COLOR,
+                2,
+            )
     return annotated
 
 
@@ -214,14 +214,18 @@ class CameraWorker:
             )
 
         self._line_cfg = config.get("trigger_line") or {}
-        self._crossing: Optional[LineCrossingDetector] = None
+        self._crossing: Optional[LineCrossingTracker] = None
         if self._mode == "line_crossing":
-            self._crossing = LineCrossingDetector(
-                position=self._line_cfg.get("position", 0.5),
-                orientation=self._line_cfg.get("orientation", "vertical"),
-                direction=self._line_cfg.get("direction", "both"),
-                hysteresis=self._line_cfg.get("hysteresis", 0.02),
-                max_step=self._line_cfg.get("max_step"),
+            self._crossing = LineCrossingTracker(
+                line=dict(
+                    position=self._line_cfg.get("position", 0.5),
+                    orientation=self._line_cfg.get("orientation", "vertical"),
+                    direction=self._line_cfg.get("direction", "both"),
+                    hysteresis=self._line_cfg.get("hysteresis", 0.02),
+                    max_step=self._line_cfg.get("max_step"),
+                ),
+                match_distance=self._line_cfg.get("match_distance", 0.15),
+                max_missed_frames=self._line_cfg.get("max_missed_frames", 3),
             )
 
         # Loaded once here, not per tile: building an ONNX session takes tens
@@ -248,8 +252,9 @@ class CameraWorker:
         # Per-run state the frame step carries from one frame to the next.
         self._seq = 0
         self._best_seen_region: Optional[TileRegion] = None
-        self._last_grade: Optional[str] = None
-        self._last_model_grade: Optional[str] = None
+        # track id (None in departure mode, which has no ids) -> (grade, model
+        # grade) for tiles already graded and still in view; drives the labels.
+        self._graded: dict[Optional[int], tuple[str, Optional[str]]] = {}
         self._seen_errors: set[str] = set()
 
     def start(self) -> None:
@@ -314,26 +319,33 @@ class CameraWorker:
         snapshot_cfg = self._config["capture_snapshots"]
         jpeg_quality = self._config["dashboard"]["jpeg_quality"]
 
-        region, belt_roi = locate_tile(frame, seg_cfg)
+        regions, belt_roi = locate_tiles(frame, seg_cfg)
+        # Largest region: what the presence debounce and departure mode use.
+        region = regions[0] if regions else None
         tile_present = region is not None
 
         # The tracker runs in both modes: it owns the presence debounce
         # and the departure count, independently of what triggers grading.
         departed = self._tracker.process_frame(tile_present)
 
-        region_to_process: Optional[TileRegion] = None
+        # (track id, region) pairs to grade this frame.
+        to_process: list[tuple[Optional[int], TileRegion]] = []
+        # Everything in view, for the overlay and the station state.
+        in_view: list[tuple[TileRegion, Optional[int]]]
 
         if self._mode == "line_crossing":
-            event = self._crossing.update(
-                region.center_normalized if region is not None else None
-            )
-            if event and region is not None:
-                # Grade THIS frame. That is the point of the line: every
-                # tile is captured at the same place in the frame, so
-                # scale, framing and motion blur are comparable between
-                # tiles in a way "whatever the last frame was" is not.
-                region_to_process = region
+            observations = self._crossing.update(regions)
+            in_view = [(o.region, o.track_id) for o in observations]
+            # Grade THIS frame, for each tile that just crossed. That is the
+            # point of the line: every tile is captured at the same place in
+            # the frame, so scale, framing and motion blur are comparable
+            # between tiles. Each tile has its own identity, so two tiles in
+            # frame can no longer be mistaken for one another.
+            to_process = [(o.track_id, o.region) for o in observations if o.crossed]
+            visible_ids = {o.track_id for o in observations}
+            self._graded = {k: v for k, v in self._graded.items() if k in visible_ids}
         else:
+            in_view = [(region, None)] if region is not None else []
             if tile_present:
                 # Keep the largest-area sighting, not just the latest one:
                 # the frame right before departure is often partially
@@ -342,17 +354,19 @@ class CameraWorker:
                 # fully visible, least-blurred picture of the tile.
                 if self._best_seen_region is None or region.area_px > self._best_seen_region.area_px:
                     self._best_seen_region = region
+            else:
+                self._graded = {}
             if departed and self._best_seen_region is not None:
-                region_to_process = self._best_seen_region
+                to_process = [(None, self._best_seen_region)]
 
-        fired = region_to_process is not None
+        fired = bool(to_process)
 
-        if fired:
+        for track_id, tile_region in to_process:
             self._state.set_station_state("processing")
             self._seq += 1
             record = process_tile(
                 seq=self._seq,
-                region=region_to_process,
+                region=tile_region,
                 canny_low=crack_cfg["canny_low"],
                 canny_high=crack_cfg["canny_high"],
                 min_crack_length_px=crack_cfg["min_crack_length_px"],
@@ -376,27 +390,24 @@ class CameraWorker:
                 else self._tracker.tile_count
             )
             self._state.record_tile(record, count)
-            self._state.set_station_state("result")
-            self._last_grade = record.grade
-            self._last_model_grade = record.model_grade
+            self._graded[track_id] = (record.grade, record.model_grade)
             self._best_seen_region = None
 
-        # Clear the labels once the tile has gone, so a result stays
-        # readable while its tile is still on screen but does not get
-        # painted onto the next tile's box.
-        if not tile_present:
-            self._last_grade = None
-            self._last_model_grade = None
+        # Station state: a result stays showing while its tile is still on
+        # screen; a tile that has not reached the line yet is "in view".
+        if not in_view:
             self._state.set_station_state("waiting")
-        elif not fired and self._last_grade is None:
-            # A tile is in view but hasn't reached the trigger yet.
+        elif fired:
+            self._state.set_station_state("result")
+        elif any(tid not in self._graded for _, tid in in_view):
             self._state.set_station_state("in_view")
+        else:
+            self._state.set_station_state("result")
 
+        tiles = [(r, tid, *self._graded.get(tid, (None, None))) for r, tid in in_view]
         annotated = _draw_overlay(
             frame,
-            region,
-            grade=self._last_grade,
-            model_grade=self._last_model_grade,
+            tiles,
             line=self._line_cfg if self._crossing is not None else None,
             fired=fired,
             roi=belt_roi,

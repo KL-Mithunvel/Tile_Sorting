@@ -45,9 +45,14 @@ under `documents/programming/`.
 - **3 logical axes** (X, Y, Z). The Y beam is driven by **two motors** — the second one
   sits in the shield's A socket and is **cloned from Y in hardware** (§4), so firmware
   only ever drives 3 STEP/DIR pairs.
-- **Open-loop steppers.** Position reference comes from **homing switches**; travel is
-  bounded by **limit switches**. No encoders in v1 (revisit only if missed steps become a
-  real problem — `pick_place_control_protocol.md` §9).
+- **Closed-loop steppers (revised 2026-10-10 — supersedes the earlier "open-loop, no
+  encoders in v1").** Every stepper (X, Y, Y-clone, Z) gets an **AS5600 I2C magnetic
+  encoder**, read through a **TCA9548A I2C mux** (all four AS5600 share address `0x36`).
+  Position reference still comes from **homing switches** and travel is bounded by
+  **limit switches** on the gantry axes. Bus problems, timing and the open mechanical
+  question (does the single-shaft motor have a rear shaft for the magnet?) are in
+  `documents/electrical/i2c_bus_plan.md`. **Nothing here is wired or built; the firmware
+  does not yet read any encoder.**
 - **End effector: vacuum cup**, single on/off. Pick success confirmed by a **vacuum
   pressure/flow sensor** (primary). Optional load cell for per-tile weight — see §7.
 
@@ -63,6 +68,8 @@ under `documents/programming/`.
 | Stepper motors | 4× **42HM48-1684** (JK42HM48-1684) NEMA 17 round-shaft — 1× X, 2× Y, 1× Z. **1.68 A/phase**, 1.8°/step (200 full steps/rev), bipolar 4-wire, **4.4 kg·cm ≈ 0.43 N·m** holding torque, ±2 % dims/weight. Note the motor's 1.68 A **exceeds the TMC2208's 1.4 A continuous** — it is run derated (§5, §8). |
 | Motor PSU | **Mean Well LRS-150-12** (owner has it) — 12 V, 12.5 A, 150 W enclosed switcher, built-in OLP (hiccup) / OVP / OTP / SCP. Well within the TMC2208 range (4.75–36 V); 12.5 A is ~3× the ~4.5 A the four drivers draw. Separate supply — **not** the UNO Q's 5 V rail (`project_charter.md` §8.2, §17). Inline ~8–10 A fuse on V+ (NFR-06); no separate breaker needed given the PSU's own OLP/SCP. *Trade-off: 12 V gives less high-speed torque headroom than 24 V — keep `MAX_FEED` conservative; a 24 V PSU or spreadCycle-via-UART is the drop-in upgrade if an axis skips only at speed (§9).* |
 | Limit switches | 3× mechanical microswitch (one per axis), wired **normally-closed to GND** (fail-safe: a broken wire reads as triggered). Internal pull-up on the MCU input. Optionally 6 (min + max per axis). |
+| Encoders (added 2026-10-10) | 4x **AS5600** magnetic encoder module (I2C, fixed address `0x36`), one per stepper (X, Y, Y-clone, Z). Needs a diametrically magnetised magnet on the shaft — **VERIFY the 42HM48-1684 has a rear shaft**. Closed-loop feedback. |
+| I2C mux (added 2026-10-10) | **TCA9548A** 8-channel I2C multiplexer (`0x70`). One channel per AS5600, one for the pickup ToF (ToF 1, VL53L1X). |
 | E-stop | Latching mushroom button, **normally-closed**. Breaks the motor-PSU feed via a contactor/relay **and** pulls an MCU input low (§5). |
 | Vacuum generator | Small 12 V diaphragm vacuum pump **or** a compressed-air venturi + solenoid valve, switched by a MOSFET/relay from one MCU output. Cup size TBD (blocked on SMTW tile size/weight). |
 | Vacuum sensor | Analog vacuum pressure sensor or a pressure switch on the cup line → one MCU input. Confirms grip before the gantry lifts. |
@@ -97,6 +104,8 @@ GPIO** — same caveat as every other unverified App Lab item in this repo
 | A1 | *(reserved)* | — | — | Shield "Hold" pin — spare (candidate: cycle-start / pause button). |
 | A2 | *(reserved)* | — | — | Shield "Resume" pin — spare. |
 | A3 | `VAC_SENSE` | input (analog) | Vacuum pressure sensor / switch | Shield "CoolEn" pin, repurposed. Read before lifting; `VACUUM_TIMEOUT` fault if grip not confirmed. |
+| A4 | `I2C_SDA` *(proposed)* | bidirectional | TCA9548A mux | Not used by the shield's fixed mapping. **VERIFY** on the board; see `i2c_bus_plan.md`. |
+| A5 | `I2C_SCL` *(proposed)* | output | TCA9548A mux | As above. |
 | A4 / A5 | I2C SDA / SCL | — | *(free)* | Not used by the shield. Available if a load cell ADC or an I2C sensor is added later. |
 | D0 / D1 | UART RX / TX | — | reserved | Do not use — MCU↔Linux / debug serial. |
 
@@ -298,6 +307,14 @@ Rule 3).
 ---
 
 ## 9. Open items
+
+- **I2C encoders + mux (added 2026-10-10)** — the pin table (§3) uses A4/A5 as I2C
+  (SDA/SCL); they are free on the shield but **VERIFY** against the board silkscreen and
+  the Qwiic connector. A GPIO is needed for the mux RESET (A1/A2 are the spare
+  candidates). See `i2c_bus_plan.md`.
+- **Two independent e-stops (added 2026-10-10)** — this node's e-stop is the shield's;
+  the Nano side has its own, upstream of its power. Confirm this e-stop also drops the
+  12 V motor supply (contactor) and does not merely signal the MCU.
 
 - **Physical pin verification** — §3 pin names still to confirm against the real UNO Q
   silkscreen. MCU confirmed as **STM32U585 / Cortex-M33** (from the SWD flash log, 2026-09-01).

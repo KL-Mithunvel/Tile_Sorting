@@ -1,6 +1,8 @@
 # UNO Q dev tooling
 
-Scripts for working against the lab Arduino UNO Q board (`arduino@172.20.10.2`,
+> **`<UNO_Q_HOST>` below** is the board's current address — the value of `UNO_Q_HOST` in `config.bat` (it was `172.20.10.3` on 2026-10-10; an older version of this file hard-coded `.2`, which `config.bat` notes was once a different device). It will change again when the board moves from the hotspot to the D-Link router (`documents/electrical/network_plan.md`).
+
+Scripts for working against the lab Arduino UNO Q board (`arduino@<UNO_Q_HOST>`,
 aarch64 Debian, hostname `KLM`) from this Windows dev machine, over its local
 hotspot connection.
 
@@ -85,12 +87,12 @@ cp tools/uno_q/secrets.bat.example tools/uno_q/secrets.bat
 ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\id_ed25519 -N '""'
 
 # Install it on the board (one password prompt)
-ssh-copy-id arduino@172.20.10.2
+ssh-copy-id arduino@<UNO_Q_HOST>
 # — or, if ssh-copy-id isn't available on Windows —
-type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh arduino@172.20.10.2 "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh arduino@<UNO_Q_HOST> "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
-After that, plain `ssh arduino@172.20.10.2` / `scp` work with no password at all —
+After that, plain `ssh arduino@<UNO_Q_HOST>` / `scp` work with no password at all —
 useful outside these scripts (e.g. VS Code Remote-SSH).
 
 ## Scripts

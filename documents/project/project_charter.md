@@ -333,6 +333,10 @@ UNO Q triggers a ball release → the ball falls under gravity and strikes the t
 same UNO Q captures the resulting sound and does the required processing (filtering,
 FFT, feature extraction) → the acoustic grade/result is sent to the master.
 
+> **Pending revision (2026-10-10, proposed):** under the shared-Pi proposal the ball
+> release would be driven by an Arduino Nano and the sound captured and processed by the
+> Raspberry Pi 5, not by "the same UNO Q". See `Automation_Architecture.md` §5.3.
+
 ### Release Mechanism (Decision, 2026-08-20): Dual-Solenoid Arm + Lock
 
 The release mechanism is now decided: **two solenoids, ARM and LOCK, driving the

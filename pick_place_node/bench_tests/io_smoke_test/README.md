@@ -74,7 +74,7 @@ README) to match reality instead of the current guess.
 ## Deploy
 
 Board connection: `tools/uno_q/` (see its README). The board must be
-reachable (`ping 172.20.10.2`).
+reachable (`ping <UNO_Q_HOST>`).
 
 ```bat
 :: 1. one-time — scaffold + register the app on the board
@@ -91,7 +91,7 @@ tools\uno_q\ssh.bat
 arduino-app-cli app restart ~/ArduinoApps/io_smoke_test -v   :: ~90 s
 ```
 
-Then open `http://172.20.10.2:5060/` (or whatever the board's current hotspot
+Then open `http://<UNO_Q_HOST>:5060/` (or whatever the board's current hotspot
 IP is — see `tools/uno_q/config.bat`) from any browser on the same WiFi.
 
 If the GUI never shows a connection (banner stays red, "Not connected to the

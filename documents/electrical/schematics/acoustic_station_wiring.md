@@ -1,5 +1,15 @@
 # Acoustic Station Wiring — ToF-Triggered Dual-Solenoid Ball-Drop Impactor
 
+> **Pending revision (2026-10-10, proposed):** the team is considering moving this
+> controller from the UNO Q to an **Arduino Nano (classic ATmega328P)** and the microphone
+> and audio analysis onto the camera **Raspberry Pi 5**, with the Nano reached over USB
+> serial. If confirmed, this whole document changes: the pin table below (a Nano has a
+> different pin map and **5 V logic**, the UNO Q is 3.3 V), the "microphone plugs into the
+> UNO Q" row, the common-ground note, and the e-stop handling (the Nano's e-stop cuts
+> power upstream). Also: the BOM below specifies a **VL53L0X**, but the owner's parts are
+> **VL53L1X** — resolve in `documents/electrical/i2c_bus_plan.md`. Nothing below has been
+> rewritten yet.
+
 Decided 2026-08-20. This resolves `project_charter.md` §6.2's open release-mechanism
 question (electromagnet vs. solenoid gate vs. servo latch): **two solenoids, one ARM +
 one LOCK, driving a gravity-drop impact.** Neither solenoid touches the tile directly —

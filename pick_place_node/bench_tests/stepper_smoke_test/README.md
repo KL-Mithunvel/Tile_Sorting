@@ -37,7 +37,7 @@ From `documents/pick_place_todo.md` §0.1–0.4 and the golden rules:
 ## Deploy
 
 Board connection: `tools/uno_q/` (see its README). The board must be reachable
-(`ping 172.20.10.2`) — it is on the owner's laptop hotspot.
+(`ping <UNO_Q_HOST>`) — it is on the owner's laptop hotspot.
 
 ```bat
 :: 1. one-time — scaffold + register the app on the board (generates its app.yaml)

@@ -79,6 +79,12 @@ Each inspection station has its own controller or compute node. These station no
           └─────────────────────────┘
 ```
 
+> **Pending revision (2026-10-10, proposed — see §5.3, §5.5, §23):** the diagram's
+> node options are out of date. The camera node is a Raspberry Pi 5 (decided 2026-09-20),
+> and the proposal puts the audio node on the **same Pi** (two services) with a Nano
+> running the striker and belt; the "or UNO Q" options above are no longer the plan.
+> The UNO Q is the pick-and-place controller only.
+
 **Camera node is first in the physical station order** (Camera → Audio → Measure, per
 `project_charter.md` §6.1 "Role as First Station"). It is the node that first announces
 a new tile to the master (presence + visual result), so that tile's record starts there;
@@ -235,6 +241,9 @@ Consequences:
   pick-and-place (step-pulse generation) both need an MCU, and only one physical UNO Q
   exists (§5.7). It stops the one board being spent on the node that least needs it.
   Pick-and-place bench bring-up currently has it.
+  *(Pending revision 2026-10-10: under the proposed shared-Pi plan in §5.3 the UNO Q
+  serves pick-and-place only, which removes the shortage — only the single board is
+  needed. Not yet confirmed by the team.)*
 
 Chosen hardware:
 
@@ -297,6 +306,58 @@ That is exactly what the UNO Q's Zephyr/STM32U585 MCU half is for. On a Pi the s
 would run in Linux userspace with no real-time guarantee, or need a separate MCU bolted
 on — which is a UNO Q, rebuilt worse.
 
+**Proposed revision (2026-10-10) — acoustic analysis moves onto the camera Pi 5; the
+real-time striker moves to an Arduino Nano.** Status: *proposed by the owner and team,
+cost-driven, not yet built or bench-tested.* This reverses the reasoning above, which kept
+acoustic on the UNO Q for its MCU half; here the MCU half is supplied by a Nano instead.
+
+* **Raspberry Pi 5 (16 GB) runs both camera and acoustic**, as **two separate systemd
+  services** (`tile-camera`, and a new acoustic service) — not one program. Separate
+  processes mean a busy camera thread can never starve the PortAudio callback and drop
+  audio blocks, and moving audio to its own compute unit later is a copy of one service,
+  not a rewrite. The Pi hosts the USB mic / audio interface (neither the Pi nor the UNO Q
+  has analog audio in).
+* **Arduino Nano (classic ATmega328P) runs the striker and the belt speed, nothing else**:
+  the ToF-triggered ARM/LOCK dual-solenoid ball-drop FSM (today's `sketch.ino`, to be
+  ported) plus **DC-motor PWM** for the conveyor. It is **not on the LAN**; it talks to the
+  Pi over **USB serial**, sending a tap event at the instant the LOCK solenoid opens
+  (replacing the UNO Q's `tapCount` bridge variable) and accepting belt-speed commands.
+  The Pi's existing pre-trigger ring buffer (`HardwareTapDetector`) absorbs USB-serial
+  latency jitter (a few ms); exact impact time can be refined from the audio onset.
+* **Encoders and limit switches are on the UNO Q** (pick-and-place node), not the Nano.
+* **Fallback / upgrade path:** if a second compute unit is bought, run the acoustic
+  service on it alone (`192.168.1.12`, `tile-audio`, see `documents/electrical/network_plan.md`);
+  the Nano then moves to that unit's USB. No other node changes.
+* **Feasibility assessment (2026-10-10):** CPU/RAM are not the constraint — audio is
+  44.1 kHz mono and the FFT/features take milliseconds; camera inference is already
+  measured (yolo26n 1.6 ms, ViT-B ~110 ms, `camera_models/cam_edge/`). The real risks:
+  1. **Physical co-location** — the CSI ribbon is short and the mic/Nano ride USB
+     (~5 m), so camera and tap stations must sit near one Pi.
+  2. **Pi fan noise and vibration next to a tap-test microphone**; mount the mic away from
+     the Pi. A Pi 5 under continuous CV needs the active cooler anyway.
+  3. **Nano headroom** — 2 KB RAM (two ToF driver instances), only two external
+     interrupts (D2/D3 — free, since the Nano's e-stop cuts power upstream rather than
+     being read by the MCU). Fine for DC PWM; a stepper belt would conflict with solenoid timing.
+  4. **Belt speed is open-loop** — PWM duty is not tiles/second and drifts with load and
+     supply. The camera trigger line, acoustic settle time and pick position all depend on
+     belt speed; closing the loop (a belt encoder on the UNO Q, or camera-measured flow)
+     is an open item.
+  5. **Belt control goes master → MQTT → Pi → serial → Nano**, so the Pi and router are in
+     the belt's control path. The Nano must stop the belt on a serial-heartbeat timeout by
+     itself; belt safety must not depend on the network.
+  6. **Single point of failure** — one Pi failure takes out two stations. Acceptable for
+     the Phase 1 lab prototype only.
+* **Code consequences (none done yet):** `acoustic_node/` leaves the App Bricks convention
+  (as `camera_node/` did on 2026-09-20 — §5.7); `sketch.ino` is ported to AVR (Nano);
+  `acoustic_node/python/main.py` is replaced by a systemd entry point plus a serial
+  tap-event reader feeding `AudioCapture.notify_tap()`; the serial message format is
+  undesigned.
+* **Sensors and I2C:** the Nano reads **two ToF sensors** (striker station, belt end);
+  both default to I2C address `0x29`, a conflict that must be resolved at boot
+  (XSHUT re-addressing recommended). Full analysis: `documents/electrical/i2c_bus_plan.md`.
+  The Nano and the UNO Q share **no hardware or wiring** (owner, 2026-10-10) — they
+  coordinate only through the Pi/master over the network.
+
 The analysis load here does not argue the other way: the runtime pipeline is an FFT,
 octave bands, decay and a handful of scalar features feeding a small classifier
 (`Acoustic_Analysis_Methods.md`), which is milliseconds of work and a few MB of working
@@ -332,13 +393,13 @@ Tile reaches acoustic station
     ↓
 Laser / ToF sensor detects tile in position
     ↓
-UNO Q triggers ball-drop release
+UNO Q triggers ball-drop release   <- 2026-10-10 proposal: a Nano does this (see above)
     ↓
 Ball strikes tile with repeatable impact energy
     ↓
 Mic / piezo / DAQ records sound
     ↓
-Audio node (same UNO Q) processes signal
+Audio node (same UNO Q) processes signal   <- 2026-10-10 proposal: the Pi 5 does this
     ↓
 Acoustic grade is sent to master
 ```
@@ -435,6 +496,47 @@ Responsibilities:
 
 The motion controller should handle real-time movement. The master PC should not directly control every motor pulse or timing-critical actuator.
 
+**Proposed revision (2026-10-10): the Arduino Mega is dropped.** Its jobs are split:
+
+* **Arduino Nano (classic ATmega328P)** — conveyor **DC-motor speed (PWM)** and the
+  acoustic striker (§5.3). Reached from the master via the Pi over USB serial; not on the LAN.
+* **Arduino UNO Q (pick-and-place node, §5.6)** — **encoders and limit switches**.
+* Stoppers, servo diverter and pneumatic actuators from the list above have **no owner
+  yet** in the revised design; assign them when the node list is re-confirmed with the team.
+
+**Belt speed is open-loop** — no speed calibration and no feedback exist yet (owner,
+2026-10-10). See the feasibility notes in §5.3.
+
+**Sensing and safety layout (owner, 2026-10-10, proposed):**
+
+| Sensor | Part | Controller | Purpose |
+|---|---|---|---|
+| ToF 1 (belt, pickup point) | VL53L1X | UNO Q | "a tile is here" — starts the pickup |
+| ToF 2 (belt, striker station) | VL53L1X | Nano | triggers the striker |
+| ToF 3 (belt end, **same spot as ToF 1**) | VL53L1X | Nano | **fall prevention** — stops the belt motor when a tile reaches the end |
+| Limit switches | mechanical | UNO Q | gantry axes (3). Whether the conveyor has switches of its own is **unanswered** |
+| Encoders | AS5600 x4 via TCA9548A mux | UNO Q | on every gantry stepper (X, Y, Y-clone, Z), **I2C** |
+
+* ToF 1 and ToF 3 watch the same spot but feed two controllers that cannot talk to each
+  other. The Nano stops the belt; the UNO Q starts the pickup. Both react to the same
+  tile with no communication between them.
+* **Resume:** with no Nano-to-UNO Q link, the simple resume is that the belt restarts when
+  the tile is picked up and ToF 3 clears. A tile dropped back onto the sensor keeps the
+  belt stopped.
+* **ToF 3 must fail safe:** a dead or silent sensor must stop the belt, not read as "end
+  is clear". Mount it far enough from the belt end to cover ToF latency **plus belt coast
+  distance** — both unmeasured.
+* **Two independent e-stops, no shared wiring:** the Nano's e-stop cuts power upstream
+  of the Nano side; the UNO Q uses the CNC-shield e-stop. Pressing one leaves the other
+  half running unless they are wired to a single dual-contact button. **To confirm:**
+  the shield e-stop must also drop the 12 V motor supply (contactor), not only signal the
+  firmware (`pick_place_hardware_connections_plan.md` §1/§5).
+* Open decision: does the striker keep tapping while ToF 3 has stopped the belt?
+* Belt-speed feedback option: ToF 2 and ToF 3 a known distance apart would let the Nano
+  time a tile between them; only valid before the stop triggers.
+
+All I2C parts and the bus problems found: `documents/electrical/i2c_bus_plan.md`.
+
 ---
 
 ### 5.6 Pick-and-Place Bot Controller
@@ -446,6 +548,12 @@ and gripper sequencing). This supersedes the earlier "hardware not yet fixed" st
 Code for this node lives in `pick_place_node/` at the repo root (App Bricks folder
 convention, see §5.7 below) — currently scaffolding only, no real motion-control code
 yet. Axis count, motor/gripper hardware, and travel limits remain undecided.
+
+**Pending revision (2026-10-10):** the control approach is now **closed-loop** — an
+AS5600 I2C encoder on every stepper (X, Y, Y-clone, Z) read through a TCA9548A mux, plus
+limit switches on the gantry axes and a belt-pickup ToF (ToF 1). The earlier "open-loop,
+no encoders in v1" statement is superseded. The UNO Q is wired to the router through a USB-C
+Ethernet hub (untested). Details and I2C risks: `documents/electrical/i2c_bus_plan.md`.
 
 The pick-and-place bot receives simple commands from the master.
 
@@ -489,7 +597,8 @@ Example response:
 ### 5.7 Node Code Delivery Convention (App Bricks — UNO Q nodes only)
 
 **Decision (2026-08-03), AMENDED 2026-09-20:** every station running on an Arduino
-UNO Q — as of 2026-09-20 that is **acoustic and pick-and-place only** (§5.3, §5.6); the
+UNO Q — as of 2026-09-20 that is **acoustic and pick-and-place only** (§5.3, §5.6; the
+2026-10-10 proposal in §5.3 would leave pick-and-place alone on the UNO Q); the
 camera node moved to a Raspberry Pi 5 and left this convention, see below — gets its own
 top-level repo folder (`acoustic_node/`, `pick_place_node/`), each structured to match
 Arduino's own **App Bricks** convention (see Arduino's `app-bricks-examples` repo, e.g.
@@ -537,7 +646,7 @@ made ahead of hardware — it does not mean a board is in hand per node. `tools/
 dev tooling still targets that one UNO Q only; the Pi is deployed to separately
 (`camera_node/deploy/`).
 
-**Conveyor stays on the Arduino Mega** (§5.5) — not moved to UNO Q or the App Bricks
+**Conveyor stays on the Arduino Mega** (§5.5; *superseded in the 2026-10-10 proposal — the Mega is dropped and a Nano takes the belt*) — not moved to UNO Q or the App Bricks
 convention, since it's not an App-Lab-class board.
 
 **Control network:** unchanged from §12/§23 below — MQTT over wired Ethernet, one topic
@@ -820,7 +929,7 @@ flowchart TD
 
 ## 12. Communication Architecture
 
-For the prototype, MQTT over wired Ethernet is recommended.
+For the prototype, MQTT over wired Ethernet is recommended. *(2026-10-10: the control LAN is a D-Link router; the UNO Q is to be wired through a USB-C Ethernet hub, untested — see `documents/electrical/network_plan.md`.)*
 
 ### Recommended prototype communication stack
 
@@ -1399,7 +1508,7 @@ NumPy / SciPy
 ```text
 Raspberry Pi 5 + Pi Camera
 or USB camera connected to PC
-or Arduino UNO Q + camera
+or Arduino UNO Q + camera   (not the plan: camera is a Pi 5, §5.2)
 ```
 
 ---
@@ -1432,7 +1541,7 @@ Optional camera-based dimension measurement
 ### Conveyor Controller
 
 ```text
-Arduino Mega
+Arduino Mega   (2026-10-10 proposal: Arduino Nano, see §5.5)
 ESP32
 Arduino UNO Q
 PLC for future version
@@ -1507,6 +1616,23 @@ Camera Node  Audio Node  Measure Node  Conveyor Ctrl  Robot Ctrl
 
 Wired Ethernet is preferred over Wi-Fi for reliability.
 
+**Proposed revision (2026-10-10):** the network is a **D-Link DIR-825 (stock firmware),
+isolated LAN, no uplink**, subnet `192.168.1.0/24` (router `192.168.1.1`), every node on a
+router DHCP reservation. Under the revised compute plan (§5.3, §5.5) the layout becomes:
+
+```text
+Master PC          192.168.1.10   MQTT broker, dashboard (:8000)
+Raspberry Pi 5     192.168.1.11   camera (:5000) + acoustic services, USB: mic, camera, Nano
+UNO Q              192.168.1.15   pick-and-place; encoders + limit switches
+(reserved)         192.168.1.12   future separate audio unit
+(reserved)         192.168.1.13   measurement node, undecided
+(unused)           192.168.1.14   was the Mega; no longer in the design
+Arduino Nano       no IP          striker + belt PWM, USB serial to the Pi
+```
+
+Full address/port table, router setup steps, dual-network Pi routing, time-sync problem
+and open items: `documents/electrical/network_plan.md`.
+
 ---
 
 ## 24. Industrial Version Mapping
@@ -1540,12 +1666,12 @@ Master PC:
 - Robot command generator
 
 Camera Node:
-- Raspberry Pi / UNO Q / USB camera
+- Raspberry Pi 5 (decided 2026-09-20) / USB camera
 - OpenCV processing
 - Sends visual grade
 
 Acoustic Node:
-- Raspberry Pi / PC / DAQ
+- Raspberry Pi / PC / DAQ   (2026-10-10 proposal: shares the camera Pi 5; striker on a Nano, §5.3)
 - Mic or piezo input
 - FFT and feature extraction
 - Sends acoustic grade
@@ -1556,7 +1682,7 @@ Measurement Node:
 - Sends dimension grade
 
 Conveyor Controller:
-- Arduino / ESP32 / UNO Q
+- Arduino / ESP32 / UNO Q   (2026-10-10 proposal: Arduino Nano, §5.5; the Mega is dropped)
 - Entry sensor
 - Encoder
 - Station triggers

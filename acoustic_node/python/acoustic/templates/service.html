@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Station — Service</title>
+<style>
+  :root { --bg:#0e1116; --panel:#171c24; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3;
+    --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:16px; }
+  h1 { font-size:20px; margin:0 0 4px; } h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 10px; }
+  a { color:var(--accent); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; margin-top:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; min-width:0; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+  button,select { font:inherit; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); cursor:pointer; }
+  select { max-width:100%; min-width:0; flex:1; }
+  button:disabled,select:disabled { opacity:.45; cursor:not-allowed; }
+  button.on { border-color:var(--ok); color:var(--ok); }
+  .meter { height:18px; background:#0e1116; border:1px solid var(--line); border-radius:9px; position:relative; overflow:hidden; flex:1; min-width:160px; }
+  .meter i { position:absolute; left:0; top:0; bottom:0; background:var(--ok); width:0; }
+  .meter u { position:absolute; top:0; bottom:0; width:2px; background:var(--warn); }
+  canvas { width:100%; height:150px; background:#0e1116; border:1px solid var(--line); border-radius:8px; display:block; }
+  table { border-collapse:collapse; width:100%; } td { padding:3px 6px; border-bottom:1px solid var(--line); }
+  td:first-child { color:var(--muted); width:45%; }
+  .lv-ok { color:var(--ok); } .lv-warn { color:var(--warn); } .lv-fail { color:var(--fail); }
+  #msg { min-height:1.4em; color:var(--warn); }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<h1>Tile station — service</h1>
+<div class="muted"><a href="/">Run view</a> · <span id="ctlnote"></span></div>
+<div id="msg"></div>
+
+<div class="grid">
+  <section class="card">
+    <h2>Microphone</h2>
+    <div class="row"><div class="meter"><i id="lvl"></i><u id="thr"></u></div><span id="lvlTxt">–</span></div>
+    <div class="row"><select id="device"></select><button id="setDev">Use this microphone</button></div>
+    <table id="micTbl"></table>
+    <div class="muted" style="margin-top:6px">Calibrate: watch the level while the line runs with no tap, then set
+    <code>trigger.rms_threshold</code> just above the idle level (rms mode).</div>
+  </section>
+
+  <section class="card">
+    <h2>Decision settings</h2>
+    <div class="row"><button id="vote">Sound vote: …</button>
+      <span class="muted">off = sound is recorded and shown, never changes a grade</span></div>
+    <div class="row"><button id="hold">Hold-all: …</button>
+      <span class="muted">send every tile to the manual bin</span></div>
+    <div class="row"><button id="sim">Simulate tap</button>
+      <span class="muted">hardware / simulated trigger modes only</span></div>
+    <table id="setTbl"></table>
+  </section>
+
+  <section class="card">
+    <h2>Last tap — waveform</h2><canvas id="wave" width="600" height="150"></canvas>
+    <h2 style="margin-top:12px">Spectrum (50 Hz – 10 kHz, log)</h2><canvas id="spec" width="600" height="150"></canvas>
+  </section>
+
+  <section class="card">
+    <h2>Last tap — measurements</h2>
+    <table id="tapTbl"></table>
+  </section>
+
+  <section class="card">
+    <h2>Health</h2>
+    <table id="healthTbl"></table>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function td(a, b, cls) { const tr = document.createElement("tr"); const x = document.createElement("td"); x.textContent = a;
+  const y = document.createElement("td"); y.textContent = b == null ? "—" : String(b); if (cls) y.className = cls; tr.append(x, y); return tr; }
+function fill(tbl, rows) { tbl.replaceChildren(...rows); }
+let controls = false, voteOn = false, holdOn = false;
+
+async function post(url, body) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  $("msg").textContent = r.ok ? "" : (j.error || ("request failed: " + r.status));
+  return r.ok;
+}
+
+function draw(canvas, ys, color) {
+  const c = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+  c.clearRect(0, 0, w, h); c.strokeStyle = color; c.lineWidth = 1.5; c.beginPath();
+  if (!ys.length) return;
+  const mx = Math.max(...ys.map(Math.abs), 1e-9);
+  ys.forEach((v, i) => { const x = i / (ys.length - 1 || 1) * w, y = h / 2 - v / mx * (h / 2 - 4); i ? c.lineTo(x, y) : c.moveTo(x, y); });
+  c.stroke();
+}
+function drawSpec(canvas, mags) {
+  const c = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+  c.clearRect(0, 0, w, h); c.fillStyle = "#58a6ff";
+  const n = mags.length; mags.forEach((m, i) => { const bw = w / n; c.fillRect(i * bw, h - m * (h - 4), Math.max(1, bw - 1), m * (h - 4)); });
+}
+
+async function refresh() {
+  const st = await (await fetch("/api/station", {cache: "no-store"})).json();
+  controls = st.controls; voteOn = st.settings.vote_enabled; holdOn = st.settings.hold_all;
+  $("ctlnote").textContent = controls ? "controls enabled" : "controls are DISABLED (station.dashboard.controls_enabled: false) — read only";
+  for (const id of ["vote","hold","sim","setDev","device"]) $(id).disabled = !controls;
+  $("vote").textContent = "Sound vote: " + (voteOn ? "ON" : "OFF"); $("vote").classList.toggle("on", voteOn);
+  $("hold").textContent = "Hold-all: " + (holdOn ? "ON" : "OFF"); $("hold").classList.toggle("on", holdOn);
+  fill($("healthTbl"), Object.entries(st.health).map(([k, v]) => td(k, v.level + " — " + v.detail, "lv-" + v.level)));
+  fill($("setTbl"), [td("min. sound confidence", st.settings.min_confidence), td("max wait for a tap (s)", st.settings.max_wait_s),
+    td("UNO Q ack required", st.settings.require_ack), td("tiles seen / taps heard", st.counters.tiles + " / " + st.counters.taps),
+    td("orphan taps / ignored sounds", st.counters.orphan_taps + " / " + (st.counters.ignored_taps || 0)),
+    td("timeouts", st.counters.timeouts), td("queue to UNO Q", st.outbox_depth)]);
+  fill($("micTbl"), [td("trigger mode", st.mic.mode), td("device", st.mic.device == null ? "system default" : st.mic.device),
+    td("open", st.mic.open + (st.mic.error ? " — " + st.mic.error : ""))]);
+}
+
+async function level() {
+  const j = await (await fetch("/api/tap", {cache: "no-store"})).json();
+  const lv = j.level, scale = 0.2;
+  if (lv.rms != null) { $("lvl").style.width = Math.min(100, lv.rms / scale * 100) + "%"; $("lvlTxt").textContent = lv.rms.toFixed(4); }
+  $("thr").style.display = lv.rms_threshold == null ? "none" : "block";
+  if (lv.rms_threshold != null) $("thr").style.left = Math.min(100, lv.rms_threshold / scale * 100) + "%";
+  const t = j.tap;
+  if (!t) return;
+  draw($("wave"), t.waveform, "#2fbf71"); drawSpec($("spec"), t.spectrum.mag || []);
+  const f = t.features;
+  fill($("tapTbl"), [td("at", new Date(t.ts * 1000).toLocaleTimeString()), td("bound to tile", t.tile_id || "none (ignored / orphan)"),
+    td("valid strike", f.valid + (f.reason_invalid ? " — " + f.reason_invalid : ""), f.valid ? "lv-ok" : "lv-fail"),
+    td("peak frequency (Hz)", f.peak_frequency_hz), td("spectral centroid (Hz)", f.centroid_hz),
+    td("peak amplitude", f.peak_amplitude), td("SNR (dB)", f.snr_db), td("decay to −20 dB (s)", f.decay_t20_s),
+    td("sound grade", f.grade || "none (no reference)")]);
+}
+
+async function loadDevices() {
+  const j = await (await fetch("/api/audio/devices")).json();
+  const sel = $("device"); sel.replaceChildren();
+  const d0 = document.createElement("option"); d0.value = ""; d0.textContent = "(system default)"; sel.appendChild(d0);
+  for (const d of j.devices) { const o = document.createElement("option"); o.value = d.name; o.textContent = d.index + ": " + d.name + " (" + d.channels + " ch)"; sel.appendChild(o); }
+}
+
+$("vote").onclick = () => post("/api/control/vote", {enabled: !voteOn}).then(refresh);
+$("hold").onclick = () => post("/api/control/hold_all", {enabled: !holdOn}).then(refresh);
+$("sim").onclick = () => post("/api/control/simulate_tap");
+$("setDev").onclick = () => { const v = $("device").value; if (v) post("/api/audio/device", {device: v}).then(refresh); };
+
+loadDevices(); refresh(); level();
+setInterval(refresh, 1000); setInterval(level, 250);
+</script>
+</body>
+</html>

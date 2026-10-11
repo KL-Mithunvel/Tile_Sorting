@@ -68,3 +68,81 @@ tap_mechanism:
   arm_settle_s: 0.15   # wait after arm retracts, before releasing
   lock_pulse_s: 0.1    # LOCK solenoid energized: latch open, ball free-falls onto tile
   cooldown_s: 1.0       # minimum time before the next tile can arm a new cycle
+
+# ---------------------------------------------------------------------------
+# Station block: the Pi's tile-decision service (acoustic.live_station).
+# Read by acoustic/station.py and fusion/*. The older live_monitor tool ignores
+# it. Design and message contract: documents/programming/station_coordination.md
+# ---------------------------------------------------------------------------
+station:
+  # The broker runs ON THE PI, so the line never depends on the master PC.
+  # The master (optional) connects to this same broker to observe and command.
+  mqtt:
+    enabled: true
+    host: "127.0.0.1"
+    port: 1883
+    client_id: "tile-acoustic"
+
+  # Every tile, both stations' results, the final grade and its delivery state.
+  # Relative to the repo root; data/ is gitignored.
+  store:
+    path: "data/station/tiles.db"
+
+  ledger:
+    # A tile that has not been tapped this long after the camera graded it is
+    # sent as Hold (or Reject if the camera already rejected it) — never guessed.
+    # Must exceed the belt's real camera->tap transit time. UNMEASURED: belt
+    # speed is open-loop. 30 s is a deliberately generous placeholder.
+    max_wait_s: 30.0
+    # A tile younger than this cannot have reached the tap station yet, so a
+    # sound heard sooner is not attributed to it. 0 = no such rule.
+    min_transit_s: 0.0
+
+  final:
+    # OFF until sound has been validated on real good/defective tiles: the
+    # tap result is recorded and shown, but never changes a grade.
+    vote_enabled: false
+    # A sound grade only counts at or above this confidence.
+    min_confidence: 0.6
+    # grade -> destination reported to the UNO Q. Names are free text.
+    bins:
+      "Grade A": "bin_1"
+      "Grade B": "bin_2"
+      "Grade C": "bin_3"
+      "Reject": "bin_4"
+      "Hold": "manual"
+
+  unoq:
+    # The UNO Q answers every final with tile/<id>/ack. With require_ack true
+    # (production) finals go out one at a time, in order, and are resent until
+    # acknowledged; with false (bench, no UNO Q yet) they are fire-and-forget.
+    require_ack: true
+    ack_timeout_s: 2.0
+    retries: 3            # unanswered attempts before the link is declared DOWN
+    max_outbox: 50
+
+  health:
+    camera_stale_s: 6.0   # camera heartbeat older than this = camera FAILED
+
+  heartbeat_s: 2.0
+  # Allow the master to send station/cmd (vote, hold_all, clear_alarms).
+  commands_enabled: true
+
+  analysis:
+    # What counts as a real strike rather than silence/noise. Provisional.
+    min_peak: 0.02        # linear amplitude (0-1)
+    min_snr_db: 20.0      # peak over the pre-trigger noise
+    min_freq_hz: 100.0
+    max_freq_hz: 12000.0
+
+  # Rule-based sound grade. null = the sound result has no grade (abstains)
+  # until a reference is derived from REAL good and defective tiles, e.g.:
+  #   reference: {peak_hz_min: 2500, peak_hz_max: 3100, max_decay_t20_s: 0.12, rule_confidence: 0.7}
+  reference: null
+
+  dashboard:
+    host: "0.0.0.0"
+    port: 5001            # network_plan.md §3.1 (camera is 5000)
+    # Production: false. The run view is read-only; the service view's switches
+    # (sound vote, hold-all, microphone choice, simulate tap) need this on.
+    controls_enabled: false

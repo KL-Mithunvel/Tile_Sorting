@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import queue
+import time
 from collections import deque
 from pathlib import Path
 from typing import Optional, Union
@@ -144,6 +145,9 @@ class AudioCapture:
         self.clip_queue: "queue.Queue[np.ndarray]" = queue.Queue()
         self._stream: Optional[sd.InputStream] = None
         self.last_rms: float = 0.0
+        # When the audio callback last ran (time.monotonic()). The station uses
+        # it to tell a live microphone from one that has gone silent/unplugged.
+        self.last_block_monotonic: Optional[float] = None
 
     def _callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         if status:
@@ -151,6 +155,7 @@ class AudioCapture:
 
         block = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
         self.last_rms = compute_rms(block)
+        self.last_block_monotonic = time.monotonic()
 
         clip = self._detector.process_block(block)
         if clip is not None:

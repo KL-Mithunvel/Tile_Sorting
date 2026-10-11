@@ -13,6 +13,7 @@ data/
 
 # Device credentials — never commit
 tools/uno_q/secrets.bat
+tools/pi/secrets.bat
 
 # camera_models/cam_yolo — generated dataset split, training runs, downloaded/trained weights
 camera_models/cam_yolo/dataset/

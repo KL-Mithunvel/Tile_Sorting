@@ -24,7 +24,15 @@ def _scene(config: dict) -> dict:
     return {**config["scene"], "pick_xy": mock["pick_xy"], "place_xy": mock["place_xy"]}
 
 
-def main() -> None:
+def main(argv=None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Digital twin prototype (mock gantry + WiFi dashboard).")
+    parser.add_argument("--station-host", default=None, metavar="HOST",
+                        help="Also receive tile finals from the Pi station's MQTT broker at HOST "
+                             "(shown at /api/feed; the mock gantry does not act on them yet).")
+    parser.add_argument("--station-port", type=int, default=1883)
+    args = parser.parse_args(argv)
     config = load_config()
 
     simulator = create_backend(config)
@@ -33,8 +41,18 @@ def main() -> None:
     worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"])
     worker.start()
 
+    feed = feed_bus = None
+    if args.station_host:
+        from pick_place.tile_feed import FeedClient, PahoFeedBus
+
+        feed_bus = PahoFeedBus(args.station_host, args.station_port)
+        feed = FeedClient(feed_bus)
+        feed.start()
+        feed_bus.start()
+        print(f"Receiving tile finals from the station broker at {args.station_host}:{args.station_port}.")
+
     app = create_app(state, workspace=config["workspace"], poll_interval_s=dash_cfg["poll_interval_s"],
-                     backend=simulator, scene=_scene(config), jog_steps_mm=dash_cfg["jog_steps_mm"])
+                     backend=simulator, scene=_scene(config), jog_steps_mm=dash_cfg["jog_steps_mm"], feed=feed)
     print(f"Digital twin prototype running at http://{dash_cfg['host']}:{dash_cfg['port']}/ — Ctrl+C to stop.")
 
     try:
@@ -43,6 +61,8 @@ def main() -> None:
         pass
     finally:
         worker.stop()
+        if feed_bus is not None:
+            feed_bus.stop()
 
 
 if __name__ == "__main__":

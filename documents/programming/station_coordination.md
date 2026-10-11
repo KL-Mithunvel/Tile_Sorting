@@ -98,7 +98,13 @@ All JSON, UTF-8. Topic names extend `Automation_Architecture.md` §12/§13.
 Final grades: `Grade A`, `Grade B`, `Grade C`, `Reject`, `Hold`. `destination` comes
 from `station.final.bins`.
 
-### What the UNO Q side must do (not built)
+### What the UNO Q side must do
+
+**Built 2026-10-11 as `pick_place_node/python/pick_place/tile_feed.py`** (`FinalQueue`, `FeedClient`,
+bench CLI `python -m pick_place.tile_feed --host 192.168.1.11 [--auto-pick 2]`, and
+`/api/feed` on the twin dashboard via `twin_prototype --station-host`). Tested on the laptop
+against the real coordinator; **never run on the UNO Q**, and the gantry sequencer that will
+consume `FinalQueue.start_next()` / `finish()` does not exist. It must:
 
 - Subscribe to `tile/+/final` on the **Pi's** broker (`192.168.1.11:1883`).
 - Publish `tile/<id>/ack` once it has *accepted* the tile into its queue.
@@ -106,6 +112,9 @@ from `station.final.bins`.
   `attempt`. Ack it again, act on it once.
 - Treat finals as an ordered queue — they arrive in the order tiles were decided.
 - Know that `Hold` means "put in the manual bin", not "skip".
+- Answer a message it cannot act on with `{"status":"rejected","reason":...}` (the station alarms
+  `unoq_rejected` and releases its queue); when its queue is full, **do not ack** (back-pressure — the
+  station retries and eventually shows the link as down).
 
 ## 5. Files
 

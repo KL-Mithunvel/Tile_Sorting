@@ -13,7 +13,7 @@ from pick_place.worker import SharedState
 
 
 def create_app(state: SharedState, workspace: dict, poll_interval_s: float,
-               backend=None, jog_steps_mm=(1, 10, 50), scene=None) -> Flask:
+               backend=None, jog_steps_mm=(1, 10, 50), scene=None, feed=None) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
@@ -28,6 +28,14 @@ def create_app(state: SharedState, workspace: dict, poll_interval_s: float,
     @app.route("/api/status")
     def api_status():
         return jsonify(state.status())
+
+    @app.route("/api/feed")
+    def api_feed():
+        """The tiles the Pi station has sent, in order (None when this node is
+        not connected to the station broker)."""
+        if feed is None:
+            return jsonify(connected=False, queue=None)
+        return jsonify(connected=True, queue=feed.queue.snapshot(), last_message_ts=feed.last_message_ts)
 
     @app.route("/api/config")
     def api_config():

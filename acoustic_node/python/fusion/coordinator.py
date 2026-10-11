@@ -343,6 +343,13 @@ class StationCoordinator:
             if not self._bus.publish(tile_topic(item["tile_id"], "final"), payload, qos=1):
                 item["sent_at"] = None  # broker unreachable: try again next tick
                 return
+            if self._inflight is not item:
+                # The UNO Q answered before publish() returned (an in-process
+                # bus delivers synchronously, a fast broker nearly so): the ack
+                # handler has already marked it delivered and moved on. Do not
+                # overwrite 'acked' with 'sent' or resurrect the item.
+                self._store.upsert(item["tile_id"], now, attempts=item["attempts"] + 1)
+                continue
             item["attempts"] += 1
             item["sent_at"] = now
             self._store.upsert(item["tile_id"], now, delivery="sent", attempts=item["attempts"])
@@ -363,9 +370,22 @@ class StationCoordinator:
         if tile_id is None:
             return
         now = self._clock()
+        try:
+            body = json.loads(payload) if payload else {}
+        except ValueError:
+            body = {}
+        status = body.get("status") if isinstance(body, dict) else None
         with self._lock:
             self._last_ack_ts = now
-            self._store.upsert(tile_id, now, delivery="acked", ack_ts=now)
+            if status == "rejected":
+                # The UNO Q consumed the message but cannot act on it. Release the
+                # queue (resending would be refused again) and make it loud: this
+                # tile has no pick instruction.
+                self._store.upsert(tile_id, now, delivery="rejected", ack_ts=now)
+                reason = body.get("reason", "no reason given")
+                self._alarm("unoq_rejected", f"UNO Q rejected the final for {tile_id}: {reason}", tile_id)
+            else:
+                self._store.upsert(tile_id, now, delivery="acked", ack_ts=now)
             if self._inflight is not None and self._inflight["tile_id"] == tile_id:
                 self._inflight = None
                 if self._link_down:

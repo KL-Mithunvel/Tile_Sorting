@@ -309,3 +309,15 @@ def test_an_unusable_recording_does_not_count_as_a_transit(rig):
     clock.t += 5.0
     c.on_tap({"valid": False, "grade": None, "confidence": None})
     assert c.snapshot()["transit"]["n"] == 0
+
+
+def test_uno_q_rejection_is_alarmed_but_releases_the_queue(rig):
+    clock, bus, store, c = rig
+    camera(bus, "T1")
+    camera(bus, "T2", seq=2)
+    c.on_tap(GOOD_TAP)
+    c.on_tap(GOOD_TAP)
+    bus.publish("tile/T1/ack", {"status": "rejected", "reason": "unknown bin"})
+    assert store.get("T1")["delivery"] == "rejected"
+    assert any(a["kind"] == "unoq_rejected" for a in c.snapshot()["alarms"])
+    assert [f["tile_id"] for f in finals(bus)] == ["T1", "T2"]  # T2 was released behind it

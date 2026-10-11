@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0f1216; --panel: #181d23; --line: #2a313a; --text: #e8ecf0; --muted: #8b98a5;
-    --ok: #4cd964; --warn: #f0c93d; --bad: #ff5c5c; --accent: #4aa8ff;
+    --ok: #4cd964; --warn: #f0c93d; --orange: #ff9f43; --bad: #ff5c5c; --accent: #4aa8ff;
   }
   * { box-sizing: border-box; }
   body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
@@ -25,7 +25,8 @@
   .tally { display: flex; gap: 0.6rem; }
   .tally .chip { text-align: center; min-width: 4.2rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #0f1216; border: 1px solid var(--line); }
   .tally .chip b { display: block; font-size: 1.4rem; font-variant-numeric: tabular-nums; }
-  .tally .chip.a b { color: var(--ok); } .tally .chip.b b { color: var(--warn); } .tally .chip.r b { color: var(--bad); }
+  .tally .chip.a b { color: var(--ok); } .tally .chip.b b { color: var(--warn); }
+  .tally .chip.c b { color: var(--orange); } .tally .chip.r b { color: var(--bad); }
   .spacer { flex: 1; }
   .state { padding: 0.4rem 0.9rem; border-radius: 999px; font-weight: 600; border: 1px solid var(--line); }
   .errbadge { color: var(--bad); border: 1px solid var(--bad); border-radius: 6px; padding: 0.3rem 0.7rem;
@@ -67,6 +68,8 @@
   .probs .bar { display: flex; align-items: center; gap: 0.5rem; margin: 2px 0; }
   .probs .bar i { display: block; height: 6px; background: var(--accent); border-radius: 3px; }
   .probs .bar span { width: 2.2rem; }
+  .probs .bar span.tier { width: 4.6rem; }
+  .probs .note { margin-top: 0.4rem; font-size: 0.75rem; }
 
   /* ---- table ---- */
   .table-wrap { margin-top: 1rem; overflow-x: auto; }
@@ -74,7 +77,7 @@
   th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th { color: var(--muted); font-weight: normal; }
   .grade-Reject { color: var(--bad); font-weight: bold; }
-  .grade-B { color: var(--warn); } .grade-A { color: var(--ok); }
+  .grade-B { color: var(--warn); } .grade-C { color: var(--orange); } .grade-A { color: var(--ok); }
   .badge { display: inline-block; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
   .badge-yes { background: #5c2020; } .badge-no { background: #204020; }
   .muted { color: var(--muted); font-size: 0.85em; }
@@ -95,6 +98,7 @@
     <div class="tally">
       <div class="chip a"><b id="tally-a">0</b><span class="label">Grade A</span></div>
       <div class="chip b"><b id="tally-b">0</b><span class="label">Grade B</span></div>
+      <div class="chip c"><b id="tally-c">0</b><span class="label">Grade C</span></div>
       <div class="chip r"><b id="tally-r">0</b><span class="label">Reject</span></div>
     </div>
     <div>
@@ -137,9 +141,12 @@
     <table>
       <thead>
         <tr>
-          <th>#</th><th>Time</th><th>Grade</th><th>Crack</th><th>Length (px)</th>
+          <th>#</th><th>Time</th>
+          <th title="The station's decision: the worse of the crack/corner rules and, when it was sure enough, the model.">Grade</th>
+          <th title="What the crack/corner rules alone would have graded.">Rules</th>
+          <th>Crack</th><th>Length (px)</th>
           <th>Corner</th><th>Missing area (px)</th><th>Centre</th>
-          <th title="ONNX cosmetic grade tier. Does NOT detect cracks or broken corners - the Grade column is the station's decision.">Model</th>
+          <th title="Model tier (3A/3B/4/5) and the station grade it maps to. Greyed when it was not sure enough to count. It cannot see cracks or broken corners.">Model</th>
           <th>Time (ms)</th>
         </tr>
       </thead>
@@ -169,6 +176,8 @@
     el.querySelector('.ms').textContent = ms || ' ';
   }
   const fmtMs = v => (v === null || v === undefined) ? '' : v.toFixed(1) + ' ms';
+  const short = g => g === 'Reject' ? 'Reject' : g.replace('Grade ', '');          // "Grade B" -> "B"
+  const gradeClass = g => g === 'Reject' ? 'bad' : g === 'Grade A' ? 'good' : 'warn';
 
   let shownSeq = null;
   function renderLatest(t, info) {
@@ -183,23 +192,38 @@
     $('tile-seq').textContent = 'Tile #' + t.seq;
     $('tile-time').textContent = new Date(t.timestamp * 1000).toLocaleTimeString([], {hour12: false});
 
-    setStage('st-capture', 'done good', 'OK', info.trigger === 'line_crossing' ? 'at line' : 'on exit');
+    // Captured: what was actually handed to the graders - the crop's real size and
+    // which tracked tile it was - not a constant. 'OK' used to be hardcoded here.
+    setStage('st-capture', 'done good',
+      t.crop_w ? t.crop_w + '×' + t.crop_h + ' px' : '-',
+      (info.trigger === 'line_crossing' ? 'at line' : 'on exit') + (t.track_id != null ? ' · #' + t.track_id : ''));
     setStage('st-crack', 'done ' + (t.crack_detected ? (t.crack_severity === 'major' ? 'bad' : 'warn') : 'good'),
       t.crack_detected ? t.crack_severity + ' ' + t.crack_length_px + 'px' : 'none', fmtMs(t.crack_ms));
     setStage('st-corner', 'done ' + (t.corner_broken ? 'bad' : 'good'),
       t.corner_broken ? 'broken' : 'intact', fmtMs(t.corner_ms));
+    // The model speaks in tiers (3A/3B/4/5); show the station grade it maps to, and
+    // say plainly whether that opinion counted or the model abstained.
     if (t.model_grade) {
-      setStage('st-model', 'done', t.model_grade + ' ' + Math.round(t.model_confidence * 100) + '%', fmtMs(t.model_inference_ms));
+      const mapped = t.model_station_grade ? ' → ' + short(t.model_station_grade) : '';
+      setStage('st-model', t.model_used ? 'done' : 'off',
+        t.model_grade + mapped + ' ' + Math.round(t.model_confidence * 100) + '%',
+        (t.model_used ? 'counted' : 'not counted') + ' · ' + fmtMs(t.model_inference_ms));
     } else {
       setStage('st-model', 'off', info.model_enabled ? 'no result' : 'off', '');
     }
-    setStage('st-grade', 'done ' + (t.grade === 'Reject' ? 'bad' : t.grade === 'Grade B' ? 'warn' : 'good'), t.grade, '');
+    // One grade for the tile: the worse of the defect rules and (if it was sure) the model.
+    const how = t.model_used && t.grade !== t.rule_grade ? 'model lowered it' :
+                t.model_used ? 'rules + model' : 'rules only';
+    setStage('st-grade', 'done ' + gradeClass(t.grade), t.grade, how);
     $('total-ms').textContent = t.total_ms !== null ? 'Total processing time: ' + t.total_ms.toFixed(1) + ' ms' : '';
 
-    const probs = t.model_probabilities;
+    const probs = t.model_probabilities, map = info.tier_map || {};
     $('probs').innerHTML = probs ? Object.entries(probs).map(([k, v]) =>
-      `<div class="bar"><span>${k}</span><i style="width:${Math.round(v * 100)}%"></i><span>${Math.round(v * 100)}%</span></div>`
-    ).join('') : '';
+      `<div class="bar"><span class="tier">${k}${map[k] ? ' → ' + short(map[k]) : ''}</span>` +
+      `<i style="width:${Math.round(v * 100)}%"></i><span>${Math.round(v * 100)}%</span></div>`
+    ).join('') + (info.model_min_confidence != null
+      ? `<div class="note">The model only counts at ≥ ${Math.round(info.model_min_confidence * 100)}% confidence; below that the crack/corner rules decide alone.</div>`
+      : '<div class="note">Model is display-only: it does not affect the grade.</div>') : '';
   }
 
   async function refresh() {
@@ -210,9 +234,10 @@
 
       $('tile-count').textContent = data.tile_count;
       const tl = data.tally || {};
-      const a = tl['Grade A'] || 0, b = tl['Grade B'] || 0, r = tl['Reject'] || 0;
-      $('tally-a').textContent = a; $('tally-b').textContent = b; $('tally-r').textContent = r;
-      const graded = a + b + r;
+      const a = tl['Grade A'] || 0, b = tl['Grade B'] || 0, c = tl['Grade C'] || 0, r = tl['Reject'] || 0;
+      $('tally-a').textContent = a; $('tally-b').textContent = b; $('tally-c').textContent = c;
+      $('tally-r').textContent = r;
+      const graded = a + b + c + r;
       $('reject-pct').textContent = graded ? Math.round(100 * r / graded) + '%' : '-';
 
       // A station that is failing frame after frame must say so; otherwise it
@@ -243,12 +268,15 @@
         // was measured at 82.9% on a 76-image val set, so a bare label reads
         // as more certain than it is.
         const model = t.model_grade
-          ? `${t.model_grade} <span class="muted">${Math.round(t.model_confidence * 100)}%</span>`
+          ? `<span class="${t.model_used ? '' : 'muted'}">${t.model_grade}` +
+            `${t.model_station_grade ? ' → ' + short(t.model_station_grade) : ''}</span> ` +
+            `<span class="muted">${Math.round(t.model_confidence * 100)}%</span>`
           : '-';
         return `<tr>
           <td>${t.seq}</td>
           <td>${new Date(t.timestamp * 1000).toLocaleTimeString([], {hour12: false})}</td>
           <td class="grade-${t.grade.replace('Grade ', '')}">${t.grade}</td>
+          <td class="muted">${t.rule_grade ? short(t.rule_grade) : '-'}</td>
           <td>${crack}</td>
           <td>${t.crack_detected ? t.crack_length_px : '-'}</td>
           <td>${corner}</td>

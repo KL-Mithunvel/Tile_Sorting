@@ -128,3 +128,24 @@ class TestConfig:
     def test_options_pass_through(self):
         opts = grading_options({"grading": {"tier_map": TIER_MAP, "model_min_confidence": 0.7}}, Model("3A", 1))
         assert opts == {"tier_map": TIER_MAP, "model_min_confidence": 0.7}
+
+
+class TestCapturedStageIsRealData:
+    """The dashboard's "Captured" box used to be the constant text 'OK'. It now
+    reads the size of the crop that was really graded and the track it came from."""
+
+    def test_dict_reports_the_real_crop_size(self):
+        d = tile_record_to_dict(run())
+        assert (d["crop_w"], d["crop_h"]) == (120, 120)
+
+    def test_dict_reports_the_track_id_when_set(self):
+        r = run()
+        r.track_id = 7
+        assert tile_record_to_dict(r)["track_id"] == 7
+        assert tile_record_to_dict(run())["track_id"] is None
+
+    def test_a_record_without_pixels_does_not_crash_the_dict(self):
+        r = run()
+        r.tile_bgr = None
+        d = tile_record_to_dict(r)
+        assert d["crop_w"] is None and d["crop_h"] is None

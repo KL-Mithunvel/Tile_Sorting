@@ -63,6 +63,11 @@ class TileRecord:
     model_station_grade: Optional[str] = None  # the model's tier mapped to a station grade
     model_used: bool = False  # True when the model's tier actually fed `grade`
 
+    # Identity of the tile the line-crossing tracker followed (None in
+    # departure mode, which has no ids). Not the same as `seq`: ids are
+    # per-track and can skip numbers; seq counts graded tiles.
+    track_id: Optional[int] = None
+
 
 # Best -> worst. Every grade the station can output, in one vocabulary, so the
 # rule-based decision (measured defects) and the model's cosmetic tier
@@ -242,6 +247,11 @@ def tile_record_to_dict(record: TileRecord) -> dict:
         "seq": record.seq,
         "timestamp": record.timestamp,
         "grade": record.grade,
+        "track_id": record.track_id,
+        # Size of the image the graders actually received (None when a record
+        # carries no pixels, e.g. in tests).
+        "crop_w": int(record.tile_bgr.shape[1]) if record.tile_bgr is not None else None,
+        "crop_h": int(record.tile_bgr.shape[0]) if record.tile_bgr is not None else None,
         "rule_grade": record.rule_grade,
         "model_station_grade": record.model_station_grade,
         "model_used": record.model_used,

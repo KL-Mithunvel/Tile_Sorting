@@ -30,6 +30,7 @@ log = logging.getLogger(__name__)
 
 _OVERLAY_OK_COLOR = (0, 200, 0)  # BGR
 _OVERLAY_BAD_COLOR = (0, 0, 220)
+_OVERLAY_WARN_COLOR = (0, 165, 255)  # amber: Grade B / Grade C
 _LINE_COLOR = (0, 200, 255)  # amber — the armed trigger line
 _LINE_FIRED_COLOR = (255, 255, 255)  # flashes white on the frame that fires
 _CENTER_COLOR = (255, 120, 0)
@@ -89,7 +90,11 @@ def _draw_overlay(
 
     for region, track_id, grade, model_grade in tiles:
         x, y, w, h = region.bbox
-        color = _OVERLAY_BAD_COLOR if grade == "Reject" else _OVERLAY_OK_COLOR
+        color = (
+            _OVERLAY_BAD_COLOR if grade == "Reject"
+            else _OVERLAY_WARN_COLOR if grade in ("Grade B", "Grade C")
+            else _OVERLAY_OK_COLOR
+        )
         cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
         _draw_center(annotated, region.center)
 
@@ -240,6 +245,9 @@ class CameraWorker:
             {
                 "trigger": self._mode,
                 "model_enabled": self._model is not None,
+                # None when the model is display-only (no model or no tier map).
+                "model_min_confidence": self._grading_opts.get("model_min_confidence"),
+                "tier_map": self._grading_opts.get("tier_map"),
                 "line_position": self._line_cfg.get("position")
                 if self._mode == "line_crossing"
                 else None,
@@ -384,6 +392,7 @@ class CameraWorker:
                 trigger=self._mode,
                 **self._grading_opts,
             )
+            record.track_id = track_id
             if snapshot_cfg["enabled"]:
                 path = save_tile_snapshot(record, resolve_output_dir(self._config))
                 record.snapshot_path = str(path)

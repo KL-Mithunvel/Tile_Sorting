@@ -45,7 +45,12 @@ point (a thin shim over `camera.live_dashboard.main()`), not an App Lab `App.run
   `camera_node/python` to `sys.path`).
 - `camera/capture.py`'s **`PiCameraCapture` has never run** — written 2026-09-20 against
   the Picamera2 API, with no CSI module attached. `WebcamCapture` is the only live
-  backend that has been exercised at all, and only on a Windows laptop.
+  backend that has been exercised at all, and only on a Windows laptop - its built-in webcam
+  (1080p @ 30 fps, recording and replay verified 2026-10-11) and five real belt videos in
+  `data/videos/`.
+- **None of the quality checks is validated.** Crack, corner and the grade model have never been
+  compared with human-checked labels; see Known limitations and
+  `documents/programming/camera_node_handover.md`.
 - `deploy/` has never run. See `deploy/README.md`.
 
 ## Capture backends
@@ -282,9 +287,14 @@ conveyor's authoritative encoder-based tracking (see Known Limitations below).
 - **Exposure/white-balance locking is not done.** Until `camera.picamera2.controls` is
   set for the real enclosure lighting, the calibrated HSV range can drift tile to tile —
   a failure mode the laptop webcam pointed at a desk never showed.
-- **No load test on Pi hardware.** `target_fps: 15` with per-frame segmentation and JPEG
-  re-encoding has never been measured on a Pi 5, with or without a kiosk browser also
-  consuming the MJPEG stream.
+- **No load test on Pi hardware.** On the dev laptop the whole per-frame pipeline at 1080p
+  measures 24 ms (41 fps); it has never been measured on a Pi 5, with or without a kiosk
+  browser also consuming the MJPEG stream.
+- **Crack and corner results are unvalidated and visibly off on real tiles.** On the real
+  belt videos the crack check flags roughly a third of intact-looking tiles (and reads the
+  embossed back of a tile as cracks), and the corner check misses visibly chipped tiles until
+  the chip is ~5 in. Label tiles with the review sheet (`development/README.md`) before
+  trusting or tuning either.
 - **Crack "type" here means severity (minor/major) + length**, not a fine-grained
   taxonomy (hairline vs. structural, edge vs. center). Distinguishing crack types more
   precisely needs real labeled photos to design against.

@@ -29,7 +29,16 @@ import time
 from typing import Callable, Optional
 
 from acoustic.tap_protocol import encode_belt, encode_ping, encode_strike, parse_line
-from fusion.transport import TOPIC_ALARM, TOPIC_BELT, TOPIC_NANO_STATUS, TOPIC_STRIKE, TOPIC_TAP, Bus
+from fusion.transport import (
+    TOPIC_ALARM,
+    TOPIC_BELT,
+    TOPIC_DIAG_PING,
+    TOPIC_NANO_STATUS,
+    TOPIC_STRIKE,
+    TOPIC_TAP,
+    Bus,
+    diag_pong_topic,
+)
 
 log = logging.getLogger(__name__)
 
@@ -158,6 +167,25 @@ class TapBridge:
             return
         self._write(encode_strike(enabled))
 
+    def _on_diag_ping(self, topic: str, payload: bytes) -> None:
+        """Answer for the Nano: `ok` only if the serial link is really alive
+        (a valid line from the Nano within stale_s), not merely if this bridge
+        process is."""
+        try:
+            probe = json.loads(payload) if payload else {}
+        except ValueError:
+            probe = {}
+        now = self._clock()
+        with self._lock:
+            link = self._last_rx is not None and now - self._last_rx <= self._stale_s
+            detail = {"link": link, "fw": self._fw, "belt_pct": self._belt_pct, **self._tof, **self.counters}
+        self._bus.publish(
+            diag_pong_topic("nano"),
+            {"id": probe.get("id") if isinstance(probe, dict) else None, "node": "nano", "ts": now, "ok": link,
+             "detail": detail},
+            qos=0,
+        )
+
     def _write(self, data: bytes) -> None:
         try:
             self._ser.write(data)
@@ -174,6 +202,7 @@ class TapBridge:
     def start(self) -> None:
         self._bus.subscribe(TOPIC_BELT, self._on_belt)
         self._bus.subscribe(TOPIC_STRIKE, self._on_strike)
+        self._bus.subscribe(TOPIC_DIAG_PING, self._on_diag_ping)
         self._running = True
         self._thread = threading.Thread(target=self._loop, name="nano-bridge", daemon=True)
         self._thread.start()

@@ -94,6 +94,8 @@ All JSON, UTF-8. Topic names extend `Automation_Architecture.md` §12/§13.
 | `station/status` | station → master | 0 / **retained**, last-will `{"state":"offline"}` | `state, state_detail, health{}, awaiting_count, settings{}, tally{}, counters{}` |
 | `station/cmd` | master → station | — | `{"cmd":"vote","enabled":bool}`, `{"cmd":"hold_all","enabled":bool}`, `{"cmd":"clear_alarms"}` |
 | `machine/alarm` | station → master | 1 / no | `ts, level, kind, message, tile_id` |
+| `station/diag/ping` | `diagnose.sh` / `system.sh` → all | 0 / no | `{"id": ...}` — **never a tile**: answering it cannot create a pick job |
+| `station/diag/pong/<node>` | each running node → asker | 0 / no | `{id, node, ts, ok, detail}`; nodes: `station`, `camera`, `gantry` (UNO Q feed), `nano` (serial bridge — `ok` only if the Nano itself spoke recently), `master` |
 
 Final grades: `Grade A`, `Grade B`, `Grade C`, `Reject`, `Hold`. `destination` comes
 from `station.final.bins`.
@@ -138,30 +140,59 @@ consume `FinalQueue.start_next()` / `finish()` does not exist. It must:
 Config: `acoustic_node/python/acoustic/config.yaml` → `station:`; camera →
 `camera_node/python/camera/config.yaml` → `mqtt:`.
 
-## 6. Bring-up checklist (on the Pi, in this order)
+## 6. Bring-up (scripts; Windows launchers in `tools/pi/`)
 
-1. `./acoustic_node/deploy/install_pi.sh` (apt packages, mosquitto, systemd unit).
-2. `mosquitto_sub -h localhost -t '#' -v` in one terminal — keep it open; it shows everything.
-3. Run `python development/fake_station_peers.py --host localhost` and
-   `python -m acoustic.live_station` (controls on: `--controls`). Confirm: tiles appear,
-   taps bind, finals publish, acks return, health strip all green. Then `--no-ack` and
-   watch the no-ack alarm and FAULT.
-4. Plug in the microphone **on a different USB controller/port from the camera**;
-   `python -m acoustic.live_station --list-devices`; pin it **by name** in
-   `acoustic/config.yaml` (`audio.device`, indices change between boots).
-5. Mount the microphone away from the Pi's fan. Open the service view; read the idle
-   level; set `trigger.rms_threshold` just above it (rms mode).
-6. Set `mqtt.enabled: true` in the camera config; restart `tile-camera`. The camera chip
-   in the run view should go green with a live source.
-7. Tap a tile by hand with a real camera tile in view: the row should go
-   camera → sound → final. Check the tap's waveform in the service view looks like a strike.
-8. Only then consider `trigger.mode: hardware` (needs the Nano bridge publishing
-   `station/tap`) and, much later, `final.vote_enabled`.
-9. Kiosk: `./acoustic_node/deploy/kiosk/install_kiosk.sh` (Chromium fullscreen on
-   `http://localhost:5001/`), then log out and in. Check which autostart file your image honours.
-10. UNO Q: `python -m pick_place.tile_feed --host 192.168.1.11 --auto-pick 2` — confirm finals arrive,
-    are acknowledged once, and the run view's UNO Q chip goes green.
-11. Master PC (optional): `python -m master.live_master --host 192.168.1.11`.
+Everything below runs on the Pi from `acoustic_node/deploy/`; from the laptop each has a
+`tools/pi/station_*.bat` that pushes the code and runs it over SSH. **None of it has run on
+the Pi.** The laptop must be on the D-Link LAN (Ethernet in) first.
+
+| Step | On the Pi | From the laptop | What it tells you |
+|---|---|---|---|
+| 0 | | `station_push.bat` | copies camera_node, acoustic_node, fake peers |
+| 1 | `install_pi.sh` | `station_install.bat` | apt packages, **mosquitto**, `tile-acoustic` unit, `--mqtt` drop-in on `tile-camera` (install the camera first) |
+| 2 | `selftest.sh [sec]` | `station_test.bat` | **software chain** against the real broker with synthetic mic + fake camera/striker/UNO Q: finals computed, acked, recorded, transit measured. PASS/FAIL per check |
+| 3 | `status.sh` | `station_status.bat` | services, ports, USB topology (**mic and camera on different controllers**), audio inputs, serial ports, thermal |
+| 4 | `system.sh start --no-unoq` | `station_start.bat --no-unoq` | **in-sync start**: broker → station (HELD) → camera → every required node must answer → release hold. Any silent node = the line stays held |
+| 5 | `diagnose.sh` | `station_diag.bat` | network (ping) → ports → *programs answering* (diagnostic ping) → each station's own view. Exit 1 + a numbered fix list on any problem |
+| 6 | `system.sh start --belt 40` | `station_start.bat --belt 40` | full system once the UNO Q feed runs (`--with-nano` once the Nano is wired) |
+| – | `system.sh stop [--services]` | `station_stop.bat` | belt 0 %, striker inhibited, line held |
+
+### Manual details the scripts cannot do for you
+
+1. Plug the microphone into a **different USB controller/port from the camera**
+   (`status.sh` prints `lsusb -t`); pin it **by name** in `acoustic/config.yaml`
+   (`audio.device`, indices change between boots; `python -m acoustic.live_station --list-devices`).
+2. Mount the microphone away from the Pi's fan. Read the idle level on the service view and
+   set `trigger.rms_threshold` just above it (rms mode).
+3. A real hand tap on a real tile with the camera watching: the row should go
+   camera → sound → final; the waveform on the service view should look like a strike.
+4. Only then `trigger.mode: hardware` (needs the Nano bridge) and, much later,
+   `final.vote_enabled`.
+5. Kiosk: `acoustic_node/deploy/kiosk/install_kiosk.sh`, then log out and in.
+6. UNO Q: `python -m pick_place.tile_feed --host 192.168.1.11 --auto-pick 2`; `diagnose.sh`
+   should then show **gantry** answering.
+7. Master PC (optional): `python -m master.live_master --host 192.168.1.11`.
+
+### What "in sync" means
+
+`system.sh start` never lets a half-started line sort tiles. The station comes up **holding**
+every tile (they go to the manual bin) and the belt is not started; only when the station,
+the camera, and (unless `--no-unoq`) the UNO Q feed have each *answered a diagnostic ping and
+reported ok* is the hold released and the belt set, in one step. This is start-up
+sequencing, **not clock synchronisation** — cross-node time (no NTP on the isolated LAN) is
+still an open TODO.
+
+### Diagnostic layers (`diagnose.sh`)
+
+1. **network** — ping router, Pi, UNO Q, master.
+2. **ports** — 1883 broker, 5000 camera GUI, 5001 station GUI (UNO Q ssh and master are optional).
+3. **answers** — a diagnostic ping through the broker; a node is up only if the *running
+   program* replied. `unwell` = it answered but reports a problem (camera on a file
+   replay, Nano link silent, station in FAULT).
+4. **stations** — the station's state, tally, alarms, measured transit; the camera's source.
+
+Run from a laptop in Git Bash with `--pi 192.168.1.11` (needs `python` + `paho-mqtt`; set
+`TILE_PY` to a specific interpreter if `python3` is a Windows Store stub).
 
 ## 7. What is and is not verified
 

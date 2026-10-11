@@ -74,6 +74,20 @@ class MasterCollector:
     def attach(self, bus) -> None:
         for f in ("tile/#", "station/#", "machine/alarm"):
             bus.subscribe(f, self.handle_message)
+        bus.subscribe("station/diag/ping", lambda topic, payload: self._answer_ping(bus, payload))
+
+    def _answer_ping(self, bus, payload: bytes) -> None:
+        try:
+            probe = json.loads(payload) if payload else {}
+        except ValueError:
+            probe = {}
+        now = self._clock()
+        bus.publish(
+            "station/diag/pong/master",
+            {"id": probe.get("id") if isinstance(probe, dict) else None, "node": "master", "ts": now, "ok": True,
+             "detail": {"messages": self.counters["messages"], "station_seen": self.station_status is not None}},
+            qos=0,
+        )
 
     def handle_message(self, topic: str, payload: bytes, now: Optional[float] = None) -> None:
         now = self._clock() if now is None else now

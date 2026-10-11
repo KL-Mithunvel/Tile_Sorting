@@ -31,6 +31,15 @@ TOPIC_STATUS = "station/status"
 TOPIC_CMD = "station/cmd"
 TOPIC_TAP = "station/tap"  # a bridge (the Nano's serial reader, later) publishes here
 TOPIC_ALARM = "machine/alarm"
+# Diagnostics: anyone publishes {"id": ...} on TOPIC_DIAG_PING and every node that is
+# alive answers on station/diag/pong/<node> with its own id, name and a short status.
+# A pong is a real answer from the running program, not just "the port is open".
+TOPIC_DIAG_PING = "station/diag/ping"
+
+
+def diag_pong_topic(node: str) -> str:
+    return f"station/diag/pong/{node}"
+
 TOPIC_NANO_STATUS = "station/nano/status"  # the serial bridge: Nano link alive, belt %, ToF ok
 TOPIC_BELT = "station/belt"  # {"percent": 0-100} -> bridge -> Nano (master or operator)
 TOPIC_STRIKE = "station/strike"  # {"enabled": bool} -> bridge -> Nano: allow / inhibit the striker

@@ -46,10 +46,12 @@ from fusion.transport import (
     TOPIC_ALARM,
     TOPIC_CAMERA_STATUS,
     TOPIC_CMD,
+    TOPIC_DIAG_PING,
     TOPIC_NANO_STATUS,
     TOPIC_STATUS,
     TOPIC_TAP,
     Bus,
+    diag_pong_topic,
     tile_id_from_topic,
     tile_topic,
 )
@@ -134,6 +136,7 @@ class StationCoordinator:
         self._bus.subscribe(TOPIC_CMD, self._on_cmd)
         self._bus.subscribe(TOPIC_TAP, self._on_tap_topic)
         self._bus.subscribe(TOPIC_NANO_STATUS, self._on_nano_status)
+        self._bus.subscribe(TOPIC_DIAG_PING, self._on_diag_ping)
 
     # ---- settings the operator / master may change -------------------------
 
@@ -432,6 +435,33 @@ class StationCoordinator:
         with self._lock:
             self._camera_status = data if isinstance(data, dict) else None
             self._camera_status_ts = self._clock()
+
+    def _on_diag_ping(self, topic: str, payload: bytes) -> None:
+        try:
+            probe = json.loads(payload) if payload else {}
+        except ValueError:
+            probe = {}
+        now = self._clock()
+        with self._lock:
+            snap = self._snapshot_locked(now, recent=0)
+        self._bus.publish(
+            diag_pong_topic("station"),
+            {
+                "id": probe.get("id") if isinstance(probe, dict) else None,
+                "node": "station",
+                "ts": now,
+                "ok": snap["state"] != "fault",
+                "detail": {
+                    "state": snap["state"],
+                    "state_detail": snap["state_detail"],
+                    "health": {k: v["level"] for k, v in snap["health"].items()},
+                    "awaiting": snap["awaiting_count"],
+                    "hold_all": snap["settings"]["hold_all"],
+                    "vote_enabled": snap["settings"]["vote_enabled"],
+                },
+            },
+            qos=0,
+        )
 
     def _on_nano_status(self, topic: str, payload: bytes) -> None:
         try:

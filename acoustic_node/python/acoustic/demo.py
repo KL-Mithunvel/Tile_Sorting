@@ -79,6 +79,8 @@ class FakeCameraAndStriker(threading.Thread):
     def run(self) -> None:
         if self._ack:
             self._bus.subscribe("tile/+/final", self._answer)
+        # Stand in for the camera service in the diagnostic too.
+        self._bus.subscribe("station/diag/ping", self._answer_ping)
         last_tile = 0.0
         pending: list[float] = []
         tile_count = 0
@@ -112,6 +114,19 @@ class FakeCameraAndStriker(threading.Thread):
                 pending.pop(0)
                 self._bus.publish("station/tap", {"ts": time.time(), "tile_present": True}, qos=0)
             self._halt.wait(0.25)
+
+    def _answer_ping(self, topic: str, payload: bytes) -> None:
+        import json
+
+        try:
+            pid = json.loads(payload).get("id")
+        except ValueError:
+            pid = None
+        self._bus.publish(
+            "station/diag/pong/camera",
+            {"id": pid, "node": "camera", "ts": time.time(), "ok": True, "detail": {"source_kind": "camera", "demo": True}},
+            qos=0,
+        )
 
     def _answer(self, topic: str, payload: bytes) -> None:
         tid = topic.split("/")[1]

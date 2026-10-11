@@ -36,6 +36,8 @@ from typing import Callable, Optional
 log = logging.getLogger(__name__)
 
 TOPIC_STATUS = "station/camera/status"
+DIAG_PING_TOPIC = "station/diag/ping"
+DIAG_PONG_TOPIC = "station/diag/pong/camera"
 
 
 def tile_topic(tile_id: str, leaf: str) -> str:
@@ -95,7 +97,13 @@ class _PahoBus:
         self._host, self._port, self._client_id = host, port, client_id
         self._will = (will_topic, will_payload)
         self._client = None
+        self._subs: list = []
         self.connected = False
+
+    def subscribe(self, topic_filter: str, callback) -> None:
+        self._subs.append((topic_filter, callback))
+        if self._client is not None and self.connected:
+            self._client.subscribe(topic_filter, qos=0)
 
     def start(self) -> None:
         import paho.mqtt.client as mqtt
@@ -107,7 +115,21 @@ class _PahoBus:
         c.reconnect_delay_set(min_delay=1, max_delay=10)
         c.max_queued_messages_set(200)
         c.will_set(self._will[0], json.dumps(self._will[1]), qos=1, retain=True)
-        c.on_connect = lambda *a, **k: setattr(self, "connected", True)
+        def on_connect(client, userdata, *a):
+            self.connected = True
+            for f, _ in self._subs:  # re-made on every (re)connect
+                client.subscribe(f, qos=0)
+
+        def on_message(client, userdata, msg):
+            for f, cb in self._subs:
+                if f == msg.topic:
+                    try:
+                        cb(msg.topic, bytes(msg.payload))
+                    except Exception:  # noqa: BLE001
+                        log.exception("handler for %s failed", msg.topic)
+
+        c.on_connect = on_connect
+        c.on_message = on_message
         c.on_disconnect = lambda *a, **k: setattr(self, "connected", False)
         self._client = c
         c.connect_async(self._host, self._port, keepalive=20)
@@ -156,6 +178,24 @@ class TilePublisher:
 
     # ---- lifecycle -------------------------------------------------------
 
+    def _on_ping(self, topic: str, payload: bytes) -> None:
+        try:
+            probe = json.loads(payload) if payload else {}
+        except ValueError:
+            probe = {}
+        detail = dict(self._status_source() if self._status_source else {})
+        detail.update(run_id=self.run_id, published=self.published, dropped=self.dropped)
+        live = detail.get("source_kind") == "camera" and detail.get("source_status") == "running"
+        try:
+            self._bus.publish(
+                DIAG_PONG_TOPIC,
+                {"id": probe.get("id") if isinstance(probe, dict) else None, "node": "camera",
+                 "ts": self._clock(), "ok": bool(live), "detail": detail},
+                qos=0,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("diagnostic answer failed")
+
     def start(self) -> None:
         if self._bus is None:
             self._bus = _PahoBus(
@@ -165,6 +205,8 @@ class TilePublisher:
                 will_topic=TOPIC_STATUS,
                 will_payload={"state": "offline"},
             )
+        if hasattr(self._bus, "subscribe"):
+            self._bus.subscribe(DIAG_PING_TOPIC, self._on_ping)
         try:
             self._bus.start()
         except Exception:  # noqa: BLE001 - e.g. paho not installed: keep inspecting

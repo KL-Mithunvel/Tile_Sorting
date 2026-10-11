@@ -161,6 +161,25 @@ class FeedClient:
 
     def start(self) -> None:
         self._bus.subscribe("tile/+/final", self._on_final)
+        self._bus.subscribe("station/diag/ping", self._on_diag_ping)
+
+    def _on_diag_ping(self, topic: str, payload: bytes) -> None:
+        """Diagnostic answer. Deliberately NOT a final: a diagnostic must never
+        be able to create a pick job."""
+        try:
+            probe = json.loads(payload) if payload else {}
+        except ValueError:
+            probe = {}
+        snap = self.queue.snapshot()
+        self._bus.publish(
+            "station/diag/pong/gantry",
+            {"id": probe.get("id") if isinstance(probe, dict) else None, "node": "gantry", "ts": self._clock(),
+             "ok": True,
+             "detail": {"queue_depth": snap["depth"], "active": bool(snap["active"]),
+                        "counters": snap["counters"], "last_final_ts": self.last_message_ts}},
+            qos=0,
+        )
+
 
     def _on_final(self, topic: str, payload: bytes) -> None:
         now = self._clock()

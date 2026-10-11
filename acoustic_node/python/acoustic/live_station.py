@@ -44,6 +44,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--no-mqtt", action="store_true", help="Use an in-process bus instead of the MQTT broker.")
     p.add_argument("--no-dashboard", action="store_true", help="Run without serving the GUI.")
     p.add_argument("--controls", action="store_true", help="Enable the GUI's controls for this run.")
+    p.add_argument("--trigger-mode", choices=["rms", "hardware", "simulated"], default=None,
+                   help="Override config.yaml's trigger.mode for this run.")
+    p.add_argument("--synthetic-mic", action="store_true",
+                   help="Use a synthetic microphone with the REAL broker (bring-up self-test: proves the "
+                        "software chain end to end with no microphone; implies --trigger-mode simulated).")
     return p.parse_args(argv)
 
 
@@ -59,6 +64,10 @@ def main(argv=None) -> None:
         return
 
     config = load_config()
+    if args.trigger_mode:
+        config.setdefault("trigger", {})["mode"] = args.trigger_mode
+    if args.synthetic_mic:
+        config.setdefault("trigger", {})["mode"] = "simulated"
     st_cfg = config.setdefault("station", {})
     dash_cfg = st_cfg.get("dashboard") or {}
 
@@ -84,7 +93,14 @@ def main(argv=None) -> None:
                 will=(TOPIC_STATUS, {"state": "offline"}),
             )
         db_path = Path((st_cfg.get("store") or {}).get("path", "data/station/tiles.db"))
+        if args.synthetic_mic:
+            # A self-test must not pollute the line's real record.
+            db_path = Path("data/station/selftest.db")
         store = TileStore(db_path if db_path.is_absolute() else REPO_ROOT / db_path)
+        if args.synthetic_mic:
+            from acoustic.demo import SyntheticCapture
+
+            capture_factory = lambda cfg: SyntheticCapture(cfg)  # noqa: E731
 
     try:
         service = (

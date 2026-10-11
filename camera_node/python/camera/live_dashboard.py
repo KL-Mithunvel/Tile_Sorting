@@ -96,6 +96,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="With --video, replay the file in a loop instead of stopping at the end.",
     )
     parser.add_argument(
+        "--mqtt",
+        action="store_true",
+        help="Forward graded tiles to the station's MQTT broker even if config.yaml's mqtt.enabled is false "
+        "(the Pi's tile-camera service gets this from a systemd drop-in, so a code push never "
+        "silently turns the hand-off off).",
+    )
+    parser.add_argument(
         "--no-dashboard",
         action="store_true",
         help="Run the vision pipeline without serving the web dashboard "
@@ -127,6 +134,8 @@ def main(argv: list[str] | None = None) -> None:
     # config.yaml's mqtt.enabled is true, so a stand-alone camera is unchanged.
     publisher = None
     mqtt_cfg = config.get("mqtt") or {}
+    if args.mqtt:
+        mqtt_cfg = {**mqtt_cfg, "enabled": True}
     if mqtt_cfg.get("enabled"):
         publisher = TilePublisher(mqtt_cfg, status_source=lambda: status_from_shared_state(state))
         publisher.start()

@@ -85,12 +85,36 @@ sed \
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME"
 
+# Make the camera service forward tiles to the broker. A systemd drop-in (not an
+# edit of camera/config.yaml) so a later code push, which overwrites config.yaml,
+# cannot silently switch the hand-off off.
+CAM_UNIT=/etc/systemd/system/tile-camera.service
+if [ -f "$CAM_UNIT" ]; then
+    CAM_EXEC="$(grep '^ExecStart=' "$CAM_UNIT" | head -1 | cut -d= -f2-)"
+    case "$CAM_EXEC" in
+        *--mqtt*) echo "tile-camera already forwards tiles (--mqtt)." ;;
+        *)
+            echo "==> tile-camera: adding the --mqtt drop-in"
+            sudo mkdir -p /etc/systemd/system/tile-camera.service.d
+            printf '[Service]\nExecStart=\nExecStart=%s --mqtt\n' "$CAM_EXEC" \
+                | sudo tee /etc/systemd/system/tile-camera.service.d/mqtt.conf > /dev/null
+            sudo systemctl daemon-reload
+            ;;
+    esac
+else
+    echo "NOTE: tile-camera is not installed yet (camera_node/deploy/install_pi.sh)."
+    echo "      Run this script again after installing it, so it can enable --mqtt."
+fi
+
+chmod +x "$DEPLOY_DIR"/*.sh "$DEPLOY_DIR"/mqtt_probe.py 2>/dev/null || true
+
 echo
-echo "Installed. Before starting:"
-echo "  1. Find the microphone:   cd $PYTHON_DIR && /usr/bin/python3 -m acoustic.live_station --list-devices"
+echo "Installed. Next, in this order:"
+echo "  1. Software self-test (no mic/camera/UNO Q needed):  $DEPLOY_DIR/selftest.sh"
+echo "  2. Find the microphone:   cd $PYTHON_DIR && /usr/bin/python3 -m acoustic.live_station --list-devices"
 echo "     (pin it by NAME in acoustic/config.yaml audio.device — indices change between boots)"
-echo "  2. In camera_node/python/camera/config.yaml set  mqtt.enabled: true"
-echo "  3. sudo systemctl start $SERVICE_NAME ; journalctl -u $SERVICE_NAME -f"
-echo "  4. Run view:  http://\$(hostname -I | awk '{print \$1}'):5001/"
+echo "  3. Bring the whole line up in order:  $DEPLOY_DIR/system.sh start --no-unoq   (drop --no-unoq once the UNO Q feed runs)"
+echo "  4. Is everything answering?           $DEPLOY_DIR/diagnose.sh"
+echo "  5. Run view:  http://\$(hostname -I | awk '{print \$1}'):5001/"
 echo
 echo "Log out and back in (or reboot) once so the audio group applies to interactive use."

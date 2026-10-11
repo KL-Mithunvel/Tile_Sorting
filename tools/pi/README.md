@@ -15,6 +15,14 @@ Windows only. Needs `plink` (PuTTY) on PATH for `ssh.bat`; RealVNC Viewer for `v
 | `status.bat` | Read-only health check: service, temperature/throttling, network, disk, camera |
 | `logs.bat` | Last 100 lines of the service log; `logs.bat -f` follows |
 | `run.bat` | Run the camera node in the **foreground** with output in your terminal (stops the service first, restarts it after). `run.bat --list-devices`, `run.bat --backend usb`, ... |
+| `station_push.bat` | Copies `camera_node\`, `acoustic_node\` and the fake peers to the Pi (the **station**: decision service, broker deploy, diagnostics) |
+| `station_install.bat` | **First time only:** push, then run `acoustic_node/deploy/install_pi.sh` (apt packages, mosquitto, `tile-acoustic` unit, the `--mqtt` drop-in for `tile-camera`) |
+| `station_test.bat [sec]` | Software **self-test** on the Pi against the real broker: synthetic mic + fake camera / striker / UNO Q. Restarts `tile-acoustic` afterwards |
+| `station_diag.bat` | **Diagnostic**: is everything on the network up *and answering* (ping, ports, then every running program answers a diagnostic ping). Read-only |
+| `station_status.bat` | Services, ports, station's own view, USB topology (mic vs camera), audio inputs, serial ports, thermal. Read-only |
+| `station_start.bat [--no-unoq] [--belt N]` | **In-sync start**: broker -> station (held) -> camera -> verify every node answers -> release hold + belt. Any silent node = the line stays held |
+| `station_stop.bat [--services]` | Belt 0 %, striker inhibited, line held; `--services` also stops the services |
+| `station_logs.bat [-f]` | `tile-acoustic` journal |
 | `pull.bat` | **Bring the Pi's data back** into `data\pi\` - new recordings (+ their `meta.json`) and the per-tile photos. `pull.bat --captures` = photos only. Re-running only fetches what is new |
 
 **Status:** all written 2026-10-11, **none run against the Pi** (the laptop's Ethernet was

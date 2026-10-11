@@ -30,6 +30,7 @@ not the Arduino UNO Q. See camera_node/README.md and camera_node/deploy/.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -254,6 +255,88 @@ class VideoFileCapture:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.stop()
+
+
+class PacedVideoCapture(VideoFileCapture):
+    """A saved video played back like a live camera: at its own frame rate, so
+    the dashboard shows it moving in real time instead of racing through it,
+    with optional looping and pause.
+
+    Same start()/read_frame()/stop() contract as every other backend. Differs
+    from VideoFileCapture, which is for offline batch processing and hands
+    frames out as fast as the pipeline can take them.
+
+    `loop=False` ends with StopIteration like a plain file; `loop=True` seeks
+    back to frame 0 instead. While paused, read_frame() keeps returning the
+    current frame at the playback rate (so the worker's loop keeps ticking and
+    the feed holds still) rather than blocking.
+    """
+
+    def __init__(self, video_path: str, loop: bool = False, realtime: bool = True):
+        super().__init__(video_path)
+        self.loop = loop
+        self.realtime = realtime
+        self.paused = False
+        self.fps: float = 0.0
+        self.frame_count: int = 0
+        self.position: int = 0  # index of the frame returned by the last read
+        self._frame_interval = 0.0
+        self._next_deadline = 0.0
+        self._last_frame: Optional[np.ndarray] = None
+
+    def start(self) -> None:
+        super().start()
+        self.fps = float(self._cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        if not 1.0 <= self.fps <= 240.0:
+            self.fps = 30.0  # container did not say; a sane default beats 0 or 1000
+        self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        self._frame_interval = 1.0 / self.fps
+        self._next_deadline = _now()
+        self.position = 0
+        self._last_frame = None
+
+    def read_frame(self) -> np.ndarray:
+        if self._cap is None:
+            raise RuntimeError("PacedVideoCapture: call start() before read_frame()")
+
+        if self.paused and self._last_frame is not None:
+            self._wait_for_next_tick()
+            return self._last_frame
+
+        try:
+            frame = super().read_frame()
+        except StopIteration:
+            if not self.loop:
+                raise
+            self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self.position = 0
+            frame = super().read_frame()  # an empty file raises StopIteration: fine
+        else:
+            self.position = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+
+        self._last_frame = frame
+        self._wait_for_next_tick()
+        return frame
+
+    def _wait_for_next_tick(self) -> None:
+        if not self.realtime:
+            return
+        self._next_deadline += self._frame_interval
+        delay = self._next_deadline - _now()
+        if delay > 0:
+            _sleep(delay)
+        elif delay < -1.0:
+            # Fell more than a second behind (a slow frame, a debugger stop):
+            # resynchronise instead of fast-forwarding to catch up.
+            self._next_deadline = _now()
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def create_capture(config: dict):

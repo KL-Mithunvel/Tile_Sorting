@@ -288,9 +288,28 @@ capture_snapshots:
   enabled: true
   output_dir: "data/camera_captures"
 
+# Recording from the dashboard's Record button (added 2026-10-11). Raw, un-annotated
+# frames are saved so a recording can be replayed through the whole pipeline later
+# and give the result the live run would have. Each recording gets its own folder
+# named by the date and time it started:
+#   data/recordings/2026-10-11_14-30-05/{video.mp4, meta.json}
+# data/ is gitignored, so recordings are never committed.
+recording:
+  output_dir: "data/recordings"      # relative to the repo root
+  # The first few frames are used to MEASURE the camera's real frame rate before
+  # the file is opened (a webcam asked for 15 fps often delivers 7-30). Writing
+  # the wrong rate would make every replay play too fast or too slow.
+  warmup_frames: 10
+  fallback_fps: 15                   # only if the rate cannot be measured
+
 dashboard:
   # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not
   # just localhost.
   host: "0.0.0.0"
   port: 5000
   jpeg_quality: 80
+  # Lets the page switch the video source, open files and start/stop recording.
+  # Anyone who can reach the dashboard can use these, and it is served on the
+  # network. Set false (or host: "127.0.0.1") on a station that should not be
+  # re-pointed by whoever is on the WiFi. Files can only be opened from data/.
+  controls_enabled: true

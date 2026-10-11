@@ -38,6 +38,7 @@ from typing import Callable, Optional
 from fusion.final_grade import FinalDecision, decide_timeout, fuse_final
 from fusion.grades import FINAL_GRADES, HOLD
 from fusion.ledger import TileEntry, TileLedger
+from fusion.stats import summarize_transits
 from fusion.store import TileStore
 from fusion.transport import (
     ACK_FILTER,
@@ -103,6 +104,8 @@ class StationCoordinator:
         # Strike events (station/tap) waiting to be paired with their clip.
         self._tap_events: deque = deque(maxlen=16)
         self._unknown_n = 0
+        # Camera -> tap times, for choosing ledger.max_wait_s from data.
+        self._transits: deque = deque(store.recent_transits(200), maxlen=200)
         self._heartbeat_s = float(cfg.get("heartbeat_s", 2.0))
         self._commands_enabled = bool(cfg.get("commands_enabled", True))
 
@@ -227,6 +230,11 @@ class StationCoordinator:
                 self._alarm("orphan_tap", "a tap was heard but no tile was waiting for one", None)
                 return None
             entry.acoustic = acoustic
+            if acoustic.get("valid"):
+                # Only a real strike measures how long the tile took to arrive.
+                transit = max(0.0, now - entry.created)
+                self._transits.appendleft(transit)
+                self._store.upsert(entry.tile_id, now, transit_s=transit)
             self._publish(
                 tile_topic(entry.tile_id, "acoustic/result"),
                 {
@@ -548,6 +556,7 @@ class StationCoordinator:
                 "max_wait_s": self.ledger.max_wait_s,
                 "require_ack": self._require_ack,
             },
+            "transit": summarize_transits(self._transits),
             "recent": self._store.recent(recent) if recent else [],
             "uptime_s": round(now - self._started_ts, 1),
         }

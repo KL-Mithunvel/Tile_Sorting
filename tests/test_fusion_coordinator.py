@@ -289,3 +289,23 @@ def test_nano_health_is_a_warning_until_required_then_a_fault():
         assert c.snapshot()["health"]["nano"]["level"] == OK
         clock.t += 5.0
         assert c.snapshot()["health"]["nano"]["level"] == expected
+
+
+def test_transit_times_are_measured_stored_and_summarised(rig):
+    clock, bus, store, c = rig
+    for i, wait in enumerate([4.0, 6.0, 5.0]):
+        camera(bus, f"T{i}", seq=i)
+        clock.t += wait
+        c.on_tap(GOOD_TAP)
+        bus.publish(f"tile/T{i}/ack", {})
+    t = c.snapshot()["transit"]
+    assert t["n"] == 3 and t["min_s"] == 4.0 and t["max_s"] == 6.0 and t["median_s"] == 5.0
+    assert store.get("T1")["transit_s"] == 6.0
+
+
+def test_an_unusable_recording_does_not_count_as_a_transit(rig):
+    clock, bus, store, c = rig
+    camera(bus, "T1")
+    clock.t += 5.0
+    c.on_tap({"valid": False, "grade": None, "confidence": None})
+    assert c.snapshot()["transit"]["n"] == 0

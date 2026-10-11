@@ -111,7 +111,9 @@ async function refresh() {
     td("UNO Q ack required", st.settings.require_ack), td("tiles seen / taps heard", st.counters.tiles + " / " + st.counters.taps),
     td("orphan taps / ignored sounds", st.counters.orphan_taps + " / " + (st.counters.ignored_taps || 0)),
     td("empty strikes / missed camera tiles", (st.counters.empty_strikes || 0) + " / " + (st.counters.missed_camera || 0)),
-    td("timeouts", st.counters.timeouts), td("queue to UNO Q", st.outbox_depth)]);
+    td("timeouts", st.counters.timeouts), td("queue to UNO Q", st.outbox_depth),
+    td("camera→tap transit (n, median, p95, max s)", st.transit.n ? st.transit.n + ", " + st.transit.median_s + ", " + st.transit.p95_s + ", " + st.transit.max_s : "no data yet"),
+    td("suggested max wait (s)", st.transit.suggested_max_wait_s == null ? "needs ≥10 taps" : st.transit.suggested_max_wait_s + "  (set station.ledger.max_wait_s)")]);
   fill($("micTbl"), [td("trigger mode", st.mic.mode), td("device", st.mic.device == null ? "system default" : st.mic.device),
     td("open", st.mic.open + (st.mic.error ? " — " + st.mic.error : ""))]);
 }

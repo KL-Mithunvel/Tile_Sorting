@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS tiles (
     reasons_json   TEXT,
     delivery       TEXT NOT NULL DEFAULT 'pending',
     attempts       INTEGER NOT NULL DEFAULT 0,
-    ack_ts         REAL
+    ack_ts         REAL,
+    transit_s      REAL
 );
 CREATE INDEX IF NOT EXISTS tiles_created ON tiles (created_ts);
 """
@@ -44,7 +45,7 @@ _JSON_FIELDS = {"camera_json", "acoustic_json", "reasons_json"}
 _COLUMNS = {
     "seq", "created_ts", "updated_ts", "state", "camera_grade", "camera_json",
     "acoustic_grade", "acoustic_json", "acoustic_counted", "final_grade",
-    "destination", "reasons_json", "delivery", "attempts", "ack_ts",
+    "destination", "reasons_json", "delivery", "attempts", "ack_ts", "transit_s",
 }
 
 
@@ -57,6 +58,11 @@ class TileStore:
         self._db.row_factory = sqlite3.Row
         with self._lock:
             self._db.executescript(_SCHEMA)
+            # A database written before a column existed: add it rather than
+            # refuse to start (the station's record must survive an upgrade).
+            have = {r["name"] for r in self._db.execute("PRAGMA table_info(tiles)")}
+            if "transit_s" not in have:
+                self._db.execute("ALTER TABLE tiles ADD COLUMN transit_s REAL")
             self._db.commit()
 
     def upsert(self, tile_id: str, now: float, **fields) -> None:
@@ -99,6 +105,16 @@ class TileStore:
                 "SELECT final_grade, COUNT(*) AS n FROM tiles WHERE final_grade IS NOT NULL GROUP BY final_grade"
             ).fetchall()
         return {r["final_grade"]: r["n"] for r in rows}
+
+    def recent_transits(self, limit: int = 200) -> list[float]:
+        """Camera -> tap times of the most recent tiles that had one (survives
+        a restart, so the suggestion does not start from nothing)."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT transit_s FROM tiles WHERE transit_s IS NOT NULL ORDER BY created_ts DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [r["transit_s"] for r in rows]
 
     def close(self) -> None:
         with self._lock:

@@ -21,9 +21,11 @@ import numpy as np
 from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
 from camera.pipeline import TileRecord, grading_options, process_tile
+from camera.recorder import Recorder
 from camera.region_tracker import LineCrossingTracker
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
+from camera.sources import recordings_root
 from camera.tile_tracker import TileTracker
 
 log = logging.getLogger(__name__)
@@ -139,11 +141,57 @@ class SharedState:
         # dashboard instead of just looking like "no tiles yet".
         self._error_count = 0
         self._last_error: Optional[str] = None
+        # Where the video is coming from right now, and what the recorder is
+        # doing. Both are shown on the dashboard's Source panel.
+        self._source: dict = {"kind": "none", "label": "No source"}
+        self._source_status = "none"  # none | running | finished | error
+        self._source_detail: Optional[str] = None
+        self._playback: Optional[dict] = None  # file sources only
+        self._recording: Optional[dict] = None  # set while recording
+        self._last_recording: Optional[dict] = None  # the one that just finished
 
     def record_error(self, message: str) -> None:
         with self._lock:
             self._error_count += 1
             self._last_error = message
+
+    def reset_results(self) -> None:
+        """Forget everything measured so far. Called when the video source
+        changes: counts and grades from one source must not carry into the
+        next, or a replayed file would add to the live camera's tally."""
+        with self._lock:
+            self._tile_count = 0
+            self._recent_tiles.clear()
+            self._tally = {}
+            self._last_tile_png = None
+            self._latest_jpeg = None
+            self._station_state = "waiting"
+            self._error_count = 0
+            self._last_error = None
+
+    def set_source(self, source: dict, status: str = "running", detail: Optional[str] = None) -> None:
+        with self._lock:
+            self._source = dict(source)
+            self._source_status = status
+            self._source_detail = detail
+            self._playback = None
+
+    def set_source_status(self, status: str, detail: Optional[str] = None) -> None:
+        with self._lock:
+            self._source_status = status
+            self._source_detail = detail
+
+    def set_playback(self, playback: Optional[dict]) -> None:
+        with self._lock:
+            self._playback = dict(playback) if playback else None
+
+    def set_recording(self, recording: Optional[dict]) -> None:
+        with self._lock:
+            self._recording = dict(recording) if recording else None
+
+    def set_last_recording(self, meta: Optional[dict]) -> None:
+        with self._lock:
+            self._last_recording = dict(meta) if meta else None
 
     def set_info(self, info: dict) -> None:
         """Static facts about this run (trigger mode, model on/off, line)."""
@@ -185,6 +233,14 @@ class SharedState:
                 "station_state": self._station_state,
                 "info": dict(self._info),
                 "errors": {"count": self._error_count, "last": self._last_error},
+                "source": {
+                    **self._source,
+                    "status": self._source_status,
+                    "detail": self._source_detail,
+                    "playback": dict(self._playback) if self._playback else None,
+                },
+                "recording": dict(self._recording) if self._recording else None,
+                "last_recording": dict(self._last_recording) if self._last_recording else None,
             }
 
 
@@ -192,24 +248,38 @@ class CameraWorker:
     """Owns the per-frame pipeline on its own background thread.
 
     `capture` is any object with capture.py's start()/read_frame()/stop()
-    contract — WebcamCapture on a USB camera, PiCameraCapture on the Pi
-    station's CSI module. The worker never asks which; it only ever wants a
-    BGR frame back, which both backends guarantee.
+    contract -- WebcamCapture on a USB camera, PiCameraCapture on the Pi
+    station's CSI module, PacedVideoCapture for a saved video. The worker never
+    asks which; it only ever wants a BGR frame back. It may be None: the
+    dashboard can start with no source and be pointed at one later.
+
+    The source can be swapped while running (`switch_source`) and the raw feed
+    can be recorded (`start_recording` / `stop_recording`). Both are driven from
+    Flask's request threads, so they are serialised by `_control_lock`.
     """
+
+    # Consecutive failed reads before the dashboard says the camera has stopped
+    # delivering frames (a USB camera pulled out mid-run), rather than just
+    # showing a frozen picture.
+    _READ_FAILURES_BEFORE_ERROR = 50
+    _PUBLISH_EVERY_S = 0.25
 
     def __init__(
         self,
-        capture: WebcamCapture | PiCameraCapture,
+        capture: Optional[WebcamCapture | PiCameraCapture],
         config: dict,
         state: SharedState,
+        source: Optional[dict] = None,
     ):
         self._capture = capture
         self._config = config
         self._state = state
-        self._tracker = TileTracker(
-            min_present_frames=config["tile_tracker"]["min_present_frames"],
-            min_absent_frames=config["tile_tracker"]["min_absent_frames"],
-        )
+        self._source = dict(source) if source else {"kind": "camera", "label": "Camera"}
+        self._control_lock = threading.RLock()
+        self._rec_lock = threading.Lock()  # serialises recorder.write() against stop()
+        self._recorder: Optional[Recorder] = None
+        self._last_publish = 0.0
+        self._read_failures = 0
 
         self._mode = config.get("processing_trigger", "line_crossing")
         if self._mode not in ("line_crossing", "departure"):
@@ -219,19 +289,6 @@ class CameraWorker:
             )
 
         self._line_cfg = config.get("trigger_line") or {}
-        self._crossing: Optional[LineCrossingTracker] = None
-        if self._mode == "line_crossing":
-            self._crossing = LineCrossingTracker(
-                line=dict(
-                    position=self._line_cfg.get("position", 0.5),
-                    orientation=self._line_cfg.get("orientation", "vertical"),
-                    direction=self._line_cfg.get("direction", "both"),
-                    hysteresis=self._line_cfg.get("hysteresis", 0.02),
-                    max_step=self._line_cfg.get("max_step"),
-                ),
-                match_distance=self._line_cfg.get("match_distance", 0.15),
-                max_missed_frames=self._line_cfg.get("max_missed_frames", 3),
-            )
 
         # Loaded once here, not per tile: building an ONNX session takes tens
         # of milliseconds and holds the weights, so rebuilding it per tile
@@ -259,46 +316,234 @@ class CameraWorker:
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._reset_run_state()
 
-        # Per-run state the frame step carries from one frame to the next.
+    def _reset_run_state(self) -> None:
+        """Everything the frame step carries from one frame to the next. Reset
+        when the source changes: a new video has no tiles in flight, and the
+        old one's track ids and counts mean nothing for it."""
+        self._tracker = TileTracker(
+            min_present_frames=self._config["tile_tracker"]["min_present_frames"],
+            min_absent_frames=self._config["tile_tracker"]["min_absent_frames"],
+        )
+        self._crossing: Optional[LineCrossingTracker] = None
+        if self._mode == "line_crossing":
+            self._crossing = LineCrossingTracker(
+                line=dict(
+                    position=self._line_cfg.get("position", 0.5),
+                    orientation=self._line_cfg.get("orientation", "vertical"),
+                    direction=self._line_cfg.get("direction", "both"),
+                    hysteresis=self._line_cfg.get("hysteresis", 0.02),
+                    max_step=self._line_cfg.get("max_step"),
+                ),
+                match_distance=self._line_cfg.get("match_distance", 0.15),
+                max_missed_frames=self._line_cfg.get("max_missed_frames", 3),
+            )
         self._seq = 0
         self._best_seen_region: Optional[TileRegion] = None
         # track id (None in departure mode, which has no ids) -> (grade, model
         # grade) for tiles already graded and still in view; drives the labels.
         self._graded: dict[Optional[int], tuple[str, Optional[str]]] = {}
         self._seen_errors: set[str] = set()
+        self._read_failures = 0
+
+    # ---- lifecycle -------------------------------------------------------
+
+    @property
+    def capture(self):
+        """The current capture backend (None when no source is open). The
+        controller uses it to pause / loop a file player."""
+        return self._capture
+
+    @property
+    def source(self) -> dict:
+        return dict(self._source)
 
     def start(self) -> None:
-        self._capture.start()
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        with self._control_lock:
+            if self._capture is None:
+                self._state.set_source({"kind": "none", "label": "No source"}, status="none")
+                return
+            self._capture.start()  # RuntimeError (no such camera...) propagates, as before
+            self._state.set_source(self._source, status="running")
+            self._launch()
 
     def stop(self) -> None:
-        self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-        self._capture.stop()
+        with self._control_lock:
+            if self._recorder is not None:
+                try:
+                    self.stop_recording()  # a Ctrl+C mid-recording must still save meta.json
+                except Exception:  # noqa: BLE001 - shutting down; nothing useful to do
+                    log.exception("could not finalise the recording on shutdown")
+            self._halt()
+            if self._capture is not None:
+                self._capture.stop()
 
     def join(self) -> None:
         """Block until the capture thread exits. Only used by the headless
         (--no-dashboard) path, where there's no Flask server to block on
-        instead — the dashboard path blocks in app.run()."""
+        instead -- the dashboard path blocks in app.run()."""
         while self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=0.5)
 
+    def _launch(self) -> None:
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _halt(self) -> None:
+        self._running = False
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
+            if thread.is_alive():
+                raise RuntimeError("the capture thread did not stop (a camera read is stuck)")
+        self._thread = None
+
+    def switch_source(self, capture, source: dict) -> None:
+        """Replace the video source while running.
+
+        The old source is stopped BEFORE the new one is opened, because opening
+        the same USB camera twice fails on Windows. If the new source cannot be
+        opened the old one is put back, so a mistyped path or a wrong camera
+        index does not leave the station with nothing.
+
+        Counts, tracks and the on-screen results are reset: grades from one
+        source must not carry into the next.
+        """
+        with self._control_lock:
+            if self._recorder is not None:
+                self.stop_recording()  # one recording is one source
+            self._halt()
+            old = self._capture
+            if old is not None:
+                old.stop()
+            try:
+                capture.start()
+            except Exception:
+                if old is not None:
+                    try:
+                        old.start()
+                        self._launch()
+                        self._state.set_source_status("running")
+                    except Exception as restore_exc:  # noqa: BLE001
+                        self._state.set_source_status("error", f"previous source could not be restored: {restore_exc}")
+                raise
+            self._capture = capture
+            self._source = dict(source)
+            self._reset_run_state()
+            self._state.reset_results()
+            self._state.set_source(self._source, status="running")
+            self._launch()
+
+    # ---- recording -------------------------------------------------------
+
+    @property
+    def recording(self) -> bool:
+        rec = self._recorder
+        return rec is not None and rec.active
+
+    def start_recording(self) -> dict:
+        with self._control_lock:
+            if self.recording:
+                raise RuntimeError("already recording")
+            if self._capture is None or self._source.get("kind") != "camera":
+                raise ValueError("recording needs a live camera as the source (a file is already a recording)")
+            rec_cfg = self._config.get("recording") or {}
+            rec = Recorder(
+                recordings_root(self._config),
+                source_label=self._source.get("label", "camera"),
+                warmup_frames=int(rec_cfg.get("warmup_frames", 10)),
+                fallback_fps=float(rec_cfg.get("fallback_fps", 15)),
+            )
+            folder = rec.start()
+            with self._rec_lock:
+                self._recorder = rec
+            self._state.set_last_recording(None)
+            self._publish(force=True)
+            return {"folder": folder.name}
+
+    def stop_recording(self) -> dict:
+        """Finish the recording and return its metadata (also saved as
+        meta.json). Raises RuntimeError if nothing is being recorded."""
+        with self._control_lock:
+            with self._rec_lock:
+                rec, self._recorder = self._recorder, None
+                if rec is None or not rec.active:
+                    raise RuntimeError("not recording")
+                folder_name = rec.folder.name
+                meta = rec.stop()
+            self._state.set_recording(None)
+            self._state.set_last_recording({**meta, "folder": folder_name})
+            return meta
+
+    def _write_to_recorder(self, frame: np.ndarray) -> None:
+        with self._rec_lock:
+            rec = self._recorder
+            if rec is None or not rec.active:
+                return
+            try:
+                rec.write(frame)
+                return
+            except Exception as exc:  # noqa: BLE001 - disk full, codec failure...
+                failure = f"{type(exc).__name__}: {exc}"
+        # A recording failure must not stop the inspection; it ends the
+        # recording and says so.
+        self._state.record_error(f"recording stopped: {failure}")
+        try:
+            self.stop_recording()
+        except Exception:  # noqa: BLE001
+            log.exception("could not finalise a failed recording")
+
+    def _publish(self, force: bool = False) -> None:
+        """Push recording / playback progress to the dashboard, at most every
+        _PUBLISH_EVERY_S -- the page polls once a second, so per-frame updates
+        would only cost lock traffic."""
+        now = time.monotonic()
+        if not force and now - self._last_publish < self._PUBLISH_EVERY_S:
+            return
+        self._last_publish = now
+
+        rec = self._recorder
+        if rec is not None and rec.active:
+            self._state.set_recording(
+                {"active": True, "folder": rec.folder.name, "frames": rec.frames, "elapsed_s": round(rec.elapsed_s, 1)}
+            )
+        cap = self._capture
+        if cap is not None and hasattr(cap, "frame_count"):
+            self._state.set_playback(
+                {
+                    "position": cap.position,
+                    "frame_count": cap.frame_count,
+                    "fps": round(cap.fps, 2),
+                    "paused": cap.paused,
+                    "loop": cap.loop,
+                }
+            )
+
+    # ---- the loop --------------------------------------------------------
+
     def _loop(self) -> None:
+        capture = self._capture
         while self._running:
             try:
-                frame = self._capture.read_frame()
+                frame = capture.read_frame()
             except StopIteration:
                 # A saved video file ran out. That is the end of the input, not
-                # a fault: stop cleanly instead of dying with a traceback.
+                # a fault: stop cleanly and say so.
                 self._running = False
+                self._publish(force=True)
+                self._state.set_source_status("finished")
                 break
             except RuntimeError:
+                self._read_failures += 1
+                if self._read_failures == self._READ_FAILURES_BEFORE_ERROR:
+                    self._state.set_source_status("error", "the camera has stopped delivering frames")
                 time.sleep(0.01)  # transient capture hiccup; do not spin the CPU
                 continue
+            if self._read_failures >= self._READ_FAILURES_BEFORE_ERROR:
+                self._state.set_source_status("running")  # it came back
+            self._read_failures = 0
             self._safe_step(frame)
 
     def _safe_step(self, frame: np.ndarray) -> None:
@@ -311,7 +556,12 @@ class CameraWorker:
         (SharedState.record_error), and the full traceback is logged once per
         distinct message so a fault that repeats every frame cannot flood the
         log.
+
+        The raw frame is recorded FIRST and outside the guarded step: a frame
+        the pipeline chokes on is exactly the one worth having on disk to
+        replay.
         """
+        self._write_to_recorder(frame)
         try:
             self._step(frame)
         except Exception as exc:  # noqa: BLE001 - deliberately broad, see above
@@ -322,6 +572,7 @@ class CameraWorker:
                 log.exception("frame processing failed (first occurrence of this error)")
             # Never leave the station showing "processing" for a tile that failed.
             self._state.set_station_state("waiting")
+        self._publish()
 
     def _step(self, frame: np.ndarray) -> None:
         seg_cfg = self._config["segmentation"]

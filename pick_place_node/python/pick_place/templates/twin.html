@@ -15,7 +15,23 @@
   .tabs button.active { background: #3a6ea5; border-color: #3a6ea5; }
   #canvas-container { flex: 1 1 auto; border: 1px solid #333; border-radius: 4px; overflow: hidden; min-height: 0; }
   canvas { display: block; }
-  .stats-panel { flex: 0 0 260px; }
+  .stats-panel { flex: 0 0 340px; overflow-y: auto; padding-right: 0.25rem; }
+  .panel { margin-top: 1rem; padding-top: 0.6rem; border-top: 1px solid #333; }
+  .panel h2 { font-size: 0.85rem; color: #aaa; margin: 0 0 0.4rem; font-weight: 600; display: flex; justify-content: space-between; }
+  .panel h2 .tag { font-weight: 400; font-size: 0.75rem; }
+  .kv { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.2rem 0; font-size: 0.82rem; }
+  .kv .k { color: #aaa; white-space: nowrap; }
+  .kv .v { font-family: ui-monospace, monospace; text-align: right; overflow-wrap: anywhere; }
+  .muted { color: #888; font-size: 0.8rem; }
+  .warn { color: #f08080; font-size: 0.78rem; }
+  .ok { color: #5cd65c; }
+  .stack-row { margin: 0.35rem 0; font-size: 0.8rem; }
+  .stack-head { display: flex; justify-content: space-between; }
+  .bar { height: 7px; background: #2a2a2a; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+  .bar > span { display: block; height: 100%; background: #3a6ea5; }
+  .bar.full > span { background: #c0392b; }
+  .q-row { display: flex; gap: 0.4rem; font-family: ui-monospace, monospace; font-size: 0.76rem; padding: 0.15rem 0; border-bottom: 1px solid #222; }
+  .q-row .q-id { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stat-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #333; font-size: 0.9rem; }
   .stat-label { color: #aaa; }
   .stat-value { font-family: ui-monospace, monospace; }
@@ -43,8 +59,9 @@
 </head>
 <body>
   <h1>Pick &amp; Place Node — Digital Twin Prototype</h1>
-  <p class="notice">Simulated gantry — the controls drive the mock, no real hardware exists yet
-    (see documents/project/Pick_Place_Sorting_Subsystem.md §3.1).</p>
+  <p class="notice">Simulated gantry — motion is mocked, but the pickup point, the four stacks, their
+    heights and every move come from the real planner (placeholder coordinates until taught-in;
+    see documents/programming/pick_place_control_protocol.md).</p>
   <div id="error-banner"></div>
 
   <script>
@@ -83,10 +100,29 @@
       <div class="stat-row"><span class="stat-label">Vacuum</span><span class="stat-value" id="stat-vacuum">OFF</span></div>
       <div class="stat-row"><span class="stat-label">State</span><span class="stat-value" id="stat-state">IDLE</span></div>
 
+      <div class="panel" id="job-panel">
+        <h2>Current job <span class="tag muted" id="job-tag"></span></h2>
+        <div id="job-body" class="muted">No station connected.</div>
+      </div>
+      <div class="panel" id="stacks-panel">
+        <h2>Stacks <span class="tag muted" id="stacks-tag"></span></h2>
+        <div id="stacks-body" class="muted">Waiting for layout...</div>
+      </div>
+      <div class="panel" id="queue-panel">
+        <h2>Pick queue <span class="tag muted" id="queue-tag"></span></h2>
+        <div id="feed-status" class="muted"></div>
+        <div id="queue-body"></div>
+      </div>
+      <div class="panel" id="setup-panel">
+        <h2>Setup</h2>
+        <div id="setup-body" class="muted"></div>
+      </div>
+
       <div class="controls">
         <h2>Control</h2>
         <div class="btn-row">
-          <button id="mode-auto" data-mode="auto">Auto patrol</button>
+          <button id="mode-jobs" data-mode="jobs" title="Run the tiles the station sends">Jobs</button>
+          <button id="mode-auto" data-mode="auto" title="Demo patrol; does not change stack counts">Patrol</button>
           <button id="mode-manual" data-mode="manual">Manual</button>
         </div>
         <h2>Jog step (mm)</h2>
@@ -153,77 +189,126 @@
     const vacuumOffColor = 0x999999, vacuumOnColor = 0x5cd65c;
     const CUP_H = 14;
 
-    // Props: pick/place stacks and tiles. Tile bookkeeping lives client-side
-    // (purely visual) and is driven by vacuum edges + where the cup is.
-    let sceneCfg = { tile_size_mm: 100, tile_thickness_mm: 5, pick_stack_count: 4 };
-    let pickCount = 0, placeCount = 0, holding = false;
-    let pickStack, placeStack;
-    const looseTiles = [];
+    // Props come from /api/layout (the server's CoordinateModel): the conveyor end
+    // tiles are TAKEN FROM and the stacks they are KEPT on. Counts are the planner's,
+    // not inferred from the picture.
+    let sceneCfg = { tile_size_mm: 82.55, tile_thickness_mm: 12 };
+    let layout = null, jobInfo = null, feedInfo = null;
+    const stackViews = {};          // name -> { group, tiles, pad, label, count, full }
+    let waitingTile = null;
     const tileMat = new THREE.MeshStandardMaterial({ color: 0xc8643c });
     const padMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+    const fullPadMat = new THREE.MeshStandardMaterial({ color: 0x8a3030 });
+    const beltMat = new THREE.MeshStandardMaterial({ color: 0x2c4a52 });
 
     function tileGeom() {
       return new THREE.BoxGeometry(sceneCfg.tile_size_mm, sceneCfg.tile_thickness_mm - 0.6, sceneCfg.tile_size_mm);
     }
 
-    function makeStack(xy) {
-      const g = new THREE.Group();
-      const s = sceneCfg.tile_size_mm;
-      const pad = new THREE.Mesh(new THREE.BoxGeometry(s + 20, 2, s + 20), padMat);
-      pad.position.y = zMin - 1;
-      g.add(pad);
-      g.tiles = new THREE.Group();
-      g.add(g.tiles);
-      g.position.set(xy.x, 0, xy.y);
-      scene.add(g);
-      return g;
+    function makeLabel(text, color) {
+      const c = document.createElement('canvas');
+      c.width = 320; c.height = 64;
+      const g = c.getContext('2d');
+      g.font = 'bold 30px system-ui, sans-serif';
+      g.fillStyle = color || '#ffffff';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, 160, 32);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false }));
+      sp.scale.set(150, 30, 1);
+      sp.renderOrder = 10;
+      return sp;
     }
 
-    function rebuildStack(stack, count) {
-      stack.tiles.clear();
-      const t = sceneCfg.tile_thickness_mm;
-      for (let i = 0; i < count; i++) {
+    function disposeLabel(sp) {
+      if (!sp) return;
+      sp.material.map.dispose();
+      sp.material.dispose();
+      if (sp.parent) sp.parent.remove(sp);
+    }
+
+    // Floor of a place/pick point: the cup tip is `thickness` above the tile's underside.
+    function floorOf(zTip) { return zTip - sceneCfg.tile_thickness_mm; }
+
+    function stackLabelText(s) {
+      return (s.label ? s.label + ' | ' : '') + s.name + '  ' + s.count + '/' + s.max_height;
+    }
+
+    function rebuildStackTiles(view, s) {
+      view.tiles.clear();
+      const t = sceneCfg.tile_thickness_mm, floor = floorOf(s.base_z_mm);
+      const shown = s.stacking ? s.count : Math.min(s.count, 3);
+      for (let i = 0; i < shown; i++) {
         const m = new THREE.Mesh(tileGeom(), tileMat);
-        m.position.y = zMin + t * i + t / 2;
-        stack.tiles.add(m);
+        m.position.y = floor + t * i + t / 2;
+        view.tiles.add(m);
+      }
+      view.pad.material = s.full ? fullPadMat : padMat;
+      disposeLabel(view.label);
+      view.label = makeLabel(stackLabelText(s), s.full ? '#ff8a80' : '#ffffff');
+      view.label.position.set(0, floor + t * Math.max(s.max_height, 1) + 45, 0);
+      view.group.add(view.label);
+      view.count = s.count;
+      view.full = s.full;
+    }
+
+    function buildLayout(l) {
+      layout = l;
+      sceneCfg.tile_size_mm = l.tile.size_mm || sceneCfg.tile_size_mm;
+      sceneCfg.tile_thickness_mm = l.tile.thickness_mm || sceneCfg.tile_thickness_mm;
+      const size = sceneCfg.tile_size_mm, t = sceneCfg.tile_thickness_mm;
+
+      // Conveyor end: a belt stub (its direction is a placeholder; the real belt
+      // side is not decided) with the tile that is waiting to be picked.
+      const p = l.pickups[0];
+      if (p) {
+        const g = new THREE.Group();
+        const floor = floorOf(p.z);
+        const stub = new THREE.Mesh(new THREE.BoxGeometry(220, 6, size + 24), beltMat);
+        stub.position.set(110, floor - 3, 0);
+        g.add(stub);
+        waitingTile = new THREE.Mesh(tileGeom(), tileMat);
+        waitingTile.position.set(0, floor + t / 2, 0);
+        waitingTile.visible = false;
+        g.add(waitingTile);
+        const lab = makeLabel('Conveyor end (pickup)', '#7fd0e6');
+        lab.position.set(40, floor + t + 55, 0);
+        g.add(lab);
+        g.position.set(p.x, 0, p.y);
+        scene.add(g);
+      }
+
+      for (const s of l.stacks) {
+        const group = new THREE.Group();
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(size + 20, 2, size + 20), padMat);
+        pad.position.y = floorOf(s.base_z_mm) - 1;
+        group.add(pad);
+        const tiles = new THREE.Group();
+        group.add(tiles);
+        group.position.set(s.x, 0, s.y);
+        scene.add(group);
+        const view = { group: group, tiles: tiles, pad: pad, label: null, count: -1, full: false };
+        stackViews[s.name] = view;
+        rebuildStackTiles(view, s);
       }
     }
 
-    function stackTopZ(count) { return zMin + sceneCfg.tile_thickness_mm * count; }
-
-    function nearStack(stack, pose) {
-      const half = sceneCfg.tile_size_mm / 2;
-      return Math.abs(pose.x - stack.position.x) < half && Math.abs(pose.y - stack.position.z) < half;
+    function refreshLayout(l) {
+      if (!layout) { buildLayout(l); return; }
+      for (const s of l.stacks) {
+        const view = stackViews[s.name];
+        if (view && (view.count !== s.count || view.full !== s.full)) rebuildStackTiles(view, s);
+      }
+      layout = l;
     }
 
-    function onVacuumEdge(on, pose) {
-      if (on && !holding && nearStack(pickStack, pose) && pickCount > 0
-          && pose.z <= stackTopZ(pickCount) + 15) {
-        holding = true;
-        pickCount--;
-        rebuildStack(pickStack, pickCount);
-        heldTile.visible = true;
-      } else if (!on && holding) {
-        holding = false;
-        heldTile.visible = false;
-        if (nearStack(placeStack, pose)) {
-          placeCount++;
-          rebuildStack(placeStack, placeCount);
-        } else {
-          // Released away from the stack: the tile drops to the floor.
-          const m = new THREE.Mesh(tileGeom(), tileMat);
-          m.position.set(pose.x, zMin + sceneCfg.tile_thickness_mm / 2, pose.y);
-          scene.add(m);
-          looseTiles.push(m);
-        }
-      }
-      // The auto patrol loops forever: once the pick stack is spent, restock.
-      if (pickCount === 0 && !holding && placeCount > 0 && lastMode === 'auto') {
-        pickCount = sceneCfg.pick_stack_count;
-        placeCount = 0;
-        rebuildStack(pickStack, pickCount);
-        rebuildStack(placeStack, 0);
-      }
+    // A tile is "waiting" at the conveyor end until the cup has gripped it.
+    const PRE_GRIP = ['raise', 'over_source', 'descend_pick', 'grip'];
+    function updateWaitingTile() {
+      if (!waitingTile) return;
+      const queued = feedInfo && feedInfo.queue ? feedInfo.queue.depth : 0;
+      const a = jobInfo && jobInfo.active;
+      const beingPicked = !!a && !jobInfo.holding && PRE_GRIP.includes(a.step_label);
+      waitingTile.visible = queued > 0 || beingPicked;
     }
 
     function setupGantry(ws, cfg) {
@@ -288,12 +373,7 @@
       heldTile.visible = false;
       scene.add(heldTile);
 
-      // Pick / place stacks at the patrol's pick/place points.
-      pickStack = makeStack(cfg.scene.pick_xy);
-      placeStack = makeStack(cfg.scene.place_xy);
-      pickCount = sceneCfg.pick_stack_count;
-      rebuildStack(pickStack, pickCount);
-      rebuildStack(placeStack, 0);
+      // The pickup point and the stacks are drawn from /api/layout (buildLayout).
 
       // Motion trail.
       trailPositions = new Float32Array(TRAIL_MAX * 3);
@@ -328,10 +408,7 @@
       targetPose = pose;
       if (!shownPose) shownPose = { x: pose.x, y: pose.y, z: pose.z };
       lastMode = pose.mode || lastMode;
-      if (pose.vacuum_on !== lastVacuum) {
-        lastVacuum = pose.vacuum_on;
-        onVacuumEdge(pose.vacuum_on, shownPose);
-      }
+      lastVacuum = pose.vacuum_on;
     }
 
     function stepSmoothing(dtS) {
@@ -346,6 +423,10 @@
       cup.position.set(p.x, p.z, p.y);
       cupBody.material.color.setHex(targetPose.vacuum_on ? vacuumOnColor : vacuumOffColor);
       heldTile.position.set(p.x, p.z - sceneCfg.tile_thickness_mm / 2, p.y);
+      // A tile is only drawn in the cup when one was really gripped (job driver) or the
+      // demo patrol is running; a bare vacuum click with no tile shows nothing.
+      heldTile.visible = !!targetPose.vacuum_on
+        && (targetPose.mode === 'auto' || !!(jobInfo && jobInfo.holding));
       addTrailPoint(p.x, p.y, p.z);
     }
 
@@ -506,6 +587,7 @@
     }
 
     function updateControls(pose) {
+      document.getElementById('mode-jobs').classList.toggle('on', pose.mode === 'jobs');
       document.getElementById('mode-auto').classList.toggle('on', pose.mode === 'auto');
       document.getElementById('mode-manual').classList.toggle('on', pose.mode === 'manual');
       document.getElementById('vac-on').classList.toggle('on', pose.vacuum_on);
@@ -525,6 +607,135 @@
       }
     }
 
+    // ---- Info panels (job / stacks / queue / setup) --------------------------
+    // Server strings (tile ids arrive over the network) go in via textContent only.
+    function el(tag, cls, text) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    }
+    function kv(k, v, vcls) {
+      const row = el('div', 'kv');
+      row.appendChild(el('span', 'k', k));
+      row.appendChild(el('span', 'v' + (vcls ? ' ' + vcls : ''), v));
+      return row;
+    }
+    function fill(node, children) { node.replaceChildren(...children); }
+
+    function renderJob() {
+      const body = document.getElementById('job-body'), tag = document.getElementById('job-tag');
+      if (!jobInfo) {
+        tag.textContent = '';
+        fill(body, [el('div', 'muted', 'No station connected - run with --station-host or --demo.')]);
+        return;
+      }
+      tag.textContent = jobInfo.paused ? 'paused (not in Jobs mode)' : (jobInfo.active ? 'running' : 'idle');
+      const rows = [];
+      const a = jobInfo.active;
+      if (a) {
+        const dst = layout && layout.stacks.find((s) => s.name === a.destination);
+        rows.push(kv('Tile', a.tile_id));
+        rows.push(kv('Grade', a.grade));
+        rows.push(kv('From', a.source));
+        rows.push(kv('To', a.destination + (dst && dst.label ? ' (' + dst.label + ')' : '')));
+        rows.push(kv('Step', a.step + '/' + a.steps_total + ' ' + a.step_label));
+        rows.push(kv('Command', a.command));
+        rows.push(kv('Release Z', a.place_z_mm.toFixed(1) + ' mm'));
+        rows.push(kv('In cup', jobInfo.holding ? 'tile gripped' : 'empty', jobInfo.holding ? 'ok' : ''));
+      } else {
+        rows.push(el('div', 'muted', 'Idle - waiting for the next tile.'));
+      }
+      rows.push(kv('Placed / failed', jobInfo.completed + ' / ' + jobInfo.failed));
+      if (jobInfo.last_error) rows.push(el('div', 'warn', 'Last refusal: ' + jobInfo.last_error));
+      fill(body, rows);
+    }
+
+    function renderStacks() {
+      const body = document.getElementById('stacks-body'), tag = document.getElementById('stacks-tag');
+      if (!layout) return;
+      const total = layout.stacks.reduce((n, s) => n + s.count, 0);
+      tag.textContent = total + ' tiles placed';
+      fill(body, layout.stacks.map((s) => {
+        const row = el('div', 'stack-row');
+        const head = el('div', 'stack-head');
+        head.appendChild(el('span', '', (s.label ? s.label + ' | ' : '') + s.name));
+        head.appendChild(el('span', 'v' + (s.full ? ' warn' : ''),
+          (s.full ? 'FULL ' : '') + s.count + '/' + s.max_height));
+        row.appendChild(head);
+        const bar = el('div', 'bar' + (s.full ? ' full' : ''));
+        const fillBar = el('span');
+        fillBar.style.width = Math.min(100, (100 * s.count) / Math.max(s.max_height, 1)) + '%';
+        bar.appendChild(fillBar);
+        row.appendChild(bar);
+        row.appendChild(el('div', 'muted', s.full ? 'empty this stack, then it takes tiles again'
+          : 'next release at Z ' + s.next_release_z_mm.toFixed(1) + ' mm'));
+        return row;
+      }));
+    }
+
+    function renderQueue() {
+      const status = document.getElementById('feed-status'), body = document.getElementById('queue-body');
+      const tag = document.getElementById('queue-tag');
+      if (!feedInfo || !feedInfo.connected) {
+        tag.textContent = '';
+        status.textContent = 'Not connected to the Pi station (run with --station-host HOST, or --demo).';
+        fill(body, []);
+        return;
+      }
+      const q = feedInfo.queue;
+      tag.textContent = q.depth + ' waiting';
+      if (feedInfo.source === 'demo') {
+        status.textContent = 'Demo feed - synthetic tiles, no Pi.';
+      } else if (feedInfo.last_message_ts) {
+        const age = Math.max(0, Math.round(Date.now() / 1000 - feedInfo.last_message_ts));
+        status.textContent = 'Pi station connected - last tile ' + age + ' s ago.';
+      } else {
+        status.textContent = 'Pi station connected - no tile received yet.';
+      }
+      const c = q.counters;
+      const rows = q.queued.slice(0, 8).map((j) => {
+        const r = el('div', 'q-row');
+        r.appendChild(el('span', 'q-id', j.tile_id));
+        r.appendChild(el('span', '', j.grade + ' -> ' + j.destination));
+        return r;
+      });
+      if (q.queued.length > 8) rows.push(el('div', 'muted', '... and ' + (q.queued.length - 8) + ' more'));
+      rows.push(el('div', 'muted', 'accepted ' + c.accepted + ' | duplicates ' + c.duplicates
+        + ' | rejected ' + c.rejected + ' | full ' + c.full));
+      fill(body, rows);
+    }
+
+    function renderSetup() {
+      const body = document.getElementById('setup-body');
+      if (!layout) return;
+      const t = layout.tile, rows = [];
+      rows.push(kv('Tile', t.size_mm + ' mm square, ' + t.thickness_mm + ' mm, ' + t.weight_g + ' g'));
+      rows.push(kv('Safe Z', layout.safe_z_mm + ' mm'));
+      layout.pickups.forEach((p) => rows.push(kv('Pickup ' + p.name, 'X' + p.x + ' Y' + p.y + ' Z' + p.z)));
+      rows.push(el('div', 'warn', 'Positions are placeholders until taught-in on the built gantry.'));
+      fill(body, rows);
+    }
+
+    async function getJson(path) {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(path + ' returned HTTP ' + res.status);
+      return res.json();
+    }
+
+    async function pollInfo() {
+      try {
+        const [l, j, f] = await Promise.all([getJson('/api/layout'), getJson('/api/job'), getJson('/api/feed')]);
+        if (l.layout) refreshLayout(l.layout);
+        jobInfo = j.job;
+        feedInfo = f;
+        updateWaitingTile();
+        renderJob(); renderStacks(); renderQueue(); renderSetup();
+      } catch (err) {
+        console.error('info poll failed', err);
+      }
+    }
+
     async function init() {
       const res = await fetch('/api/config');
       if (!res.ok) throw new Error('/api/config returned HTTP ' + res.status);
@@ -536,6 +747,8 @@
       animate();
       pollStatus();
       setInterval(pollStatus, POLL_INTERVAL_MS);
+      pollInfo();
+      setInterval(pollInfo, 1000);
     }
 
     init().catch((err) => showTwinError(err.message || String(err)));

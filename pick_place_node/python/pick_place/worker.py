@@ -8,11 +8,14 @@ thin timing/threading wrapper around already-tested pure logic
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Optional
 
 from pick_place.mock_state import GantryPose, MockGantrySimulator
+
+log = logging.getLogger(__name__)
 
 
 class SharedState:
@@ -40,8 +43,11 @@ class SharedState:
 
 
 class TwinWorker:
-    def __init__(self, simulator: MockGantrySimulator, state: SharedState, tick_hz: float = 30.0):
+    def __init__(self, simulator: MockGantrySimulator, state: SharedState, tick_hz: float = 30.0,
+                 driver=None):
+        """`driver` (optional MockJobDriver) is ticked after every advance."""
         self._simulator = simulator
+        self._driver = driver
         self._state = state
         self._period_s = 1.0 / tick_hz
         self._running = False
@@ -66,3 +72,8 @@ class TwinWorker:
             last = now
             pose = self._simulator.advance(dt)
             self._state.update(pose)
+            if self._driver is not None:
+                try:
+                    self._driver.tick(pose, dt)
+                except Exception:  # noqa: BLE001 - a driver bug must not freeze the twin
+                    log.exception("job driver tick failed")

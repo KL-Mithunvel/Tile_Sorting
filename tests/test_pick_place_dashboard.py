@@ -74,3 +74,71 @@ def test_factory_rejects_serial_and_unknown():
         create_backend({**cfg, "backend": "serial"})
     with pytest.raises(ValueError):
         create_backend({**cfg, "backend": "nope"})
+
+
+# ---- layout / job / feed panels (conveyor end + four stacks) -------------------
+
+
+def _rig():
+    from pick_place.coordinate_model import CoordinateModel
+    from pick_place.mock_job_driver import MockJobDriver
+    from pick_place.mock_state import build_default_patrol, load_config
+    from pick_place.sequencer import Feeds
+    from pick_place.tile_feed import FeedClient
+
+    cfg = load_config()
+    sim = MockGantrySimulator(build_default_patrol(cfg), travel_speed_mm_s=2000, workspace=cfg["workspace"])
+    model = CoordinateModel.from_config(cfg)
+    feed = FeedClient(None)
+    driver = MockJobDriver(sim, feed.queue, model, Feeds.from_config(cfg))
+    app = create_app(SharedState(), cfg["workspace"], 0.1, backend=sim, model=model, driver=driver,
+                     feed=feed, feed_source="demo")
+    return app.test_client(), model, feed
+
+
+def test_layout_has_pickup_four_stacks_and_live_counts():
+    client, model, _ = _rig()
+    layout = client.get("/api/layout").get_json()["layout"]
+    assert [s["name"] for s in layout["stacks"]] == ["bin_1", "bin_2", "bin_3", "bin_4"]
+    assert [s["label"] for s in layout["stacks"]] == ["Grade A", "Grade B", "Grade C", "Reject"]
+    assert layout["pickups"][0]["name"] == "pickup"
+    assert layout["tile"] == {"size_mm": 82.55, "thickness_mm": 12.0, "weight_g": 300.0}
+    model.record_placed("bin_2")
+    model.record_placed("bin_2")
+    s2 = client.get("/api/layout").get_json()["layout"]["stacks"][1]
+    assert s2["count"] == 2 and s2["next_release_z_mm"] == pytest.approx(44.0) and not s2["full"]
+
+
+def test_full_stack_is_reported_full_with_no_next_release():
+    client, model, _ = _rig()
+    model.reset_stack("bin_4", 10)
+    s4 = client.get("/api/layout").get_json()["layout"]["stacks"][3]
+    assert s4["full"] and s4["next_release_z_mm"] is None
+
+
+def test_feed_reports_queue_and_source():
+    client, _, feed = _rig()
+    feed.queue.accept({"tile_id": "T1", "final_grade": "Grade A", "destination": "bin_1", "attempt": 1}, 0)
+    body = client.get("/api/feed").get_json()
+    assert body["connected"] and body["source"] == "demo" and body["queue"]["depth"] == 1
+    assert body["queue"]["queued"][0]["source"] == "pickup"
+
+
+def test_job_endpoint_reports_idle_driver():
+    client, _, _ = _rig()
+    job = client.get("/api/job").get_json()["job"]
+    assert job["active"] is None and job["completed"] == 0 and job["failed"] == 0
+
+
+def test_layout_job_feed_degrade_without_a_station():
+    client = create_app(SharedState(), WS, 0.1).test_client()
+    assert client.get("/api/layout").get_json() == {"layout": None}
+    assert client.get("/api/job").get_json() == {"job": None}
+    assert client.get("/api/feed").get_json()["connected"] is False
+
+
+def test_page_has_the_new_panels_and_jobs_mode():
+    html = _rig()[0].get("/").get_data(as_text=True)
+    for needle in ('id="job-panel"', 'id="stacks-panel"', 'id="queue-panel"', 'id="setup-panel"',
+                   'data-mode="jobs"', "/api/layout", "/api/job", "Conveyor end"):
+        assert needle in html, needle

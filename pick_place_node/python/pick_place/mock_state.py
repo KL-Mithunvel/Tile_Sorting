@@ -70,12 +70,16 @@ def build_default_patrol(config: dict) -> list[Waypoint]:
 
 
 AXES = ("x", "y", "z")
-MODES = ("auto", "manual")
+# "jobs": the simulator only moves where a job driver (mock_job_driver.py) sends it.
+MODES = ("auto", "manual", "jobs")
+# Modes in which the simulator moves toward a target instead of patrolling.
+TARGET_MODES = ("manual", "jobs")
 
 
 class MockGantrySimulator:
-    """Two modes: "auto" loops the patrol; "manual" holds still until jog()/
-    set_vacuum() are called. All public methods take an internal lock, since
+    """Three modes: "auto" loops the patrol; "manual" holds still until jog()/
+    set_vacuum() are called; "jobs" holds still until a job driver calls
+    move_to()/command_vacuum(). All public methods take an internal lock, since
     advance() runs on the worker thread while jog() etc. come from Flask's."""
 
     def __init__(self, waypoints: list[Waypoint], travel_speed_mm_s: float,
@@ -98,6 +102,7 @@ class MockGantrySimulator:
         self._lock = threading.RLock()
         self._mode = "auto"
         self._manual_target = (self._x, self._y, self._z)
+        self._activity: Optional[str] = None  # PICKING/PLACING label shown while a job dwells
         self._limits = {
             a: (workspace[f"{a}_min_mm"], workspace[f"{a}_max_mm"]) for a in AXES
         } if workspace else None
@@ -106,6 +111,12 @@ class MockGantrySimulator:
     def mode(self) -> str:
         return self._mode
 
+    @property
+    def target(self) -> tuple:
+        """Where target-mode (manual/jobs) motion is heading: (x, y, z)."""
+        with self._lock:
+            return self._manual_target
+
     def set_mode(self, mode: str) -> None:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
@@ -113,8 +124,9 @@ class MockGantrySimulator:
             if mode == self._mode:
                 return
             self._mode = mode
-            if mode == "manual":
+            if mode in TARGET_MODES:
                 self._manual_target = (self._x, self._y, self._z)
+                self._activity = None
                 self._machine_state = "IDLE"
             else:
                 # Resume the patrol from its first waypoint (home).
@@ -141,11 +153,32 @@ class MockGantrySimulator:
             self.set_mode("manual")
             self._vacuum_on = bool(on)
 
+    # ---- used by the job driver (mode stays "jobs") ---------------------
+
+    def move_to(self, x: float, y: float, z: float) -> None:
+        """Absolute target. Refuses a point outside the workspace — the sequencer
+        has already checked the envelope, so this firing means a real bug."""
+        with self._lock:
+            if self._limits:
+                for a, v in zip(AXES, (x, y, z)):
+                    lo, hi = self._limits[a]
+                    if not lo <= v <= hi:
+                        raise ValueError(f"{a}={v} is outside {lo}..{hi}")
+            self._manual_target = (float(x), float(y), float(z))
+            self._activity = None
+
+    def command_vacuum(self, on: bool, activity: Optional[str] = None) -> None:
+        """Switch the cup without leaving the current mode; `activity`
+        (PICKING/PLACING) is the state shown until the next move_to()."""
+        with self._lock:
+            self._vacuum_on = bool(on)
+            self._activity = activity
+
     def advance(self, dt_s: float) -> GantryPose:
         if dt_s < 0:
             raise ValueError("dt_s must be non-negative")
         with self._lock:
-            if self._mode == "manual":
+            if self._mode in TARGET_MODES:
                 return self._advance_manual(dt_s)
             return self._advance_auto(dt_s)
 
@@ -156,7 +189,7 @@ class MockGantrySimulator:
         step = self._speed * dt_s
         if dist <= step:
             self._x, self._y, self._z = tx, ty, tz
-            self._machine_state = "IDLE"
+            self._machine_state = self._activity or "IDLE"
         else:
             r = step / dist
             self._x += dx * r

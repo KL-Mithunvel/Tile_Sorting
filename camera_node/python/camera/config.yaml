@@ -44,9 +44,36 @@ camera:
   # resolution/FPS requests below.
   api_preference: "any"
 
-  frame_width: 640
-  frame_height: 480
-  target_fps: 15
+  # Capture format (changed 2026-10-11: was 640x480 @ 15). MEASURED on the laptop
+  # webcam: it delivers ~30 fps at 640x480, 1280x720 AND 1920x1080, so the old
+  # setting threw away 4-9x the pixels and half the frame rate. 1920x1080 is also
+  # what the validated recordings in data/videos/ are, and several absolute-pixel
+  # thresholds below (min_tile_area_px, border_margin_px...) were checked at it.
+  # Many webcams only reach 30 fps at high resolution in a compressed format, so
+  # ask for MJPG; a camera that cannot do it ignores the request. After start() the
+  # driver's ACTUAL values are shown on the dashboard - asking is not getting.
+  frame_width: 1920
+  frame_height: 1080
+  target_fps: 30
+  fourcc: "MJPG"        # null = leave it to the driver
+  # Frames the driver may queue. 1 = always the newest; a deep queue makes every
+  # frame old by the time it is read (and looks like lag).
+  buffer_size: 1
+  # null = leave the camera's own value. Many webcams reject it (the laptop's does).
+  gain: null
+  # Exposure is the main cause of motion blur: a tile moving 14 px/frame (435 px/s
+  # at 30 fps on a 1080-px frame) smears by speed x exposure time, ~7 px at the
+  # webcam's auto 1/64 s. "manual" fixes the shutter so it cannot drift per tile -
+  # but a faster shutter needs MORE LIGHT on the belt: on the laptop webcam,
+  # manual 1/128 s gave a nearly black image (brightness 26/255) in normal room
+  # light, and this webcam cannot raise gain to compensate. Brighten the belt first.
+  #   mode: "auto" | "manual"
+  #   value: manual only, passed to the driver as-is. DirectShow (Windows): log2
+  #          seconds, -6 = 1/64 s, -7 = 1/128 s, -8 = 1/256 s. V4L2 (Pi/Linux):
+  #          units of 100 microseconds. Needs api_preference "dshow" or "v4l2".
+  exposure:
+    mode: "auto"
+    value: -7
 
   # --- CSI Raspberry Pi camera module settings (backend "picamera2"/"auto") ---
   # UNVERIFIED: no CSI module has been attached yet, so nothing in this block

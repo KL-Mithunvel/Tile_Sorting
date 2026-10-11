@@ -30,6 +30,7 @@ not the Arduino UNO Q. See camera_node/README.md and camera_node/deploy/.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -60,12 +61,24 @@ _API_PREFERENCES = {
 class WebcamCapture:
     """A live USB / UVC camera, via OpenCV."""
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, video_capture_factory=None):
         cam_cfg = config["camera"]
         self.device_index = cam_cfg["device_index"]
         self.frame_width: int = cam_cfg["frame_width"]
         self.frame_height: int = cam_cfg["frame_height"]
         self.target_fps: int = cam_cfg["target_fps"]
+        self.fourcc: Optional[str] = cam_cfg.get("fourcc")
+        self.buffer_size: Optional[int] = cam_cfg.get("buffer_size")
+        self.gain: Optional[float] = cam_cfg.get("gain")
+        exposure_cfg = cam_cfg.get("exposure") or {}
+        self.exposure_mode: str = str(exposure_cfg.get("mode", "auto")).lower()
+        self.exposure_value: Optional[float] = exposure_cfg.get("value")
+        if self.exposure_mode not in ("auto", "manual"):
+            raise ValueError(f"WebcamCapture: camera.exposure.mode must be 'auto' or 'manual', got '{self.exposure_mode}'")
+        if self.exposure_mode == "manual" and self.exposure_value is None:
+            raise ValueError("WebcamCapture: camera.exposure.mode 'manual' needs camera.exposure.value")
+        if self.fourcc is not None and len(str(self.fourcc)) != 4:
+            raise ValueError(f"WebcamCapture: camera.fourcc must be 4 characters (e.g. 'MJPG'), got '{self.fourcc}'")
 
         api_name = str(cam_cfg.get("api_preference", "any")).lower()
         if api_name not in _API_PREFERENCES:
@@ -73,17 +86,69 @@ class WebcamCapture:
                 f"WebcamCapture: unknown camera.api_preference '{api_name}' — "
                 f"expected one of {sorted(_API_PREFERENCES)}"
             )
+        self.api_name = api_name
         self.api_preference = _API_PREFERENCES[api_name]
 
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._factory = video_capture_factory or cv2.VideoCapture
+        self._cap = None
+        # What the driver ACTUALLY gave us after start(); asking is not getting.
+        self.settings: dict = {}
+
+    def _auto_exposure_codes(self) -> Optional[tuple[float, float]]:
+        """(manual, auto) values for CAP_PROP_AUTO_EXPOSURE, which the backends do
+        not agree on. DirectShow uses 0.25 / 0.75, V4L2 uses 1 / 3. Other backends
+        (Media Foundation) are not known to honour either, so no guess is made."""
+        api = self.api_name
+        if api == "any":
+            api = "dshow" if sys.platform == "win32" else "v4l2"
+        return {"dshow": (0.25, 0.75), "v4l2": (1.0, 3.0)}.get(api)
 
     def start(self) -> None:
-        self._cap = cv2.VideoCapture(self.device_index, self.api_preference)
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-        self._cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+        self._cap = self._factory(self.device_index, self.api_preference)
         if not self._cap.isOpened():
             raise RuntimeError(f"WebcamCapture: could not open device index {self.device_index}")
+        cap = self._cap
+        # Order matters: the pixel format first, because the driver offers a different
+        # set of resolutions and frame rates for each (uncompressed YUY2 tops out far
+        # below 30 fps at 1080p on many webcams; MJPG usually does not).
+        if self.fourcc:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*str(self.fourcc)))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+        cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+        if self.buffer_size is not None:
+            # A deep driver queue means every frame is already old when it is read.
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+        if self.gain is not None:
+            cap.set(cv2.CAP_PROP_GAIN, self.gain)
+
+        exposure_note = None
+        codes = self._auto_exposure_codes()
+        if self.exposure_mode == "manual":
+            if codes is None:
+                exposure_note = (
+                    f"manual exposure was requested but api_preference '{self.api_name}' is not known to honour it; "
+                    "use 'dshow' (Windows) or 'v4l2' (Linux)"
+                )
+            else:
+                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, codes[0])
+                cap.set(cv2.CAP_PROP_EXPOSURE, self.exposure_value)
+        self.settings = self._read_back(exposure_note)
+
+    def _read_back(self, note: Optional[str] = None) -> dict:
+        cap = self._cap
+        v = int(cap.get(cv2.CAP_PROP_FOURCC) or 0)
+        return {
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            # Many drivers report -1 or 0 here; the number is the driver's claim, not a measurement.
+            "fps_reported": cap.get(cv2.CAP_PROP_FPS),
+            "fourcc": "".join(chr((v >> 8 * i) & 0xFF) for i in range(4)) if v > 0 else None,
+            "exposure": cap.get(cv2.CAP_PROP_EXPOSURE),
+            "auto_exposure": cap.get(cv2.CAP_PROP_AUTO_EXPOSURE),
+            "exposure_mode_requested": self.exposure_mode,
+            "note": note,
+        }
 
     def read_frame(self) -> np.ndarray:
         """Blocks until the next frame is available. Raises RuntimeError on a

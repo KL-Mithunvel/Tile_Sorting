@@ -533,8 +533,13 @@
       st.className = 'state ' + data.station_state;
       st.textContent = STATE_TEXT[data.station_state] || data.station_state;
 
+      // With orientation "auto" the line is made perpendicular to the belt, which is read
+      // from the video a few frames after a source opens - say so until it is known.
+      const lineWhere = info.line_orientation
+        ? info.line_orientation + (info.line_orientation_auto ? ', perpendicular to the belt' : '')
+        : 'reading the belt direction…';
       $('trigger-info').textContent = info.trigger === 'line_crossing'
-        ? '- trigger: line at ' + Math.round(info.line_position * 100) + '% (' + info.line_orientation + ')'
+        ? '- trigger: line at ' + Math.round(info.line_position * 100) + '% (' + lineWhere + ')'
         : info.trigger ? '- trigger: on exit' : '';
 
       if (data.recent_tiles.length) renderLatest(data.recent_tiles[0], info); else clearLatest();

@@ -80,7 +80,16 @@ segmentation:
   # well-lit pixels — it's unstable/near-random on the near-gray glare and
   # shadow pixels every photo also has — see analyze_dataset.py), plus a
   # safety margin.
-  hsv_lower: [6, 0, 37]
+  #
+  # Hue floor lowered 6 -> 3 on 2026-10-11 (upper bound and the rest unchanged). In
+  # the laptop-webcam recordings a lighting/white-balance gradient shifts part of a
+  # tile toward red (measured on one intact tile: the lost region was hue 0-3, same
+  # brightness), those pixels fell out of the mask, the outline looked "broken"
+  # (corner fill 0.60) and a GOOD tile was rejected. Over all 92 graded frames from 5
+  # videos: floor 3 cuts corner-broken flags from 13 to 10 with no new false flags;
+  # going to 0 or wrapping past 179 starts flagging one lab-clip tile. Re-check
+  # against real rig photos - the original range came from 311 photos with a 6 floor.
+  hsv_lower: [3, 0, 37]
   hsv_upper: [15, 208, 225]
   # Minimum contour area (pixels) to be considered a tile rather than noise.
   # NOT re-derived from the photo dataset (see note above) — still the

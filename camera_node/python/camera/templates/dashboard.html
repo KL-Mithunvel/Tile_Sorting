@@ -126,7 +126,11 @@
   .progress i { display: block; height: 100%; width: 0; background: var(--accent); }
   .src-msg { min-height: 1.1em; font-size: 0.85rem; color: var(--muted); overflow-wrap: anywhere; }
   .src-msg.bad { color: var(--bad); }
-  .srcbar.viewonly .ctl, .srcbar.viewonly #src-tabs, .srcbar.viewonly #rec-btn { display: none; }
+  .srcbar.viewonly .ctl, .srcbar.viewonly #src-tabs, .srcbar.viewonly #rec-btn, .srcbar.viewonly .labrow { display: none; }
+  .labrow { border-top: 1px solid var(--line); padding-top: 0.6rem; margin-top: 0.2rem; }
+  .labrow .keys { color: var(--muted); font-size: 0.8rem; }
+  .labrow .last b { color: var(--accent); }
+  .btn.lab.on { background: var(--ok); border-color: var(--ok); color: #04121f; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -197,6 +201,31 @@
     <div class="src-row" id="progress-row" hidden>
       <div class="progress" aria-hidden="true"><i id="progress-bar"></i></div>
       <span class="muted" id="progress-text"></span>
+    </div>
+
+    <div class="src-row labrow" id="lab-row">
+      <h2 class="src-h">Label</h2>
+      <button type="button" class="btn lab" id="lab-btn" title="Save every graded tile, with your verdict, to data/labelled/&lt;date_time&gt;/">Start labelling</button>
+      <span class="muted" id="lab-info"></span>
+    </div>
+    <div class="src-row ctl labrow" id="lab-ctl" hidden>
+      <label class="fld">This batch is
+        <select id="lab-batch">
+          <option value="">(unknown - key each tile)</option>
+          <option value="fine">all fine</option>
+          <option value="chipped">all chipped</option>
+          <option value="cracked">all cracked</option>
+          <option value="both">all chipped + cracked</option>
+        </select>
+      </label>
+      <label class="fld">Tier
+        <select id="lab-tier">
+          <option value="">(none)</option><option value="3A">3A</option><option value="3B">3B</option>
+          <option value="4">4</option><option value="5">5</option>
+        </select>
+      </label>
+      <span class="last" id="lab-last"></span>
+      <span class="keys">keys: 1 fine · 2 chipped · 3 cracked · 4 both · 5 unsure · 6-9 tier 3A/3B/4/5 · 0 clear tier · Backspace clear verdict</span>
     </div>
 
     <div class="src-msg" id="src-msg" role="status"></div>
@@ -529,6 +558,59 @@
     }
   };
 
+  // ---------- live labelling: save each tile with your verdict ----------
+  const LAB_KEYS = {'1': 'fine', '2': 'chipped', '3': 'cracked', '4': 'both', '5': 'unsure'};
+  const TIER_KEYS = {'6': '3A', '7': '3B', '8': '4', '9': '5'};
+  const lab = () => (lastData && lastData.labelling) || null;
+
+  function renderLabelling(data) {
+    const l = data.labelling, can = !!data.controls, btn = $('lab-btn');
+    btn.classList.toggle('on', !!l);
+    btn.textContent = l ? 'Stop labelling' : 'Start labelling';
+    btn.disabled = !can;
+    $('lab-ctl').hidden = !l;
+    if (!l) { $('lab-info').textContent = 'Save each graded tile with your verdict (data/labelled/).'; return; }
+    $('lab-info').textContent = l.count + ' saved · ' + l.labelled + ' with a verdict · ' + l.folder;
+    // Do not fight a dropdown the operator has open.
+    if (document.activeElement !== $('lab-batch')) $('lab-batch').value = l.batch_label || '';
+    if (document.activeElement !== $('lab-tier')) $('lab-tier').value = l.batch_tier || '';
+    const t = l.last;
+    $('lab-last').innerHTML = t
+      ? 'Last tile <b>#' + t.seq + '</b> (' + esc(t.grade || '') + '): ' +
+        (t.label ? '<b>' + esc(t.label) + '</b>' : '<span class="muted">no verdict</span>') +
+        (t.tier ? ' · tier <b>' + esc(t.tier) + '</b>' : '')
+      : '<span class="muted">waiting for the first tile…</span>';
+  }
+
+  $('lab-btn').onclick = async () => {
+    if (lab()) {
+      const r = await post('/api/label/stop');
+      if (r) msg('Saved ' + r.labelling.count + ' tiles (' + r.labelling.labelled + ' with a verdict) in ' + r.labelling.path);
+    } else {
+      const r = await post('/api/label/start', {label: $('lab-batch').value || null, tier: $('lab-tier').value || null});
+      if (r) msg('Labelling into data/labelled/' + r.labelling.folder + '/');
+    }
+  };
+  $('lab-batch').onchange = () => post('/api/label/batch', {label: $('lab-batch').value || null});
+  $('lab-tier').onchange = () => post('/api/label/batch', {tier: $('lab-tier').value || null});
+
+  // Keys act on the tile the operator was looking at (its seq is sent), so a tile that
+  // crosses between the key press and the request cannot take the verdict.
+  document.addEventListener('keydown', async e => {
+    const l = lab();
+    if (!l || !l.last || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    const body = {seq: l.last.seq};
+    if (LAB_KEYS[e.key]) body.label = l.last.label === LAB_KEYS[e.key] ? null : LAB_KEYS[e.key];
+    else if (TIER_KEYS[e.key]) body.tier = l.last.tier === TIER_KEYS[e.key] ? null : TIER_KEYS[e.key];
+    else if (e.key === '0') body.tier = null;
+    else if (e.key === 'Backspace') { body.label = null; e.preventDefault(); }
+    else return;
+    const r = await post('/api/label/tile', body);
+    if (r && lastData && lastData.labelling) { lastData.labelling.last = r.verdict; renderLabelling(lastData); }
+  });
+
   loadSources();
   setInterval(loadSources, 10000);
 
@@ -568,6 +650,7 @@
 
       if (data.recent_tiles.length) renderLatest(data.recent_tiles[0], info); else clearLatest();
       renderSource(data);
+      renderLabelling(data);
 
       $('tile-rows').innerHTML = data.recent_tiles.map(t => {
         const crack = t.crack_detected

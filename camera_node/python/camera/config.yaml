@@ -369,6 +369,18 @@ recording:
   warmup_frames: 10
   fallback_fps: 15                   # only if the rate cannot be measured
 
+# Live labelling (the dashboard's "Label" panel, added 2026-10-12). A session saves every
+# graded tile with a HUMAN verdict: run tiles you already know are good / chipped / cracked
+# past the line with a batch verdict set, or key a verdict for the tile that just crossed.
+# Each tile is saved losslessly (PNG) beside the pipeline's readings in
+#   data/labelled/<date_time>/{tiles,context,frames}/ + labels.csv + human_labels.json
+# and the folder opens directly in development/annotate_tiles.py and tune_from_labels.py.
+labelling:
+  output_dir: "data/labelled"        # relative to the repo root; gitignored with data/
+  # Also keep the whole 1080p frame each tile was graded in (~3 MB per tile as PNG), so a
+  # tile can be re-graded, re-cropped or used for a defect box later.
+  save_full_frame: true
+
 dashboard:
   # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not
   # just localhost.

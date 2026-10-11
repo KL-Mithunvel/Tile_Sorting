@@ -21,14 +21,15 @@ import numpy as np
 from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
 from camera.frame_picker import BestFramePicker, belt_axis_from_line
-from camera.pipeline import TileRecord, grading_options, process_tile
+from camera.pipeline import TileRecord, grading_options, process_tile, tile_record_to_dict
 from camera.ratemeter import RateMeter
+from camera.label_session import LabelSession
 from camera.recorder import Recorder
 from camera.region_tracker import LineCrossingTracker, validate_line_config
 from camera.sharpness import edge_sharpness
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
-from camera.sources import recordings_root
+from camera.sources import REPO_ROOT, recordings_root
 from camera.tile_tracker import TileTracker
 
 log = logging.getLogger(__name__)
@@ -155,6 +156,7 @@ class SharedState:
         self._source_detail: Optional[str] = None
         self._playback: Optional[dict] = None  # file sources only
         self._recording: Optional[dict] = None  # set while recording
+        self._labelling: Optional[dict] = None  # set while a labelling session runs
         self._last_recording: Optional[dict] = None  # the one that just finished
         self._perf: Optional[dict] = None  # frame rates, skipped frames, the camera's real settings
 
@@ -192,6 +194,10 @@ class SharedState:
     def set_playback(self, playback: Optional[dict]) -> None:
         with self._lock:
             self._playback = dict(playback) if playback else None
+
+    def set_labelling(self, labelling: Optional[dict]) -> None:
+        with self._lock:
+            self._labelling = dict(labelling) if labelling else None
 
     def set_recording(self, recording: Optional[dict]) -> None:
         with self._lock:
@@ -259,6 +265,7 @@ class SharedState:
                 },
                 "recording": dict(self._recording) if self._recording else None,
                 "last_recording": dict(self._last_recording) if self._last_recording else None,
+                "labelling": dict(self._labelling) if self._labelling else None,
                 "perf": dict(self._perf) if self._perf else None,
             }
 
@@ -298,6 +305,8 @@ class CameraWorker:
         self._control_lock = threading.RLock()
         self._rec_lock = threading.Lock()  # serialises recorder.write() against stop()
         self._recorder: Optional[Recorder] = None
+        self._labels: Optional[LabelSession] = None  # a live labelling session, if one is open
+        self._labels_lock = threading.Lock()
         self._last_publish = 0.0
         self._read_failed_since: Optional[float] = None
         self._proc_meter = RateMeter(30)
@@ -413,6 +422,7 @@ class CameraWorker:
                     self.stop_recording()  # a Ctrl+C mid-recording must still save meta.json
                 except Exception:  # noqa: BLE001 - shutting down; nothing useful to do
                     log.exception("could not finalise the recording on shutdown")
+            self._labels = None  # files are written after every change; nothing to finalise
             self._halt()
             if self._capture is not None:
                 self._capture.stop()
@@ -452,6 +462,8 @@ class CameraWorker:
         with self._control_lock:
             if self._recorder is not None:
                 self.stop_recording()  # one recording is one source
+            if self._labels is not None:
+                self.stop_labelling()  # tile numbers restart with the source; a session must not span that
             self._halt()
             old = self._capture
             if old is not None:
@@ -473,6 +485,65 @@ class CameraWorker:
             self._state.reset_results()
             self._state.set_source(self._source, status="running")
             self._launch()
+
+    # ---- live labelling --------------------------------------------------
+    # Called from Flask's request threads; the worker thread adds tiles. The session
+    # object has its own lock, `_labels_lock` only guards the reference.
+
+    def start_labelling(self, batch_label: Optional[str] = None, batch_tier: Optional[str] = None) -> dict:
+        with self._labels_lock:
+            if self._labels is not None:
+                raise RuntimeError("a labelling session is already open")
+            cfg = self._config.get("labelling") or {}
+            root = REPO_ROOT / cfg.get("output_dir", "data/labelled")
+            session = LabelSession(
+                root, batch_label=batch_label, batch_tier=batch_tier,
+                save_full_frame=bool(cfg.get("save_full_frame", True)),
+                source_label=self._source.get("label", "camera"),
+            )
+            self._labels = session
+            summary = session.summary()
+        self._state.set_labelling(summary)
+        return summary
+
+    def stop_labelling(self) -> dict:
+        with self._labels_lock:
+            session, self._labels = self._labels, None
+        if session is None:
+            raise RuntimeError("no labelling session is open")
+        self._state.set_labelling(None)
+        return session.summary()
+
+    def set_label_batch(self, label=LabelSession.UNSET, tier=LabelSession.UNSET) -> dict:
+        session = self._labels
+        if session is None:
+            raise RuntimeError("no labelling session is open")
+        session.set_batch(label=label, tier=tier)
+        summary = session.summary()
+        self._state.set_labelling(summary)
+        return summary
+
+    def label_tile(self, seq: Optional[int] = None, **verdict) -> dict:
+        """Set a tile's verdict (default: the most recent tile). `verdict` takes
+        label= / tier= / note=; None clears one."""
+        session = self._labels
+        if session is None:
+            raise RuntimeError("no labelling session is open")
+        result = session.set_verdict(seq, **verdict)
+        self._state.set_labelling(session.summary())
+        return result
+
+    def _save_labelled_tile(self, record: TileRecord, region: TileRegion, frame: np.ndarray) -> None:
+        session = self._labels
+        if session is None:
+            return
+        try:
+            session.add_tile(tile_record_to_dict(record), record.tile_bgr, frame, region.bbox)
+        except OSError as exc:
+            # A full disk must cost the label, never the inspection of the next tile.
+            self._state.record_error(f"labelling could not save tile #{record.seq}: {exc}")
+            return
+        self._state.set_labelling(session.summary())
 
     # ---- recording -------------------------------------------------------
 
@@ -741,6 +812,10 @@ class CameraWorker:
                 else self._tracker.tile_count
             )
             self._state.record_tile(record, count)
+            # The frame the tile was graded in: with sharpest-frame picking that is an
+            # earlier frame than the current one.
+            pick_frame = pick.frame if pick is not None and pick.frame is not None else frame
+            self._save_labelled_tile(record, tile_region, pick_frame)
             self._graded[track_id] = (record.grade, record.model_grade)
             self._best_seen_region = None
 

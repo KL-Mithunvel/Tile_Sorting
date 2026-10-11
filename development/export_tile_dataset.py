@@ -103,10 +103,24 @@ def write_context(frame, region, path: Path) -> None:
     cv2.imwrite(str(path), frame[y0:y1, x0:x1], [cv2.IMWRITE_JPEG_QUALITY, 95])
 
 
+def find_videos(videos_dir: Path) -> list[tuple[Path, str]]:
+    """(path, name) of every video: loose files in the folder, plus the dashboard's
+    recording folders (<date_time>/video.mp4). A recording is named after its folder --
+    every one is called video.mp4, which would give all their tiles the same id."""
+    found = [(p, p.name) for p in videos_dir.glob("*") if p.is_file() and p.suffix.lower() in VIDEO_SUFFIXES]
+    for sub in videos_dir.glob("*"):
+        if sub.is_dir():
+            for inner in sorted(sub.glob("video.*")):
+                if inner.suffix.lower() in VIDEO_SUFFIXES:
+                    found.append((inner, sub.name + inner.suffix))
+                    break
+    return sorted(found, key=lambda pn: pn[1])
+
+
 def export(videos_dir: Path, out_dir: Path, only: str | None) -> Path:
-    videos = sorted(p for p in videos_dir.glob("*") if p.suffix.lower() in VIDEO_SUFFIXES)
+    videos = find_videos(videos_dir)
     if only:
-        videos = [p for p in videos if only in p.name]
+        videos = [(p, n) for p, n in videos if only in n]
     if not videos:
         raise SystemExit(f"no videos found in {videos_dir}" + (f" matching {only!r}" if only else ""))
 
@@ -120,13 +134,13 @@ def export(videos_dir: Path, out_dir: Path, only: str | None) -> Path:
     (out_dir / "context").mkdir(exist_ok=True)
     shutil.copyfile(REPO_ROOT / "camera_node" / "python" / "camera" / "config.yaml", out_dir / "config_used.yaml")
 
-    stems = unique_ids(p.name for p in videos)
+    stems = unique_ids(n for _, n in videos)
     rows: list[dict] = []
     video_info: list[dict] = []
     print(f"Exporting {len(videos)} video(s) to {out_dir}", flush=True)
 
-    for path in videos:
-        stem = stems[path.name]
+    for path, name in videos:
+        stem = stems[name]
         cap = cv2.VideoCapture(str(path))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -134,7 +148,7 @@ def export(videos_dir: Path, out_dir: Path, only: str | None) -> Path:
         before = len(rows)
         t0 = time.time()
 
-        def on_tile(record, region, frame, frame_index, _stem=stem, _name=path.name, _fps=fps) -> None:
+        def on_tile(record, region, frame, frame_index, _stem=stem, _name=name, _fps=fps) -> None:
             tid = f"{_stem}_t{record.seq:03d}"
             tile_file, context_file = f"tiles/{tid}.png", f"context/{tid}.jpg"
             cv2.imwrite(str(out_dir / tile_file), record.tile_bgr)  # PNG: lossless
@@ -147,12 +161,12 @@ def export(videos_dir: Path, out_dir: Path, only: str | None) -> Path:
         info: dict = {}
         process_video_file(str(path), config, save_snapshots=False, info=info, on_tile=on_tile)
         video_info.append({
-            "video": path.name, "stem": stem, "resolution": [width, height], "fps": round(fps, 3),
+            "video": name, "stem": stem, "resolution": [width, height], "fps": round(fps, 3),
             "size_mb": round(path.stat().st_size / 1_048_576, 1), "frames": info["frames"],
             "belt_found_in_frames": info["belt_frames"], "line_orientation": info["line_orientation"],
             "tiles": len(rows) - before,
         })
-        print(f"  {path.name}: {len(rows) - before} tiles, {time.time() - t0:.0f}s", flush=True)
+        print(f"  {name}: {len(rows) - before} tiles, {time.time() - t0:.0f}s", flush=True)
 
     write_labels(out_dir, rows)
     manifest = {

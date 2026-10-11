@@ -67,6 +67,7 @@ def create_app(
                 "source": status["source"],
                 "recording": status["recording"],
                 "last_recording": status["last_recording"],
+                "labelling": status["labelling"],
                 "perf": status["perf"],
                 "controls": bool(controller is not None and controls_enabled),
             }
@@ -174,6 +175,53 @@ def create_app(
         if denied:
             return denied
         return _run(lambda: {"recording": controller.stop_recording()})
+
+    # ---- live labelling --------------------------------------------------
+    # A key absent from the JSON body means "leave it", an explicit null means "clear it".
+
+    def _fields(body: dict, names=("label", "tier", "note")) -> dict:
+        return {k: body[k] for k in names if k in body}
+
+    @app.route("/api/label/start", methods=["POST"])
+    def api_label_start():
+        denied = _guard()
+        if denied:
+            return denied
+        body = _body()
+        return _run(lambda: {"labelling": controller.start_labelling(body.get("label"), body.get("tier"))})
+
+    @app.route("/api/label/stop", methods=["POST"])
+    def api_label_stop():
+        denied = _guard()
+        if denied:
+            return denied
+        return _run(lambda: {"labelling": controller.stop_labelling()})
+
+    @app.route("/api/label/batch", methods=["POST"])
+    def api_label_batch():
+        denied = _guard()
+        if denied:
+            return denied
+        fields = _fields(_body(), ("label", "tier"))
+        return _run(lambda: {"labelling": controller.label_batch(**fields)})
+
+    @app.route("/api/label/tile", methods=["POST"])
+    def api_label_tile():
+        denied = _guard()
+        if denied:
+            return denied
+        body = _body()
+        fields = _fields(body)
+        seq = body.get("seq")
+
+        def go():
+            if seq is not None and (isinstance(seq, bool) or not isinstance(seq, int)):
+                raise ValueError("seq must be a whole number")
+            if not fields:
+                raise ValueError("send label, tier and/or note")
+            return {"verdict": controller.label_tile(seq, **fields)}
+
+        return _run(go)
 
     @app.route("/api/cameras/scan", methods=["POST"])
     def api_cameras_scan():

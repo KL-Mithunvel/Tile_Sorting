@@ -151,6 +151,20 @@ class StationController:
     def stop_recording(self) -> dict:
         return self.worker.stop_recording()
 
+    # ---- live labelling --------------------------------------------------
+
+    def start_labelling(self, label=None, tier=None) -> dict:
+        return self.worker.start_labelling(batch_label=label, batch_tier=tier)
+
+    def stop_labelling(self) -> dict:
+        return self.worker.stop_labelling()
+
+    def label_batch(self, **fields) -> dict:
+        return self.worker.set_label_batch(**fields)
+
+    def label_tile(self, seq=None, **fields) -> dict:
+        return self.worker.label_tile(seq, **fields)
+
     # ---- what can be opened ---------------------------------------------
 
     def scan_cameras(self, wait: bool = False) -> None:

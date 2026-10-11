@@ -431,3 +431,55 @@ helpers are `dataset_tools.py`.
 Sample photos live in the repo root's `data/` (gitignored — see `.gitignore`,
 audio/image datasets never get committed). Both tools default their file
 pickers to that folder if it exists.
+
+
+## `annotate_tiles.py` - label tiles yourself (added 2026-10-12)
+
+A small Tkinter tool for ground truth. Opens a tile dataset (from `export_tile_dataset.py`)
+or any plain folder of pictures (e.g. the Pi's `camera_captures`):
+
+    python development\annotate_tiles.py [folder]
+
+Two verdicts per tile: **defect** (fine / chipped / cracked / both / unsure - the same
+vocabulary as the review sheet) and **tier** (3A / 3B / 4 / 5, the cosmetic grade). Zoom to
+100-400 % with drag-to-pan, toggle the wider belt context, and a note box. The pipeline's own
+reading is hidden until you press `H`, so it cannot bias you. Every change is saved at once
+to `<folder>/human_labels.json`, in the review-sheet export format, so the existing tools
+take it directly:
+
+    python development\tune_from_labels.py <folder>\human_labels.json
+    python development\export_tile_dataset.py --merge-labels <folder>\human_labels.json --into <folder>
+
+A **plain folder** carries no measurements, so its labels cannot tune thresholds - label a
+tile dataset for that. Pure logic is in `annotation_tools.py` (tests:
+`tests/test_dev_annotation_tools.py`); the window itself was driven through a scripted
+session on the real 92-tile dataset but has no automated tests.
+`export_tile_dataset.py --videos` now also accepts the dashboard's `<date_time>\video.mp4`
+recording folders (named after the folder).
+
+
+### Defect marks (right-click) in `annotate_tiles.py`
+
+Right-click the tile picture to record WHERE the defect is: a crack is a click at each end,
+a chip is one at the damaged corner (`U` undoes the last). Points are in the tile picture's
+own pixels, drawn on the tile, and saved in `human_labels.json` as `marks: [{x, y, kind}]`
+beside the verdict (kind follows the defect label: chipped -> chip, cracked -> crack).
+Nothing consumes the marks yet: they are the ground truth for a later "does the detector's
+crack contour land on the real crack" check, which does not exist.
+
+## `review_video.py` - mark what the pipeline missed or invented (added 2026-10-12)
+
+The tile annotator only sees tiles the pipeline already picked, so it cannot say "you missed
+one". This opens a raw video (or a Pi recording folder), runs the shipped pipeline over it once
+(cached beside the video), and shows every graded tile as a tick on a timeline and a box on its
+frame:
+
+    python development\review_video.py [video file or recording folder]
+
+`M` then click = a **missed** tile, `F` = the nearest graded tile is **not a tile**, `N` = a note
+on this frame, `U` undo, `,` `.` previous/next graded tile, `[` `]` previous/next mark, `E`
+exports every marked frame as a PNG. Saved at once to `<video>.review.json` (`review_marks.json`
+inside a recording folder) with a **corrected count = counted - false + missed**, which is the
+number to compare with the dashboard's tile count. The window was driven through a scripted
+session on the phone clip (7 tiles, cache reuse, marks persisted); it has no automated tests.
+Pure logic: `video_review_tools.py`, `tests/test_dev_video_review_tools.py`.

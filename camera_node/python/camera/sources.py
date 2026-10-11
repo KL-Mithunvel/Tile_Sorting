@@ -110,7 +110,10 @@ def describe_recording(folder: Path) -> Optional[dict]:
         "duration_s": duration,
         "frames": meta.get("frames"),
         "source": meta.get("source"),
-        "complete": bool(meta),
+        # recorder.py writes status "recording" at the start and "complete" on a
+        # clean stop; anything else (no meta, "recording") means the app was
+        # killed mid-recording. Still listed and playable, just flagged.
+        "complete": meta.get("status") == "complete",
     }
 
 

@@ -56,8 +56,8 @@ class TestListing:
         return folder
 
     def test_lists_newest_first_with_a_readable_label(self, tmp_path):
-        self.make(tmp_path, "2026-10-11_09-00-00", {"duration_s": 3.0, "width": 640, "height": 480})
-        self.make(tmp_path, "2026-10-11_14-30-05", {"duration_s": 12.34, "width": 640, "height": 480, "frames": 185})
+        self.make(tmp_path, "2026-10-11_09-00-00", {"status": "complete", "duration_s": 3.0, "width": 640, "height": 480})
+        self.make(tmp_path, "2026-10-11_14-30-05", {"status": "complete", "duration_s": 12.34, "width": 640, "height": 480, "frames": 185})
         rows = list_recordings(tmp_path)
         assert [r["id"] for r in rows] == ["2026-10-11_14-30-05", "2026-10-11_09-00-00"]
         assert rows[0]["label"] == "2026-10-11 14:30:05 · 12.3 s · 640×480"

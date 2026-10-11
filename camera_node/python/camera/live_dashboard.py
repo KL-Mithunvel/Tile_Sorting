@@ -5,6 +5,12 @@ Usage (from camera_node/python/, with the venv active):
     python -m camera.live_dashboard                  # run it
     python -m camera.live_dashboard --list-devices   # what can this machine open?
     python -m camera.live_dashboard --backend usb    # override config.yaml
+    python -m camera.live_dashboard --device 1       # a USB camera by index
+    python -m camera.live_dashboard --video data/recordings/2026-10-11_14-30-05/video.mp4 --loop
+
+The source can also be changed from the dashboard itself (Source panel: pick a
+camera, open a recording or a file under data/, record the live feed), so none
+of these flags is required.
 
 Then open http://<this machine's IP>:5000/ from any browser on the same
 network (host defaults to 0.0.0.0 in config.yaml, so it's not limited to
@@ -25,9 +31,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from camera.capture import create_capture, list_cameras, load_config
+from camera.capture import list_cameras, load_config
 from camera.dashboard import create_app
-from camera.worker import CameraWorker, SharedState
+from camera.station import StationController
+from camera.worker import SharedState
 
 
 def print_devices() -> None:
@@ -69,6 +76,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Override config.yaml's camera.backend for this run.",
     )
     parser.add_argument(
+        "--device",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Open USB camera index N (see --list-devices) instead of config.yaml's camera.device_index.",
+    )
+    parser.add_argument(
+        "--video",
+        default=None,
+        metavar="PATH",
+        help="Start on a saved video instead of a camera (must be under data/), "
+        "e.g. one of the dashboard's recordings.",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="With --video, replay the file in a loop instead of stopping at the end.",
+    )
+    parser.add_argument(
         "--no-dashboard",
         action="store_true",
         help="Run the vision pipeline without serving the web dashboard "
@@ -84,39 +110,50 @@ def main(argv: list[str] | None = None) -> None:
         print_devices()
         return
 
+    if args.device is not None and args.video is not None:
+        print("--device and --video are alternatives: pick one.", file=sys.stderr)
+        sys.exit(2)
+    if args.loop and args.video is None:
+        print("--loop only applies with --video.", file=sys.stderr)
+        sys.exit(2)
+
     config = load_config()
     if args.backend is not None:
         config["camera"]["backend"] = args.backend
 
-    try:
-        capture = create_capture(config)
-    except ValueError as exc:
-        print(f"Bad camera configuration: {exc}", file=sys.stderr)
-        sys.exit(1)
-
     state = SharedState()
-    worker = CameraWorker(capture, config, state)
-
-    print(f"Camera backend: {type(capture).__name__}")
+    try:
+        controller = StationController(config, state)
+    except ValueError as exc:
+        print(f"Bad configuration: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     try:
-        worker.start()
-    except RuntimeError as exc:
-        print(f"Failed to start camera capture: {exc}", file=sys.stderr)
-        sys.exit(1)
+        controller.start(device=args.device, video=args.video, loop=args.loop)
+    except (RuntimeError, ValueError) as exc:
+        if args.no_dashboard:
+            print(f"Failed to start the video source: {exc}", file=sys.stderr)
+            sys.exit(1)
+        # With a dashboard this is not fatal: it can still be pointed at a
+        # camera or a file from the page.
+        print(f"No video source yet: {exc}\nOpen the dashboard and choose one.", file=sys.stderr)
+        state.set_source({"kind": "none", "label": "No source"}, status="error", detail=str(exc))
+
+    source = controller.worker.source
+    print(f"Video source: {source.get('label')}")
 
     if args.no_dashboard:
         print("Dashboard disabled (--no-dashboard). Ctrl+C to stop.")
         try:
-            worker.join()
+            controller.worker.join()
         except KeyboardInterrupt:
             pass
         finally:
-            worker.stop()
+            controller.shutdown()
         return
 
-    app = create_app(state)
     dash_cfg = config["dashboard"]
+    app = create_app(state, controller=controller, controls_enabled=dash_cfg.get("controls_enabled", True))
     print(f"Dashboard running at http://{dash_cfg['host']}:{dash_cfg['port']}/ — Ctrl+C to stop.")
 
     try:
@@ -124,7 +161,7 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        worker.stop()
+        controller.shutdown()
 
 
 if __name__ == "__main__":

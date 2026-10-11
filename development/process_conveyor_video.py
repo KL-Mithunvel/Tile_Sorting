@@ -80,7 +80,7 @@ import cv2
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_VIDEO = REPO_ROOT / "data" / "WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4"
+DEFAULT_VIDEO = REPO_ROOT / "data" / "videos" / "WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4"
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
 sys.path.insert(0, str(REPO_ROOT / "camera_node" / "python"))

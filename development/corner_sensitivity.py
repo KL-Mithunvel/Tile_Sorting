@@ -90,7 +90,7 @@ def intact_photo_metrics() -> tuple[np.ndarray, np.ndarray]:
 
 
 BELT_GREEN_BGR = (40, 140, 40)  # paint chips in the belt's colour: the tile "isn't there"
-CLIP = REPO_ROOT / "data" / "WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4"
+CLIP = REPO_ROOT / "data" / "videos" / "WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4"
 CLIP_FRAME = 511  # a clean frame of one whole tile on the belt
 
 

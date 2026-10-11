@@ -1,7 +1,7 @@
 # Camera node — detection hardening build plan
 
 Written 2026-10-09. Context: running the dashboard on the real belt clip
-(`data/WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4`) showed three problems that
+(`data/videos/WhatsApp Video 2026-08-26 at 7.27.04 PM.mp4`) showed three problems that
 all end in "a photo that is not a tile gets graded":
 
 1. A brown sandal merged with the dark wood rim beside the belt segments as one

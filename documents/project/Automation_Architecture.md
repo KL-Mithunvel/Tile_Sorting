@@ -358,6 +358,19 @@ acoustic on the UNO Q for its MCU half; here the MCU half is supplied by a Nano 
   The Nano and the UNO Q share **no hardware or wiring** (owner, 2026-10-10) — they
   coordinate only through the Pi/master over the network.
 
+**Decision (2026-10-11, owner) — the Pi decides the tile's final grade, not the master.**
+The Pi's acoustic service takes each camera result (over MQTT, from the camera service on
+the same Pi), adds the tap result, computes the final grade and sends it straight to the
+UNO Q; the **broker also runs on the Pi**. The master PC becomes an optional
+observer / data collector / commander (it subscribes to the same topics and may send
+`station/cmd`) and the line runs without it. The camera mints the tile id. This supersedes
+§12's "master creates `tile_id`" and "broker on the master" for the Phase 1 prototype.
+Built and unit-tested on the dev machine, never run on the Pi — design, message contract,
+fail-closed rules and bring-up checklist: `documents/programming/station_coordination.md`.
+Consequence for the §5.3 risks above: the Pi is now also the line's decision point, so the
+single-point-of-failure item (6) matters more, and the UNO Q must acknowledge every final
+(`tile/<id>/ack`) and de-duplicate on `tile_id`.
+
 The analysis load here does not argue the other way: the runtime pipeline is an FFT,
 octave bands, decay and a handful of scalar features feeding a small classifier
 (`Acoustic_Analysis_Methods.md`), which is milliseconds of work and a few MB of working

@@ -168,11 +168,11 @@ isolated LAN, **not** fine if the router ever gets an uplink.
 | GUI | Runs on | Port | URL | Status |
 |---|---|---|---|---|
 | Camera dashboard | `tile-pi` | 5000 | `http://192.168.1.11:5000/` | exists (`camera_node/.../config.yaml`) |
-| Acoustic dashboard | `tile-pi` | 5001 | `http://192.168.1.11:5001/` | **reserved** — acoustic has no web GUI yet (matplotlib only) |
+| Acoustic + decision station (run view `/`, service view `/service`) | `tile-pi` | 5001 | `http://192.168.1.11:5001/` | **exists, never run on the Pi** (2026-10-11, `acoustic_node/python/acoustic/dashboard.py`; `station.dashboard` in `acoustic/config.yaml`) |
 | Pick-and-place twin | `tile-gantry` | 5050 | `http://192.168.1.15:5050/` | exists (`pick_place/config.yaml`) |
 | Pick-and-place I/O bench test | `tile-gantry` | 5060 | `http://192.168.1.15:5060/` | exists (`pick_place_node/bench_tests/io_smoke_test/`); bench only, not run alongside the twin |
 | Master dashboard | `tile-master` | 8000 | `http://192.168.1.10:8000/` | **reserved** — not built |
-| MQTT broker | `tile-master` | 1883 | `mqtt://192.168.1.10:1883` | per §12; plain, unauthenticated |
+| MQTT broker | **`tile-pi`** (changed 2026-10-11) | 1883 | `mqtt://192.168.1.11:1883` | mosquitto on the Pi, so the line runs without the master PC; the master and UNO Q connect to it. Plain, unauthenticated. Installed by `acoustic_node/deploy/install_pi.sh`, never run |
 
 Port conflicts to watch: on `tile-pi` the camera and acoustic services must not share a
 port; 5000 is also the default for other Flask apps.
@@ -184,6 +184,12 @@ port; 5000 is also the default for other Flask apps.
 **Decided earlier (not by this plan):** MQTT over the wired LAN, broker on the master PC,
 topic structure in `Automation_Architecture.md` §12 (`tile/<id>/camera/result`,
 `machine/robot/command`, …). This network plan changes none of that.
+
+**Amended 2026-10-11 (owner): the broker runs on `tile-pi`, not on the master PC, and the
+Pi computes the final tile grade itself** (camera result + tap result) and sends it to
+the UNO Q. The master PC is an optional observer/collector/commander that connects to the
+Pi's broker; the line must run without it. The camera mints the tile id, not the master.
+Message contract and behaviour: `documents/programming/station_coordination.md`.
 
 **Consequence of the shared Pi:** `tile-pi` publishes *both* `tile/<id>/camera/result`
 and `tile/<id>/acoustic/result`, from two separate processes, under two MQTT client IDs.

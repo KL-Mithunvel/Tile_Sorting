@@ -1,0 +1,34 @@
+; systemd unit TEMPLATE for the acoustic / decision station (Raspberry Pi 5).
+;
+; @PYTHON_DIR@ and @RUN_USER@ are substituted by deploy/install_pi.sh — do not
+; install this file directly. Runs beside tile-camera.service as a SEPARATE
+; process (Automation_Architecture.md §5.3): a busy camera thread must never
+; starve the audio callback, and restarting one must not restart the other.
+
+[Unit]
+Description=Tile Sorting — acoustic + decision station
+Documentation=https://github.com/KL-Mithunvel/Tile_Sorting
+; The station talks to the broker on this same Pi, so wait for it. The broker
+; is mosquitto.service; the station also retries by itself if it comes up late.
+After=network-online.target mosquitto.service sound.target
+Wants=network-online.target mosquitto.service
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=@RUN_USER@
+; audio: the USB microphone (ALSA) — without this group PortAudio sees no input.
+SupplementaryGroups=audio
+WorkingDirectory=@PYTHON_DIR@
+; System interpreter, like the camera service: apt packages, not a venv.
+ExecStart=/usr/bin/python3 @PYTHON_DIR@/run_station.py
+Environment=PYTHONUNBUFFERED=1
+
+; Come back by itself. A station that stays down gives the line no decisions,
+; and the GUI cannot show why if its own process is gone.
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

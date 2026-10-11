@@ -171,7 +171,7 @@ isolated LAN, **not** fine if the router ever gets an uplink.
 | Acoustic + decision station (run view `/`, service view `/service`) | `tile-pi` | 5001 | `http://192.168.1.11:5001/` | **exists, never run on the Pi** (2026-10-11, `acoustic_node/python/acoustic/dashboard.py`; `station.dashboard` in `acoustic/config.yaml`) |
 | Pick-and-place twin | `tile-gantry` | 5050 | `http://192.168.1.15:5050/` | exists (`pick_place/config.yaml`) |
 | Pick-and-place I/O bench test | `tile-gantry` | 5060 | `http://192.168.1.15:5060/` | exists (`pick_place_node/bench_tests/io_smoke_test/`); bench only, not run alongside the twin |
-| Master dashboard | `tile-master` | 8000 | `http://192.168.1.10:8000/` | **reserved** — not built |
+| Master dashboard | `tile-master` | 8000 | `http://192.168.1.10:8000/` | **exists, laptop-tested only** (`master_node/`, 2026-10-11); optional — the line runs without it; commands off by default |
 | MQTT broker | **`tile-pi`** (changed 2026-10-11) | 1883 | `mqtt://192.168.1.11:1883` | mosquitto on the Pi, so the line runs without the master PC; the master and UNO Q connect to it. Plain, unauthenticated. Installed by `acoustic_node/deploy/install_pi.sh`, never run |
 
 Port conflicts to watch: on `tile-pi` the camera and acoustic services must not share a

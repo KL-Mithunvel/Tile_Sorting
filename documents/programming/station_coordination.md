@@ -126,6 +126,11 @@ consume `FinalQueue.start_next()` / `finish()` does not exist. It must:
 | `acoustic_node/python/run_station.py` | systemd entry point (the old `main.py` is the UNO Q App Lab stub, untouched) |
 | `acoustic_node/deploy/` | `tile-acoustic.service`, `install_pi.sh` (also installs mosquitto) |
 | `camera_node/python/camera/publisher.py` | camera side of the contract; `config.yaml` `mqtt:` (off by default) |
+| `acoustic_node/python/acoustic/tap_protocol.py`, `tap_bridge.py` | Nano serial link (spec: `nano_serial_protocol.md`) |
+| `acoustic_node/python/fusion/stats.py` | camera->tap transit-time summary (suggested `max_wait_s`) |
+| `acoustic_node/deploy/kiosk/` | Chromium kiosk autostart for the Pi's screen |
+| `pick_place_node/python/pick_place/tile_feed.py` | the UNO Q's ordered, de-duplicating, acknowledging queue of finals |
+| `master_node/` | optional PC observer / collector / commander (:8000) |
 | `development/fake_station_peers.py` | fake camera / striker / UNO Q against a real broker |
 | `tests/test_fusion_*.py`, `test_acoustic_features.py`, `test_acoustic_station.py`, `test_camera_publisher.py`, `test_station_contract.py` | the pure parts and the contract between the two nodes |
 | `data/station/tiles.db` | the station's own record, one row per tile (gitignored) |
@@ -152,7 +157,11 @@ Config: `acoustic_node/python/acoustic/config.yaml` → `station:`; camera →
    camera → sound → final. Check the tap's waveform in the service view looks like a strike.
 8. Only then consider `trigger.mode: hardware` (needs the Nano bridge publishing
    `station/tap`) and, much later, `final.vote_enabled`.
-9. Kiosk: Chromium fullscreen on `http://localhost:5001/`.
+9. Kiosk: `./acoustic_node/deploy/kiosk/install_kiosk.sh` (Chromium fullscreen on
+   `http://localhost:5001/`), then log out and in. Check which autostart file your image honours.
+10. UNO Q: `python -m pick_place.tile_feed --host 192.168.1.11 --auto-pick 2` — confirm finals arrive,
+    are acknowledged once, and the run view's UNO Q chip goes green.
+11. Master PC (optional): `python -m master.live_master --host 192.168.1.11`.
 
 ## 7. What is and is not verified
 

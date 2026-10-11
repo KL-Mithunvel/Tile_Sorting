@@ -161,9 +161,19 @@ class StationController:
                 return
             self._scanning = True
 
+        # Never probe the camera that is streaming right now: opening it a second
+        # time breaks the live feed on Windows (see capture.list_cameras).
+        source = self.worker.source
+        in_use = (
+            {source["index"]}
+            if self.worker.capture is not None and source.get("kind") == "camera"
+            and not source.get("csi") and source.get("index") is not None
+            else set()
+        )
+
         def run() -> None:
             try:
-                found = self._lister()
+                found = self._lister(skip_usb=in_use)
             except Exception:  # noqa: BLE001 - a probe that crashes must not take the page down
                 found = {"usb": [], "csi": []}
             with self._scan_lock:

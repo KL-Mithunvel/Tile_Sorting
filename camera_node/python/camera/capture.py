@@ -365,15 +365,24 @@ def create_capture(config: dict):
     )
 
 
-def list_cameras(max_usb_index: int = 8) -> dict:
+def list_cameras(max_usb_index: int = 8, skip_usb=()) -> dict:
     """Enumerate what this machine can actually open, for --list-devices.
 
     USB detection works by trying to open each index, which is the only
     portable way with OpenCV — it is slow-ish and prints backend warnings on
     some systems. CSI detection asks libcamera directly.
+
+    `skip_usb` lists indices NOT to probe. Probing a camera that is already
+    streaming is not harmless: on Windows the second open takes the device away
+    and the live capture starts failing every read (seen on the real webcam: a
+    scan triggered by loading the dashboard froze the running feed). The caller
+    passes the index it has open and lists that camera itself.
     """
+    skip = set(skip_usb)
     usb: list[dict] = []
     for index in range(max_usb_index):
+        if index in skip:
+            continue
         cap = cv2.VideoCapture(index)
         try:
             if cap.isOpened():

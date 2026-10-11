@@ -96,7 +96,7 @@ def station(tmp_path):
 
     ctl = StationController(
         cfg, state,
-        lister=lambda: {"usb": [{"index": 0, "width": 640, "height": 480, "fps": 30.0},
+        lister=lambda skip_usb=(): {"usb": [{"index": 0, "width": 640, "height": 480, "fps": 30.0},
                                 {"index": 2, "width": 1280, "height": 720, "fps": 30.0}], "csi": []},
         usb_factory=usb,
     )
@@ -149,8 +149,28 @@ class TestOpeningCameras:
         s = station.sources()
         assert s["scanned"] is True and s["scanning"] is False
 
+    def test_a_scan_never_probes_the_camera_that_is_streaming(self, station):
+        """Regression, found on the real webcam: loading the dashboard started a
+        scan that opened camera 0 a second time, which on Windows takes the
+        device from the running capture and freezes the live feed."""
+        asked = []
+        station._lister = lambda skip_usb=(): asked.append(set(skip_usb)) or {"usb": [], "csi": []}
+        station.scan_cameras(wait=True)
+        assert asked[-1] == set()                      # nothing open yet: probe everything
+
+        station.open_camera(3)
+        station.scan_cameras(wait=True)
+        assert asked[-1] == {3}                        # camera 3 is streaming: leave it alone
+
+    def test_a_file_source_has_no_camera_to_protect(self, station, tmp_path):
+        asked = []
+        station._lister = lambda skip_usb=(): asked.append(set(skip_usb)) or {"usb": [], "csi": []}
+        station.worker.switch_source(FeedCapture(tile_pass(), endless=True), {"kind": "file", "label": "x"})
+        station.scan_cameras(wait=True)
+        assert asked[-1] == set()
+
     def test_a_crashing_scan_does_not_break_the_page(self, station):
-        station._lister = lambda: (_ for _ in ()).throw(OSError("probe blew up"))
+        station._lister = lambda skip_usb=(): (_ for _ in ()).throw(OSError("probe blew up"))
         station.scan_cameras(wait=True)
         assert station.sources()["cameras"] == {"usb": [], "csi": []}
 

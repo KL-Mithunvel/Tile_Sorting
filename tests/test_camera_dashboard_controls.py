@@ -47,7 +47,7 @@ def api(tmp_path):
     state = SharedState()
     ctl = StationController(
         cfg, state,
-        lister=lambda: {"usb": [{"index": 0, "width": 640, "height": 480, "fps": 30.0}], "csi": []},
+        lister=lambda skip_usb=(): {"usb": [{"index": 0, "width": 640, "height": 480, "fps": 30.0}], "csi": []},
         usb_factory=lambda c: Cam(fail=c["camera"]["device_index"] == 7),
         file_factory=lambda p, loop, realtime: PacedVideoCapture(p, loop=loop, realtime=False),
     )

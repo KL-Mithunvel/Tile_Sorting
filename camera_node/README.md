@@ -196,9 +196,19 @@ The dashboard has a **Source** bar at the top. Nothing on the command line is re
 Two things to know. Only files **inside `data/`** can be opened from the page (the dashboard
 is served on the network). And anyone who can reach the dashboard can switch the source or
 start a recording; set `dashboard.controls_enabled: false` (or `host: "127.0.0.1"`) on a
-station that shouldn't allow that. A video's **trigger line orientation** is still set in
-`config.yaml` (`trigger_line.orientation`): footage where the belt runs top-to-bottom, like
-the sample clip, needs `"horizontal"`.
+station that shouldn't allow that.
+
+**The trigger line is automatic.** `trigger_line.orientation: "auto"` (the default) makes it
+perpendicular to the belt and puts it at `position: 0.5`, the middle of the frame, whichever
+way the belt runs, so a portrait phone clip and a landscape webcam need no setting. It reads
+the belt's direction from `segmentation.belt_roi` over the first few frames, so that must be
+on (`mode: color` or `fixed`). The header above the video says "horizontal, perpendicular to
+the belt" once it knows. Force `"vertical"` / `"horizontal"` only if the belt can't be
+detected.
+
+**Sample videos** live in `data/videos/` (gitignored): the phone clip and four 1920×1080
+laptop-webcam recordings. The belt in those recordings is teal, not green, which is why
+`belt_roi.hsv_upper` reaches hue 95.
 
 ## Running it on the Pi station
 

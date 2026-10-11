@@ -65,12 +65,14 @@ def test_mock_conforms_to_backend_protocol_via_factory():
     assert isinstance(backend, GantryBackend)
 
 
-def test_factory_rejects_serial_and_unknown():
+def test_factory_rejects_unknown_and_reports_an_unopenable_serial_port():
     from pick_place.gantry_backend import create_backend
     from pick_place.mock_state import load_config
+    from pick_place.serial_link import LinkError
 
     cfg = load_config()
-    with pytest.raises(NotImplementedError):
+    cfg["gantry"]["serial"]["port"] = "NO_SUCH_PORT"
+    with pytest.raises(LinkError):  # pyserial missing or port absent: a clear error either way
         create_backend({**cfg, "backend": "serial"})
     with pytest.raises(ValueError):
         create_backend({**cfg, "backend": "nope"})

@@ -30,7 +30,8 @@ ENCODER_AXES = ("X", "Y", "Z", "A")  # A = encoder on the Y beam's second (clone
 HOME_TARGETS = ("ALL",) + AXES
 MOTION_VERBS = ("HOME", "MOVE", "JOG")
 
-ERR_REASONS = ("BAD_CMD", "NOT_HOMED", "OUT_OF_BOUNDS", "BUSY", "VACUUM_TIMEOUT", "ALARM_ACTIVE")
+# STOPPED: a motion that was cancelled by STOP or by an alarm (it gets this instead of `done`).
+ERR_REASONS = ("BAD_CMD", "NOT_HOMED", "OUT_OF_BOUNDS", "BUSY", "VACUUM_TIMEOUT", "ALARM_ACTIVE", "STOPPED")
 
 
 # ---- commands (Linux -> MCU) -------------------------------------------------

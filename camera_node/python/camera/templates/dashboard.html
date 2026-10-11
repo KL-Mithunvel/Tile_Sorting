@@ -289,7 +289,8 @@
     // which tracked tile it was - not a constant. 'OK' used to be hardcoded here.
     setStage('st-capture', 'done good',
       t.crop_w ? t.crop_w + '×' + t.crop_h + ' px' : '-',
-      (info.trigger === 'line_crossing' ? 'at line' : 'on exit') + (t.track_id != null ? ' · #' + t.track_id : ''));
+      (info.trigger === 'line_crossing' ? 'at line' : 'on exit') + (t.track_id != null ? ' · #' + t.track_id : '') +
+      (t.sharpness_candidates > 1 ? ' · sharpest of ' + t.sharpness_candidates : ''));
     setStage('st-crack', 'done ' + (t.crack_detected ? (t.crack_severity === 'major' ? 'bad' : 'warn') : 'good'),
       t.crack_detected ? t.crack_severity + ' ' + t.crack_length_px + 'px' : 'none', fmtMs(t.crack_ms));
     setStage('st-corner', 'done ' + (t.corner_broken ? 'bad' : 'good'),

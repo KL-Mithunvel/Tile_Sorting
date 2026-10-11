@@ -259,6 +259,17 @@ trigger_line:
   orientation: "auto"
   # How many frames with a readable belt must agree before "auto" commits.
   auto_frames: 8
+  # Grade the SHARPEST frame near the line, not just the crossing frame (added
+  # 2026-10-11). The tile is moving (~14 px/frame on the sample belt) so each frame is
+  # motion-blurred, by different amounts. For every tile, frames within +/- this
+  # fraction of the frame of the line are scored (sharpness.edge_sharpness: edge
+  # steepness along the belt) and, once the tile has crossed and left that stretch,
+  # the best one is graded. Costs a few frames of delay and a graded position up to
+  # this far from the line. 0 = off: grade the crossing frame itself. Must exceed
+  # hysteresis; ~9 frames either side at the sample belt speed.
+  sharpest_band: 0.06
+  # Stop waiting after this many frames in the band (a tile that stops on the line).
+  sharpest_max_frames: 30
   # Which way across the line counts. Set this to the conveyor's actual travel
   # so a tile nudged backwards is not graded twice. "forward" = the centre's
   # coordinate increasing (left->right, or top->bottom). "both" accepts either.

@@ -29,8 +29,10 @@ from typing import Any, Callable, Optional
 from camera.capture import VideoFileCapture, load_config
 from camera.grading_model import TileGradeModel
 from camera.region_tracker import LineCrossingTracker, validate_line_config
+from camera.frame_picker import BestFramePicker, belt_axis_from_line
 from camera.pipeline import TileRecord, grading_options, process_tile, tile_record_to_dict
 from camera.segmentation import TileRegion, locate_tiles
+from camera.sharpness import edge_sharpness
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
@@ -104,6 +106,10 @@ def process_video_file(
     model = TileGradeModel.from_config(config)
     grading_opts = grading_options(config, model)
 
+    picker = BestFramePicker(
+        band=float(line_cfg.get("sharpest_band", 0.0)),
+        max_frames=int(line_cfg.get("sharpest_max_frames", 30)),
+    )
     tracker = TileTracker(
         min_present_frames=config["tile_tracker"]["min_present_frames"],
         min_absent_frames=config["tile_tracker"]["min_absent_frames"],
@@ -128,10 +134,18 @@ def process_video_file(
             tile_present = region is not None
             departed = tracker.process_frame(tile_present)
 
-            regions_to_process: list[TileRegion] = []
+            # (region, sharpness, candidates, the frame it came from, that frame's index)
+            graded: list[tuple] = []
             if mode == "line_crossing":
-                regions_to_process = [
-                    o.region for o in crossing.update(regions, belt_axis=getattr(belt, "axis", None)) if o.crossed
+                belt_axis = getattr(belt, "axis", None)
+                observations = crossing.update(regions, belt_axis=belt_axis)
+                belt_axis = belt_axis or belt_axis_from_line(crossing.orientation)
+                graded = [
+                    (p.region, p.score, p.candidates, p.frame, p.frame_index)
+                    for p in picker.update(
+                        observations, crossing.orientation, line_cfg.get("position", 0.5),
+                        lambda r: edge_sharpness(frame, r, belt_axis), frame=frame, frame_index=frames_read - 1,
+                    )
                 ]
             else:
                 if tile_present:
@@ -140,9 +154,9 @@ def process_video_file(
                     if best_seen_region is None or region.area_px > best_seen_region.area_px:
                         best_seen_region = region
                 if departed and best_seen_region is not None:
-                    regions_to_process = [best_seen_region]
+                    graded = [(best_seen_region, None, 1, frame, frames_read - 1)]
 
-            for region_to_process in regions_to_process:
+            for region_to_process, sharp, n_candidates, pick_frame, pick_index in graded:
                 seq += 1
                 record = process_tile(
                     seq=seq,
@@ -164,10 +178,12 @@ def process_video_file(
                 if save_snapshots and snapshot_cfg["enabled"]:
                     path = save_tile_snapshot(record, resolve_output_dir(config))
                     record.snapshot_path = str(path)
+                if sharp is not None:
+                    record.sharpness, record.sharpness_candidates = sharp, n_candidates
                 records.append(record)
                 if on_tile is not None:
-                    on_tile(record, region_to_process, frame, frames_read - 1)
-            if regions_to_process:
+                    on_tile(record, region_to_process, pick_frame, pick_index)
+            if graded:
                 best_seen_region = None
 
     if info is not None:

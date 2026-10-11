@@ -68,6 +68,12 @@ class TileRecord:
     # per-track and can skip numbers; seq counts graded tiles.
     track_id: Optional[int] = None
 
+    # Sharpness of the frame this tile was graded on (sharpness.edge_sharpness) and
+    # how many frames near the line were compared to choose it; None when the
+    # sharpest-frame pick is off. Only comparable between frames of the same tile.
+    sharpness: Optional[float] = None
+    sharpness_candidates: Optional[int] = None
+
 
 # Best -> worst. Every grade the station can output, in one vocabulary, so the
 # rule-based decision (measured defects) and the model's cosmetic tier
@@ -248,6 +254,8 @@ def tile_record_to_dict(record: TileRecord) -> dict:
         "timestamp": record.timestamp,
         "grade": record.grade,
         "track_id": record.track_id,
+        "sharpness": round(record.sharpness, 2) if record.sharpness is not None else None,
+        "sharpness_candidates": record.sharpness_candidates,
         # Size of the image the graders actually received (None when a record
         # carries no pixels, e.g. in tests).
         "crop_w": int(record.tile_bgr.shape[1]) if record.tile_bgr is not None else None,

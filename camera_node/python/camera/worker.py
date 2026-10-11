@@ -20,10 +20,12 @@ import numpy as np
 
 from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
+from camera.frame_picker import BestFramePicker, belt_axis_from_line
 from camera.pipeline import TileRecord, grading_options, process_tile
 from camera.ratemeter import RateMeter
 from camera.recorder import Recorder
 from camera.region_tracker import LineCrossingTracker, validate_line_config
+from camera.sharpness import edge_sharpness
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.sources import recordings_root
@@ -364,6 +366,11 @@ class CameraWorker:
                 max_missed_frames=self._line_cfg.get("max_missed_frames", 3),
                 auto_frames=self._line_cfg.get("auto_frames", 8),
             )
+        self._picker = BestFramePicker(
+            band=float(self._line_cfg.get("sharpest_band", 0.0)),
+            max_frames=int(self._line_cfg.get("sharpest_max_frames", 30)),
+        )
+        self._picks: dict = {}
         self._frames_since_reset = 0
         self._orientation_reported: Optional[str] = None
         self._auto_warned = False
@@ -666,12 +673,21 @@ class CameraWorker:
             observations = self._crossing.update(regions, belt_axis=getattr(belt_roi, "axis", None))
             self._report_line_orientation()
             in_view = [(o.region, o.track_id) for o in observations]
-            # Grade THIS frame, for each tile that just crossed. That is the
-            # point of the line: every tile is captured at the same place in
-            # the frame, so scale, framing and motion blur are comparable
-            # between tiles. Each tile has its own identity, so two tiles in
-            # frame can no longer be mistaken for one another.
-            to_process = [(o.track_id, o.region) for o in observations if o.crossed]
+            # Grade each tile as it crosses the line, so every tile is captured at
+            # (about) the same place in the frame and scale and framing are
+            # comparable between tiles. "About": the tile is moving, and some frames
+            # are smearier than others, so for a short stretch around the line every
+            # frame is scored for sharpness and the SHARPEST is graded once the tile
+            # has crossed and left that stretch (sharpest_band 0 = grade the
+            # crossing frame itself). Each tile has its own identity, so two tiles in
+            # frame cannot be mistaken for one another.
+            belt_axis = getattr(belt_roi, "axis", None) or belt_axis_from_line(self._crossing.orientation)
+            picks = self._picker.update(
+                observations, self._crossing.orientation, self._line_cfg.get("position", 0.5),
+                lambda r: edge_sharpness(frame, r, belt_axis), frame=frame,
+            )
+            self._picks = {p.track_id: p for p in picks}
+            to_process = [(p.track_id, p.region) for p in picks]
             visible_ids = {o.track_id for o in observations}
             self._graded = {k: v for k, v in self._graded.items() if k in visible_ids}
         else:
@@ -712,6 +728,9 @@ class CameraWorker:
                 **self._grading_opts,
             )
             record.track_id = track_id
+            pick = self._picks.get(track_id)
+            if pick is not None and pick.score is not None:
+                record.sharpness, record.sharpness_candidates = pick.score, pick.candidates
             if snapshot_cfg["enabled"]:
                 path = save_tile_snapshot(record, resolve_output_dir(self._config))
                 record.snapshot_path = str(path)

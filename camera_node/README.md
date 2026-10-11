@@ -210,6 +210,30 @@ detected.
 laptop-webcam recordings. The belt in those recordings is teal, not green, which is why
 `belt_roi.hsv_upper` reaches hue 95.
 
+### If the pictures are blurry or the frame rate is low
+
+Blur is **belt speed x exposure time**. On the sample belt a tile moves ~14.5 px per frame
+(435 px/s), and the laptop webcam's automatic exposure is 1/64 s, so every frame is smeared
+by ~7 px - enough to hide a hairline crack. What actually helps, in order:
+
+1. **More light on the belt.** A faster shutter freezes motion but needs more light: with the
+   webcam on manual 1/128 s the image was nearly black in room light, and this webcam cannot
+   raise gain to compensate. About 8x the light allows 1/256 s (~2 px smear). This is the
+   fix that works.
+2. **Capture settings** (`camera.*` in `config.yaml`): now 1920x1080 @ 30 fps, MJPG, buffer 1
+   (it used to be 640x480 @ 15 - the webcam delivers ~30 fps at 1080p). `camera.exposure`
+   can fix the shutter by hand (`mode: manual`, DirectShow `value: -7` = 1/128 s) once the belt
+   is bright enough. The dashboard shows what the driver *actually* gave.
+3. **The sharpest frame is graded** (`trigger_line.sharpest_band`, 0 turns it off): around the
+   line every frame of a tile is scored and the sharpest one is used (about 1.3x sharper on
+   the recordings). Caveat: the crack check is uncalibrated and flags different noise on a
+   sharper picture - see CLAUDE.md.
+4. **Frame rate** is shown under the video ("camera 29.8 fps · checks 30.4 fps"). The browser
+   feed is downscaled to `dashboard.stream_width` for WiFi.
+
+`python development\camera_probe.py` measures your camera's real formats, exposure range, gain
+and the smear each exposure causes (it turns the camera on for about a minute).
+
 ## Running it on the Pi station
 
 See **`deploy/README.md`** for the full procedure. Short version:

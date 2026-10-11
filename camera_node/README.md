@@ -171,6 +171,35 @@ tile's photo is saved to `data/camera_captures/` (gitignored) as
 
 Tests run from the repo root as always: `python -m pytest tests/ -v`.
 
+### Using a camera, recording, and replaying (added 2026-10-11)
+
+The dashboard has a **Source** bar at the top. Nothing on the command line is required.
+
+- **Use a camera connected to the laptop.** *Live camera* tab → pick it from the dropdown
+  (the list fills in a few seconds after the page loads; **Scan** looks again) or type its
+  index, then **Connect**. From the CLI: `python -m camera.live_dashboard --device 1`
+  (`--list-devices` shows the indices). On Windows, if opening is slow or the picture is
+  wrong, try `camera.api_preference: "dshow"` in `config.yaml`.
+- **Record.** **Record** saves the *raw* camera feed (not the annotated view) to
+  `data/recordings/<date>_<time>/`, e.g. `data/recordings/2026-10-11_14-30-05/`, as
+  `video.mp4` plus a `meta.json` (source, measured fps, size, frame count). Press it again
+  to stop; the button shows `REC mm:ss · N frames` meanwhile. `data/` is gitignored.
+  Only a live camera can be recorded.
+- **Replay or open any file.** *Recorded file* tab → choose a recording (newest first) or a
+  video under `data/`, or paste a path, then **Open**. It plays at its own frame rate
+  through the same pipeline as a live camera, so you get the grades the live run would have
+  given; **Loop** and **Pause** are on the bar. From the CLI:
+  `python -m camera.live_dashboard --video data/recordings/<folder>/video.mp4 --loop`.
+- Switching source resets the counts and the last-tile panel (one source's grades never
+  carry into the next), and ends a recording in progress after asking.
+
+Two things to know. Only files **inside `data/`** can be opened from the page (the dashboard
+is served on the network). And anyone who can reach the dashboard can switch the source or
+start a recording; set `dashboard.controls_enabled: false` (or `host: "127.0.0.1"`) on a
+station that shouldn't allow that. A video's **trigger line orientation** is still set in
+`config.yaml` (`trigger_line.orientation`): footage where the belt runs top-to-bottom, like
+the sample clip, needs `"horizontal"`.
+
 ## Running it on the Pi station
 
 See **`deploy/README.md`** for the full procedure. Short version:

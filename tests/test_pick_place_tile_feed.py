@@ -151,3 +151,26 @@ def test_station_retries_resend_do_not_create_a_second_pick():
             bus.publish(topic, data)
     assert feed.queue.snapshot()["depth"] == 1
     assert feed.queue.snapshot()["counters"]["duplicates"] >= 1
+
+
+# ---- source (where the tile is taken from) --------------------------------------
+
+
+def test_source_defaults_to_the_conveyor_end():
+    q = FinalQueue()
+    q.accept(final("T1"), 0)
+    assert q.start_next().source == "pickup"
+
+
+def test_source_named_by_the_pi_is_kept():
+    q = FinalQueue()
+    q.accept(final("T1", source="pickup_b"), 0)
+    assert q.start_next().source == "pickup_b"
+
+
+def test_unusable_source_is_rejected_not_defaulted():
+    q = FinalQueue()
+    for bad in (5, "", ["pickup"]):
+        r = q.accept(final(f"T{bad!r}", source=bad), 0)
+        assert r.status == "rejected" and r.should_ack
+    assert q.snapshot()["depth"] == 0

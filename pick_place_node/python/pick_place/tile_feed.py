@@ -39,6 +39,9 @@ GRADES = ("Grade A", "Grade B", "Grade C", "Reject", "Hold")
 
 QUEUED, PICKING, DONE, FAILED = "queued", "picking", "done", "failed"
 
+# The conveyor's end: where every tile arrives unless the Pi says otherwise.
+DEFAULT_SOURCE = "pickup"
+
 
 @dataclass
 class PickJob:
@@ -49,6 +52,8 @@ class PickJob:
     received_ts: float
     reasons: list = field(default_factory=list)
     state: str = QUEUED
+    # Where the tile is taken from; the Pi may name it, otherwise the conveyor end.
+    source: str = DEFAULT_SOURCE
 
 
 @dataclass
@@ -92,6 +97,15 @@ class FinalQueue:
                 # repeat of the same bad one must not be re-counted as new.
                 self._remember_id(tile_id)
                 return AcceptResult("rejected", f"unusable final_grade/destination ({grade!r}, {dest!r})")
+            source = payload.get("source")
+            if source is None:
+                source = DEFAULT_SOURCE
+            elif not isinstance(source, str) or not source:
+                # A present-but-unusable source is refused, not defaulted: guessing a
+                # pickup point for a tile the Pi meant to be taken elsewhere is a crash.
+                self.counters["rejected"] += 1
+                self._remember_id(tile_id)
+                return AcceptResult("rejected", f"unusable source ({source!r})")
             if len(self._queue) >= self._max_len:
                 self.counters["full"] += 1
                 return AcceptResult("full", "queue is full")
@@ -102,6 +116,7 @@ class FinalQueue:
                 attempt=int(payload.get("attempt") or 1),
                 received_ts=now,
                 reasons=list(payload.get("reasons") or []),
+                source=source,
             )
             self._queue.append(job)
             self._remember_id(tile_id)

@@ -26,20 +26,63 @@ mock:
   travel_speed_mm_s: 150
   # Home position (also the travel height used between pick/place approaches).
   home: {x: 0, y: 0, z: 200}
+  # The demo patrol runs pickup -> bin_2 so the picture matches the real layout
+  # (`locations` / `stacks` below); it does not change stack counts.
   pick_xy: {x: 500, y: 100}
   pick_z_mm: 20
-  place_xy: {x: 100, y: 350}
+  place_xy: {x: 100, y: 250}
   place_z_mm: 20
   # How long to pause at pick/place/home before moving on, seconds.
   dwell_s: 0.6
 
-# Visual-only props for the twin (stacks, tile size). The stack positions are
-# the mock patrol's pick/place points so the picture matches the motion.
-# PLACEHOLDER tile size/thickness: real SMTW tile data not obtained yet.
+# The tile being handled (owner, 2026-10-12: 3 1/4 in square, 12 mm thick, 300 g).
+tile:
+  size_mm: 82.55
+  thickness_mm: 12.0
+  weight_g: 300
+
+# Visual-only props for the twin. Tile size/thickness mirror `tile:` above.
 scene:
-  tile_size_mm: 100
-  tile_thickness_mm: 5
+  tile_size_mm: 82.55
+  tile_thickness_mm: 12
   pick_stack_count: 4
+
+# ---- real gantry (batch 1, 2026-10-12) --------------------------------------
+# PROVISIONAL: every position, height and speed below is a placeholder until the
+# gantry frame is built and taught-in (Development Rule 3). The envelope is the
+# `workspace:` block above (pushed to the MCU with SETENV).
+gantry:
+  # Z (cup-tip height, larger = higher) the cup travels at whenever X or Y changes.
+  safe_z_mm: 200
+  # A carried tile's underside must clear a full stack by at least this much at safe Z.
+  safe_clearance_mm: 10
+  feed_mm_min: {travel_xy: 8000, travel_z: 4000, approach_z: 2000, lift_z: 3000}
+  speed:                       # pushed with SETSPEED
+    x: {max_mm_min: 8000, accel_mm_s2: 400}
+    y: {max_mm_min: 8000, accel_mm_s2: 400}
+    z: {max_mm_min: 4000, accel_mm_s2: 300}
+  # Closed loop (missed-step detection): encoder-vs-commanded deviation that
+  # raises LOST_STEPS_<axis>, and Y-vs-A deviation that raises SKEW_Y.
+  # Pushed with SETTOL. 1 mm / 0.5 mm are guesses, not measurements.
+  tolerance_mm: {lost_steps: 1.0, skew: 0.5}
+  link_timeout_ms: 500
+  serial: {port: "/dev/ttyACM0", baud: 115200}   # re-verify on the board
+
+# Where tiles are TAKEN FROM. The Pi names the source (default `pickup`); the
+# conveyor delivers every tile to this one fixed point. z = cup-tip height when
+# it touches the top of a tile waiting there.
+locations:
+  pickup: {x: 500, y: 100, z: 20}
+
+# Where tiles are KEPT. Four separate stacks; the names are what the Pi sends as
+# `destination` (acoustic config.yaml station.bins: Grade A..C -> bin_1..bin_3,
+# Reject -> bin_4). base_z_mm = cup-tip height when releasing the FIRST tile onto
+# an empty stack; each tile in raises the next release by tile.thickness_mm.
+stacks:
+  bin_1: {label: "Grade A", x: 100, y: 100, base_z_mm: 20, max_height: 10}
+  bin_2: {label: "Grade B", x: 100, y: 250, base_z_mm: 20, max_height: 10}
+  bin_3: {label: "Grade C", x: 250, y: 100, base_z_mm: 20, max_height: 10}
+  bin_4: {label: "Reject", x: 250, y: 250, base_z_mm: 20, max_height: 10}
 
 dashboard:
   # 0.0.0.0 so the dashboard is reachable from other devices over WiFi, not just

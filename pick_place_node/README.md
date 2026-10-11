@@ -10,13 +10,42 @@ Folder layout follows the Arduino App Bricks convention (see `app.yaml`), matchi
 `acoustic_node/` — see that node's `README.md` for the general pattern and its caveats
 about App Lab not yet being verified on real hardware.
 
-## Status: nothing built yet
+## Status (2026-10-12)
 
-Everything in this folder (`app.yaml`, `sketch/`, `python/main.py`) is placeholder
-scaffolding only. The command interface is decided (master sends high-level
-grade/slot commands; this layer translates to axis motion — not an off-the-shelf
-CNC/G-code controller), but axis count, motor/gripper hardware, and travel limits are
-still open — see `TODO.md` ("Design the gantry's custom machine-control layer").
+**Built and tested on the laptop (no hardware):**
+
+| Module (`python/pick_place/`) | Role |
+|---|---|
+| `protocol.py` | Encode commands, parse MCU lines into typed events (incl. closed-loop `pos` encoder fields and `LOST_STEPS`/`SKEW_Y` alarms) |
+| `coordinate_model.py` | Named pickup + 4 stacks -> XYZ, stack-height bookkeeping, config safety validation |
+| `sequencer.py` | `{source, destination}` -> ordered move list (safe Z first), retry unit, park |
+| `tile_feed.py` | Receives the Pi's finals (`destination`, optional `source`), FIFO, de-dup, ack |
+| `mock_state.py`, `worker.py`, `dashboard.py`, `twin_prototype.py` | Digital-twin HMI on a mock gantry |
+| `mock_job_driver.py` | Mock stand-in for the job runner: takes queued tiles, plans them with the real sequencer, drives the mock gantry, updates real stack counts |
+
+**Run the twin with tiles flowing** (from `pick_place_node/python/`): 
+
+```bash
+python -m pick_place.twin_prototype --demo                    # synthetic tiles, no Pi
+python -m pick_place.twin_prototype --station-host <PI_IP>    # the Pi's real finals
+```
+
+The page (port 5050) shows the conveyor end (pickup), the four stacks with live
+counts, the current job (tile, grade, from -> to, step n/9, command, gripped or not),
+the pick queue and feed state, and the tile spec. API: `/api/layout`, `/api/job`,
+`/api/feed`. Jobs run only in **Jobs** mode; a jog or vacuum click switches to Manual and
+pauses the job where it is. Motion is simulated; the plan, stack heights and counts are
+the real ones.
+
+**Not built:** the MCU firmware (`sketch/sketch.ino` is an empty stub — step generation,
+homing, limits, e-stop, encoders, the line parser), `job_runner.py`, a serial backend
+(`gantry_backend.py` is only the seam; its `serial` branch raises), and the sequencer
+consumer of `FinalQueue`. `python/main.py` is still an App Lab stub.
+
+Layout of the line: the **conveyor** delivers each tile to one fixed pickup point
+(`locations.pickup`); the gantry places it on one of **four separate stacks**
+(`stacks.bin_1`..`bin_4`, the destination names the Pi sends). Tile: 82.55 mm square,
+12 mm, 300 g. Every position in `config.yaml` is a placeholder until taught-in.
 
 ## Bench bring-up
 

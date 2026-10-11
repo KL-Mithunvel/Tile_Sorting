@@ -208,6 +208,30 @@ On `done 109 …`, Linux increments the grade-B stack height, then replies to th
 On `err 104 VACUUM_TIMEOUT`: retry the pick once (re-issue 103–104); if it fails again,
 park at safe Z and reply `{ "status": "failed", "reason": "pick_failed" }`.
 
+### 5.6 Closed loop — missed-step detection (added 2026-10-12)
+
+Owner decision: every stepper (including the Y beam's cloned second motor) carries an
+AS5600 encoder, read through the TCA9548A mux (`documents/electrical/i2c_bus_plan.md`).
+**Stage (a), built first:** the steppers stay the actuator; the encoders are an
+independent *check*. A true position loop is a later upgrade.
+
+| Addition | Meaning |
+|---|---|
+| `pos X.. Y.. Z.. EX.. EY.. EZ.. EA..` | The `E*` fields are the **measured** position per motor, mm. `EA` = the second Y motor. Optional: absent until the encoders are read. |
+| `<seq> SETTOL LOST<mm> SKEW<mm>` | Push the thresholds from `config.yaml` (`gantry.tolerance_mm`). |
+| `alarm LOST_STEPS_<X\|Y\|Z>` | Measured vs commanded position differs by more than `LOST`. Latched; the position can no longer be trusted, so it requires `CLEARALARM` **and** a re-home. |
+| `alarm SKEW_Y` | Y and A disagree by more than `SKEW` (the beam is racking). Same latch rules. |
+
+Rules for the firmware (not written yet):
+
+1. The **MCU** decides and raises the alarm; Linux only reports it (`Alarm.is_closed_loop_fault`).
+2. Encoder polling is a low-priority task and must never delay step generation.
+3. The AS5600 is single-turn (4096 counts/rev): poll often enough that no axis turns
+   more than half a revolution between reads, and count turns in firmware.
+4. A missed read must not look like zero deviation — an unreadable encoder is a fault, not a pass.
+
+Linux side: `protocol.Pos.deviation()` returns measured − commanded per motor for the HMI.
+
 ---
 
 ## 6. Python module plan

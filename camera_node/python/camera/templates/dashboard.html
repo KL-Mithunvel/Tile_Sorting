@@ -81,6 +81,50 @@
   .badge { display: inline-block; padding: 0 0.4rem; border-radius: 3px; font-size: 0.75rem; }
   .badge-yes { background: #5c2020; } .badge-no { background: #204020; }
   .muted { color: var(--muted); font-size: 0.85em; }
+
+  /* ---- source panel ---- */
+  /* A class that sets `display` beats the browser's own [hidden] rule, so without
+     this the "hidden" camera/file rows and progress bar all show at once. */
+  [hidden] { display: none !important; }
+  .srcbar { margin-bottom: 1rem; display: grid; gap: 0.6rem; }
+  .src-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; }
+  .src-row.ctl { align-items: flex-end; }
+  .src-h { margin: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--muted); border: 0; padding: 0.35rem 0.8rem; font: inherit; cursor: pointer; }
+  .seg button.on { background: var(--line); color: var(--text); }
+  .src-now { font-size: 0.95rem; overflow-wrap: anywhere; }
+  .src-now .pill { display: inline-block; margin-left: 0.4rem; padding: 0 0.5rem; border-radius: 999px; font-size: 0.75rem;
+                   border: 1px solid var(--line); color: var(--muted); }
+  .src-now .pill.running { color: var(--ok); border-color: var(--ok); }
+  .src-now .pill.error { color: var(--bad); border-color: var(--bad); }
+  .src-now .pill.finished { color: var(--warn); border-color: var(--warn); }
+  .fld { display: grid; gap: 0.2rem; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; min-width: 0; }
+  .fld.grow { flex: 1 1 14rem; }
+  .fld input[type=number] { width: 5.5rem; }
+  select, input[type=text], input[type=number] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 0.4rem 0.6rem; font: inherit; font-size: 0.9rem; text-transform: none; letter-spacing: 0; min-width: 0; width: 100%; }
+  input[type=number] { width: 5.5rem; }
+  .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+         padding: 0.42rem 0.9rem; font: inherit; font-size: 0.9rem; cursor: pointer; }
+  .btn:hover:not(:disabled) { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #04121f; font-weight: 600; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn:focus-visible, select:focus-visible, input:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .chk { display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text); font-size: 0.9rem; padding-bottom: 0.45rem; }
+  .btn.rec { display: inline-flex; align-items: center; gap: 0.5rem; border-color: var(--bad); color: var(--bad); }
+  .btn.rec .rec-dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--bad); }
+  .btn.rec.on { background: var(--bad); color: #fff; }
+  .btn.rec.on .rec-dot { background: #fff; border-radius: 2px; }
+  @media (prefers-reduced-motion: no-preference) { .btn.rec.on .rec-dot { animation: blink 1.2s steps(2, start) infinite; } }
+  @keyframes blink { 50% { opacity: 0.35; } }
+  .rec-info { color: var(--bad); font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+  .progress { flex: 1 1 12rem; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--accent); }
+  .src-msg { min-height: 1.1em; font-size: 0.85rem; color: var(--muted); overflow-wrap: anywhere; }
+  .src-msg.bad { color: var(--bad); }
+  .srcbar.viewonly .ctl, .srcbar.viewonly #src-tabs, .srcbar.viewonly #rec-btn { display: none; }
 </style>
 </head>
 <body>
@@ -110,9 +154,55 @@
     <div class="state waiting" id="station-state">Waiting for tile</div>
   </div>
 
+  <div class="panel srcbar" id="srcbar">
+    <div class="src-row">
+      <h2 class="src-h">Source</h2>
+      <div class="seg" id="src-tabs">
+        <button type="button" id="tab-live" class="on">Live camera</button>
+        <button type="button" id="tab-file">Recorded file</button>
+      </div>
+      <div class="src-now" id="src-now" aria-live="polite">&nbsp;</div>
+      <div class="spacer"></div>
+      <span class="rec-info" id="rec-info"></span>
+      <button type="button" class="btn rec" id="rec-btn" title="Save the raw camera feed to data/recordings/&lt;date_time&gt;/">
+        <span class="rec-dot"></span><span id="rec-label">Record</span>
+      </button>
+    </div>
+
+    <div class="src-row ctl" id="pane-live">
+      <label class="fld grow">Camera
+        <select id="cam-select"></select>
+      </label>
+      <label class="fld">or index
+        <input id="cam-index" type="number" min="0" step="1" placeholder="0" inputmode="numeric">
+      </label>
+      <button type="button" class="btn" id="cam-scan" title="Look for connected cameras">Scan</button>
+      <button type="button" class="btn primary" id="cam-connect">Connect</button>
+    </div>
+
+    <div class="src-row ctl" id="pane-file" hidden>
+      <label class="fld grow">Recording or file
+        <select id="file-select"></select>
+      </label>
+      <label class="fld grow">or path under data/
+        <input id="file-path" type="text" placeholder="data/recordings/2026-10-11_14-30-05/video.mp4" spellcheck="false">
+      </label>
+      <button type="button" class="btn primary" id="file-open">Open</button>
+      <label class="chk"><input type="checkbox" id="loop"> Loop</label>
+      <button type="button" class="btn" id="pause-btn">Pause</button>
+    </div>
+
+    <div class="src-row" id="progress-row" hidden>
+      <div class="progress" aria-hidden="true"><i id="progress-bar"></i></div>
+      <span class="muted" id="progress-text"></span>
+    </div>
+
+    <div class="src-msg" id="src-msg" role="status"></div>
+  </div>
+
   <div class="grid">
     <div class="panel">
-      <h2>Live camera <span class="muted" id="trigger-info"></span></h2>
+      <h2><span id="feed-title">Live camera</span> <span class="muted" id="trigger-info"></span></h2>
       <div class="video-box"><img src="/video_feed" alt="live camera feed"></div>
     </div>
 
@@ -226,6 +316,198 @@
       : '<div class="note">Model is display-only: it does not affect the grade.</div>') : '';
   }
 
+
+  // ---------- source panel: pick a camera, open a file, record ----------
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  const fmtClock = s => { s = Math.max(0, Math.round(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  let lastData = null, pane = null, sourcesSig = '', savedShown = null, scanTimer = null;
+
+  function msg(text, bad) {
+    const m = $('src-msg');
+    m.textContent = text || '';
+    m.className = 'src-msg' + (bad ? ' bad' : '');
+  }
+
+  // POST JSON; on any failure show the server's reason and return null.
+  async function post(url, body) {
+    try {
+      const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) { msg(data.error || ('request failed (' + res.status + ')'), true); return null; }
+      return data;
+    } catch (err) {
+      msg('could not reach the station: ' + err, true);
+      return null;
+    }
+  }
+
+  function showPane(name) {
+    pane = name;
+    $('pane-live').hidden = name !== 'live';
+    $('pane-file').hidden = name !== 'file';
+    $('tab-live').classList.toggle('on', name === 'live');
+    $('tab-file').classList.toggle('on', name === 'file');
+  }
+
+  const isRecording = () => !!(lastData && lastData.recording);
+  function confirmLeavingRecording() {
+    return !isRecording() || confirm('Changing the source will stop and save the current recording. Continue?');
+  }
+
+  function clearLatest() {
+    shownSeq = null;
+    $('tile-img').hidden = true;
+    $('tile-empty').hidden = false;
+    $('tile-seq').textContent = ''; $('tile-time').textContent = '';
+    ['st-capture', 'st-crack', 'st-corner', 'st-model', 'st-grade'].forEach(id => setStage(id, 'off', '-', ''));
+    $('total-ms').textContent = ''; $('probs').innerHTML = '';
+  }
+
+  // Called every status poll: reflects the current source, playback and recording.
+  function renderSource(data) {
+    lastData = data;
+    const src = data.source || {};
+    const on = !!data.controls;
+    $('srcbar').classList.toggle('viewonly', !on);
+
+    const state = src.status || 'none';
+    const word = {running: 'running', finished: 'finished', error: 'error', none: 'no source'}[state] || state;
+    let now = '<b>' + esc(src.label || 'No source') + '</b><span class="pill ' + esc(state) + '">' + esc(word) + '</span>';
+    if (state === 'error' && src.detail) now += ' <span style="color:var(--bad)">' + esc(src.detail) + '</span>';
+    if (state === 'finished') now += ' <span class="muted">press Open to replay, or tick Loop</span>';
+    $('src-now').innerHTML = now;
+    $('feed-title').textContent = src.kind === 'file' ? 'Playback' : 'Live camera';
+    if (pane === null) showPane(src.kind === 'file' ? 'file' : 'live');
+
+    // Recording
+    const rec = data.recording, btn = $('rec-btn');
+    const canRecord = on && src.kind === 'camera' && state !== 'none';
+    btn.classList.toggle('on', !!rec);
+    $('rec-label').textContent = rec ? 'Stop recording' : 'Record';
+    btn.disabled = rec ? false : !canRecord;
+    btn.title = rec ? 'Stop and save this recording'
+      : canRecord ? 'Save the raw camera feed to data/recordings/<date_time>/'
+      : 'Recording needs a live camera as the source';
+    $('rec-info').textContent = rec ? 'REC ' + fmtClock(rec.elapsed_s) + ' · ' + rec.frames + ' frames' : '';
+    const saved = data.last_recording;
+    if (saved && saved.folder !== savedShown) {
+      savedShown = saved.folder;
+      if (saved.status === 'complete') {
+        msg('Saved ' + saved.folder + ' · ' + saved.frames + ' frames at ' + saved.fps + ' fps');
+        loadSources();
+      }
+    }
+
+    // File playback
+    const pb = src.playback, isFile = src.kind === 'file';
+    $('progress-row').hidden = !(isFile && pb);
+    $('pause-btn').disabled = !isFile;
+    $('loop').disabled = !isFile;
+    if (isFile && pb) {
+      $('pause-btn').textContent = pb.paused ? 'Resume' : 'Pause';
+      if (document.activeElement !== $('loop')) $('loop').checked = !!pb.loop;
+      const frac = pb.frame_count ? Math.min(1, (pb.position + 1) / pb.frame_count) : 0;
+      $('progress-bar').style.width = (frac * 100).toFixed(1) + '%';
+      $('progress-text').textContent = fmtClock(pb.position / (pb.fps || 1)) + ' / ' + fmtClock(pb.frame_count / (pb.fps || 1));
+    }
+  }
+
+  // Fill the camera / file pickers from /api/sources without disturbing a choice in progress.
+  async function loadSources() {
+    let d;
+    try { d = await (await fetch('/api/sources')).json(); } catch (err) { return; }
+    clearTimeout(scanTimer);
+    if (!d.controls) return;
+
+    const sig = JSON.stringify([d.cameras, d.recordings, d.files, d.scanned]);
+    if (sig !== sourcesSig) {
+      sourcesSig = sig;
+      const cam = $('cam-select'), keep = cam.value;
+      const opts = [];
+      (d.cameras.usb || []).forEach(c => opts.push(['usb:' + c.index,
+        'Camera ' + c.index + (c.width ? ' · ' + c.width + '×' + c.height : '') + (c.in_use ? ' (in use)' : '')]));
+      (d.cameras.csi || []).forEach(c => opts.push(['csi:' + c.camera_num, 'CSI camera ' + c.camera_num + (c.in_use ? ' (in use)' : '')]));
+      cam.innerHTML = opts.length
+        ? opts.map(o => '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>').join('')
+        : '<option value="">' + (d.scanning || !d.scanned ? 'Scanning for cameras…' : 'No camera found — type an index') + '</option>';
+      if (keep && opts.some(o => o[0] === keep)) cam.value = keep;
+      else if (d.source && d.source.kind === 'camera') cam.value = (d.source.csi ? 'csi:' : 'usb:') + d.source.index;
+
+      const f = $('file-select'), keepF = f.value;
+      let html = '<option value="">— choose —</option>';
+      if (d.recordings.length) html += '<optgroup label="Recordings">' + d.recordings.map(r =>
+        '<option value="rec:' + esc(r.id) + '">' + esc(r.label) + (r.complete ? '' : ' (incomplete)') + '</option>').join('') + '</optgroup>';
+      if (d.files.length) html += '<optgroup label="Files in data/">' + d.files.map(x =>
+        '<option value="path:' + esc(x.path) + '">' + esc(x.label) + ' (' + x.size_mb + ' MB)</option>').join('') + '</optgroup>';
+      f.innerHTML = html;
+      if (keepF) f.value = keepF;
+      else if (d.source && d.source.kind === 'file' && d.source.path) {
+        // show which file is playing right now
+        const cur = Array.from(f.options).find(o => o.value === 'path:' + d.source.path ||
+          (d.source.recording && o.value === 'rec:' + d.source.label));
+        if (cur) f.value = cur.value;
+      }
+    }
+    if (d.scanning) scanTimer = setTimeout(loadSources, 1000);
+  }
+
+  $('tab-live').onclick = () => showPane('live');
+  $('tab-file').onclick = () => { showPane('file'); loadSources(); };
+
+  $('cam-scan').onclick = async () => {
+    msg('Scanning for cameras…');
+    if (await post('/api/cameras/scan')) { sourcesSig = ''; loadSources(); msg(''); }
+  };
+
+  $('cam-connect').onclick = async () => {
+    const typed = $('cam-index').value.trim();
+    let index, csi = false;
+    if (typed !== '') index = Number(typed);
+    else {
+      const v = $('cam-select').value;
+      if (!v) { msg('Choose a camera, or type its index.', true); return; }
+      csi = v.startsWith('csi:');
+      index = Number(v.split(':')[1]);
+    }
+    if (!Number.isInteger(index) || index < 0) { msg('The camera index must be a whole number, 0 or more.', true); return; }
+    if (!confirmLeavingRecording()) return;
+    msg('Opening camera ' + index + '…');
+    const r = await post('/api/source/camera', {index, csi});
+    if (r) { msg('Connected to ' + r.source.label); $('cam-index').value = ''; sourcesSig = ''; loadSources(); }
+  };
+
+  $('file-open').onclick = async () => {
+    const typed = $('file-path').value.trim(), v = $('file-select').value;
+    const body = {loop: $('loop').checked};
+    if (typed) body.path = typed;
+    else if (v.startsWith('rec:')) body.recording = v.slice(4);
+    else if (v.startsWith('path:')) body.path = v.slice(5);
+    else { msg('Choose a recording or file, or paste a path under data/.', true); return; }
+    if (!confirmLeavingRecording()) return;
+    msg('Opening…');
+    const r = await post('/api/source/file', body);
+    if (r) { msg('Opened ' + r.source.label); $('file-path').value = ''; }
+  };
+
+  $('pause-btn').onclick = async () => {
+    const pb = lastData && lastData.source && lastData.source.playback;
+    await post('/api/source/playback', {paused: !(pb && pb.paused)});
+  };
+  $('loop').onchange = async () => { await post('/api/source/playback', {loop: $('loop').checked}); };
+
+  $('rec-btn').onclick = async () => {
+    if (isRecording()) {
+      const r = await post('/api/record/stop');
+      if (r) { const m = r.recording; msg(m.status === 'empty' ? 'Nothing was recorded.' : 'Saved · ' + m.frames + ' frames at ' + m.fps + ' fps'); }
+    } else {
+      const r = await post('/api/record/start');
+      if (r) msg('Recording to data/recordings/' + r.folder + '/');
+    }
+  };
+
+  loadSources();
+  setInterval(loadSources, 10000);
+
   async function refresh() {
     try {
       const res = await fetch('/api/status');
@@ -255,7 +537,8 @@
         ? '- trigger: line at ' + Math.round(info.line_position * 100) + '% (' + info.line_orientation + ')'
         : info.trigger ? '- trigger: on exit' : '';
 
-      renderLatest(data.recent_tiles[0], info);
+      if (data.recent_tiles.length) renderLatest(data.recent_tiles[0], info); else clearLatest();
+      renderSource(data);
 
       $('tile-rows').innerHTML = data.recent_tiles.map(t => {
         const crack = t.crack_detected

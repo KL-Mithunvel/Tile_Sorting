@@ -110,6 +110,7 @@ async function refresh() {
   fill($("setTbl"), [td("min. sound confidence", st.settings.min_confidence), td("max wait for a tap (s)", st.settings.max_wait_s),
     td("UNO Q ack required", st.settings.require_ack), td("tiles seen / taps heard", st.counters.tiles + " / " + st.counters.taps),
     td("orphan taps / ignored sounds", st.counters.orphan_taps + " / " + (st.counters.ignored_taps || 0)),
+    td("empty strikes / missed camera tiles", (st.counters.empty_strikes || 0) + " / " + (st.counters.missed_camera || 0)),
     td("timeouts", st.counters.timeouts), td("queue to UNO Q", st.outbox_depth)]);
   fill($("micTbl"), [td("trigger mode", st.mic.mode), td("device", st.mic.device == null ? "system default" : st.mic.device),
     td("open", st.mic.open + (st.mic.error ? " — " + st.mic.error : ""))]);

@@ -69,6 +69,9 @@ service must not restart the other. It is the *operator* screen:
 | Same camera message delivered twice (QoS 1) | ignored — one tap slot only |
 | rms trigger mode, clip is not a plausible strike | ignored, **does not use up a tile's slot** |
 | Hardware trigger, clip unusable | still uses the slot; tile goes on camera grade alone |
+| Strike fired with **no tile under it** (`tile_present=false`) | uses up no slot; alarm `empty_strike` |
+| Tile under the striker but **no camera result waiting** | missed camera detection: a `UNKNOWN-…` final **Hold** is sent so the UNO Q's ordered queue stays in step; alarm `missed_camera` |
+| Gap in the Nano's strike `seq` | alarm `tap_gap` with the count of lost events |
 | Operator/master `hold_all` | every tile Hold |
 | Broker down / camera silent / mic dead / UNO Q not acking | station state **FAULT**, red health chip, no guessing |
 | UNO Q does not ack | final resent every `ack_timeout_s`; after `retries` the link is DOWN and later finals queue behind it, in order |
@@ -81,7 +84,10 @@ All JSON, UTF-8. Topic names extend `Automation_Architecture.md` §12/§13.
 |---|---|---|---|
 | `tile/<id>/camera/result` | camera → station, master | 1 / no | `tile_id, run_id, seq, station:"camera", status:"done", grade, rule_grade, model_grade, model_used, crack_detected, crack_severity, corner_broken, snapshot_path, ts` |
 | `station/camera/status` | camera → station | 0 / **retained**, last-will `{"state":"offline"}` | `state, source_kind, source_status, station_state, tile_count, errors, run_id, ts` (every `mqtt.heartbeat_s`) |
-| `station/tap` | Nano serial bridge (later) / demo → station | 0 / no | `{}` — "the striker just fired"; starts the capture window |
+| `station/tap` | Nano serial bridge (`acoustic/tap_bridge.py`) / demo → station | 1 / no | `seq, tile_present, tof_mm, nano_ms, ts` — "the striker just fired"; starts the capture window; `tile_present=false` = fired on an empty position |
+| `station/nano/status` | bridge → station, master | 0 / **retained**, last-will | `state, link, fw, belt_pct, tof1_ok, tof3_ok, taps, lost_taps, bad_lines, ts` |
+| `station/belt` | master / operator → bridge | — | `{"percent": 0-100}` → `BELT n` to the Nano |
+| `station/strike` | master / operator → bridge | — | `{"enabled": bool}` → `STRIKE 0\|1` to the Nano |
 | `tile/<id>/acoustic/result` | station → master | 1 / no | `tile_id, station:"acoustic", status:"done"\|"invalid", acoustic_grade, confidence, peak_frequency_hz, decay_t20_s, ts` |
 | `tile/<id>/final` | station → **UNO Q**, master | 1 / no | `tile_id, seq, final_grade, destination, camera_grade, acoustic_grade, acoustic_counted, timed_out, reasons[], attempt, ts` |
 | `tile/<id>/ack` | **UNO Q** → station | 1 / no | any JSON, e.g. `{"status":"ok"}` — the topic is the acknowledgement |
@@ -153,6 +159,7 @@ consuming finals; the GUI on the Pi's own browser. The sound features are unvali
 against real tiles and `station.reference` is `null`, so the sound has no grade.
 
 Open design points: belt transit time is unmeasured (`ledger.max_wait_s` is a generous
-placeholder); a missed *camera* detection shifts every later pairing by one until a
-timeout — the FIFO cannot detect that by itself (the Nano's ToF presence flag in the tap
-event would let it); a stopped belt with a tile under the striker is not modelled.
+placeholder); the missed-camera-detection check needs the Nano's `tile_present` flag, so
+with the rms trigger a missed camera detection still shifts every later pairing by one
+until a timeout; a stopped belt with a tile under the striker is not modelled. The Nano
+side is specified in `nano_serial_protocol.md` and has no firmware yet.

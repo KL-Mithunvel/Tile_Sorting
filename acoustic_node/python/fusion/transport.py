@@ -31,6 +31,9 @@ TOPIC_STATUS = "station/status"
 TOPIC_CMD = "station/cmd"
 TOPIC_TAP = "station/tap"  # a bridge (the Nano's serial reader, later) publishes here
 TOPIC_ALARM = "machine/alarm"
+TOPIC_NANO_STATUS = "station/nano/status"  # the serial bridge: Nano link alive, belt %, ToF ok
+TOPIC_BELT = "station/belt"  # {"percent": 0-100} -> bridge -> Nano (master or operator)
+TOPIC_STRIKE = "station/strike"  # {"enabled": bool} -> bridge -> Nano: allow / inhibit the striker
 
 
 def tile_topic(tile_id: str, leaf: str) -> str:

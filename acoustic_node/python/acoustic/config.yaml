@@ -125,6 +125,20 @@ station:
     camera_stale_s: 6.0   # camera heartbeat older than this = camera FAILED
 
   heartbeat_s: 2.0
+
+  # The Arduino Nano (striker + belt PWM) on USB serial, through
+  # acoustic/tap_bridge.py. Protocol: documents/programming/nano_serial_protocol.md.
+  # Off until the Nano exists: taps then come from the rms trigger or the
+  # service view's Simulate tap button.
+  nano:
+    enabled: false
+    # Pin by id, not ttyUSB0/1: /dev/serial/by-id/usb-... survives re-plugging.
+    port: "/dev/ttyUSB0"
+    baud: 115200
+    # true once wired: a silent Nano is then a FAULT (taps would be lost).
+    required: false
+    stale_s: 3.0        # no valid line from the Nano for this long = link down
+    ping_s: 0.5         # keep-alive to the Nano; ITS watchdog stops the belt without it
   # Allow the master to send station/cmd (vote, hold_all, clear_alarms).
   commands_enabled: true
 

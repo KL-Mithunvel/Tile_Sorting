@@ -85,6 +85,11 @@ class FakeCameraAndStriker(threading.Thread):
         while not self._halt.is_set():
             now = time.monotonic()
             self._bus.publish(
+                "station/nano/status",
+                {"state": "online", "link": True, "belt_pct": 60, "ts": time.time()},
+                qos=0,
+            )
+            self._bus.publish(
                 "station/camera/status",
                 {"source_kind": "camera", "source_status": "running", "tile_count": tile_count, "ts": time.time()},
                 qos=0,
@@ -105,7 +110,7 @@ class FakeCameraAndStriker(threading.Thread):
                     pending.append(now + self._transit)
             if pending and now >= pending[0]:
                 pending.pop(0)
-                self._bus.publish("station/tap", {"ts": time.time()}, qos=0)
+                self._bus.publish("station/tap", {"ts": time.time(), "tile_present": True}, qos=0)
             self._halt.wait(0.25)
 
     def _answer(self, topic: str, payload: bytes) -> None:

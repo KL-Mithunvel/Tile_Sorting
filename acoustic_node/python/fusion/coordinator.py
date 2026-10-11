@@ -45,6 +45,7 @@ from fusion.transport import (
     TOPIC_ALARM,
     TOPIC_CAMERA_STATUS,
     TOPIC_CMD,
+    TOPIC_NANO_STATUS,
     TOPIC_STATUS,
     TOPIC_TAP,
     Bus,
@@ -58,6 +59,8 @@ OK, WARN, FAIL = "ok", "warn", "fail"
 
 
 class StationCoordinator:
+    _TAP_EVENT_MAX_AGE_S = 5.0
+
     def __init__(
         self,
         cfg: dict,
@@ -89,6 +92,17 @@ class StationCoordinator:
         self._max_outbox = int(unoq_cfg.get("max_outbox", 50))
 
         self._camera_stale_s = float((cfg.get("health") or {}).get("camera_stale_s", 6.0))
+        nano_cfg = cfg.get("nano") or {}
+        # Until the Nano exists there is nothing to be stale: not required, shown
+        # as a warning only. Once it is wired, set station.nano.required: true so
+        # a dead serial link becomes a FAULT instead of a silent loss of taps.
+        self._nano_required = bool(nano_cfg.get("required", False))
+        self._nano_stale_s = float(nano_cfg.get("stale_s", 3.0))
+        self._nano_status: Optional[dict] = None
+        self._nano_status_ts: Optional[float] = None
+        # Strike events (station/tap) waiting to be paired with their clip.
+        self._tap_events: deque = deque(maxlen=16)
+        self._unknown_n = 0
         self._heartbeat_s = float(cfg.get("heartbeat_s", 2.0))
         self._commands_enabled = bool(cfg.get("commands_enabled", True))
 
@@ -116,6 +130,7 @@ class StationCoordinator:
         self._bus.subscribe(TOPIC_CAMERA_STATUS, self._on_camera_status)
         self._bus.subscribe(TOPIC_CMD, self._on_cmd)
         self._bus.subscribe(TOPIC_TAP, self._on_tap_topic)
+        self._bus.subscribe(TOPIC_NANO_STATUS, self._on_nano_status)
 
     # ---- settings the operator / master may change -------------------------
 
@@ -173,16 +188,42 @@ class StationCoordinator:
                 tile_id, now, seq=seq, state="awaiting_tap", camera_grade=grade, camera_json=data,
             )
 
-    def on_tap(self, acoustic: dict, now: Optional[float] = None) -> Optional[str]:
+    def pop_tap_event(self) -> Optional[dict]:
+        """The oldest strike event not yet paired with a clip (None when the
+        clip did not come from an external event, e.g. rms trigger mode)."""
+        now = self._clock()
+        with self._lock:
+            # An event whose clip never came (capture refused, cooldown) must
+            # not be paired with some later, unrelated clip.
+            while self._tap_events and now - self._tap_events[0].get("_rx", now) > self._TAP_EVENT_MAX_AGE_S:
+                self._tap_events.popleft()
+            return self._tap_events.popleft() if self._tap_events else None
+
+    def on_tap(
+        self, acoustic: dict, now: Optional[float] = None, tile_present: Optional[bool] = None
+    ) -> Optional[str]:
         """A tap was heard and analysed. `acoustic` carries at least `valid`,
-        `grade` (or None) and `confidence`. Returns the tile id it was bound to,
-        or None for an orphan tap."""
+        `grade` (or None) and `confidence`. `tile_present` is the striker
+        station's own ToF reading from the strike event: False = it fired with
+        nothing under it, None = unknown (rms trigger / simulated). Returns the
+        tile id it was bound to, or None (orphan / empty strike)."""
         now = self._clock() if now is None else now
         with self._lock:
             self._counters["taps"] += 1
+            if tile_present is False:
+                # The striker fired on an empty position. That cannot be any
+                # tile's tap, so it must not use up a slot.
+                self._counters["empty_strikes"] = self._counters.get("empty_strikes", 0) + 1
+                self._alarm("empty_strike", "the striker fired with no tile under it", None)
+                return None
             entry = self.ledger.bind_tap(now)
             if entry is None:
                 self._counters["orphan_taps"] += 1
+                if tile_present:
+                    # A tile IS under the striker and the camera never reported
+                    # it (missed detection). It will travel on to the UNO Q, so
+                    # it needs a final or the UNO Q's queue falls out of step.
+                    return self._final_for_unreported_tile(acoustic, now)
                 self._alarm("orphan_tap", "a tap was heard but no tile was waiting for one", None)
                 return None
             entry.acoustic = acoustic
@@ -211,6 +252,27 @@ class StationCoordinator:
             )
             self._finalize(entry, decision, now, timed_out=False)
             return entry.tile_id
+
+    def _final_for_unreported_tile(self, acoustic: dict, now: float) -> str:
+        self._unknown_n += 1
+        tile_id = f"UNKNOWN-{int(self._started_ts)}-{self._unknown_n:04d}"
+        self._counters["missed_camera"] = self._counters.get("missed_camera", 0) + 1
+        self._alarm(
+            "missed_camera",
+            f"a tile was under the striker but the camera reported none; sent {tile_id} as Hold",
+            tile_id,
+        )
+        entry = TileEntry(tile_id=tile_id, seq=None, camera_grade=None, camera={}, created=now)
+        entry.acoustic = acoustic
+        decision = FinalDecision(
+            HOLD,
+            self._bins.get(HOLD, "manual"),
+            False,
+            ("no camera result for this tile (missed detection), held for a person",),
+        )
+        self._store.upsert(tile_id, now, state="awaiting_tap", camera_grade=None, camera_json={})
+        self._finalize(entry, decision, now, timed_out=False)
+        return tile_id
 
     def note_ignored_tap(self, reason: str) -> None:
         """A sound that triggered a capture but was not a plausible strike. It
@@ -343,6 +405,15 @@ class StationCoordinator:
             self._camera_status = data if isinstance(data, dict) else None
             self._camera_status_ts = self._clock()
 
+    def _on_nano_status(self, topic: str, payload: bytes) -> None:
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            return
+        with self._lock:
+            self._nano_status = data if isinstance(data, dict) else None
+            self._nano_status_ts = self._clock()
+
     def _on_cmd(self, topic: str, payload: bytes) -> None:
         if not self._commands_enabled:
             return
@@ -367,6 +438,15 @@ class StationCoordinator:
         """A bridge reports a physical strike. Forwarded to the audio capture
         (its pre-trigger buffer starts the clip); the analysed result then
         arrives through on_tap()."""
+        try:
+            event = json.loads(payload) if payload else {}
+        except ValueError:
+            event = {}
+        if not isinstance(event, dict):
+            event = {}
+        event["_rx"] = self._clock()
+        with self._lock:
+            self._tap_events.append(event)
         if self._on_external_tap is not None:
             try:
                 self._on_external_tap()
@@ -409,6 +489,17 @@ class StationCoordinator:
             else:
                 h["camera"] = {"level": OK, "detail": f"{st.get('tile_count', 0)} tiles"}
         h["mic"] = self._extra_health.get("mic", {"level": FAIL, "detail": "not started"})
+        miss = FAIL if self._nano_required else WARN
+        if self._nano_status_ts is None:
+            h["nano"] = {"level": miss, "detail": "no serial bridge heartbeat"}
+        elif now - self._nano_status_ts > self._nano_stale_s:
+            h["nano"] = {"level": miss, "detail": f"silent for {now - self._nano_status_ts:.0f} s"}
+        elif (self._nano_status or {}).get("state") == "offline":
+            h["nano"] = {"level": miss, "detail": "serial bridge offline"}
+        elif not (self._nano_status or {}).get("link", True):
+            h["nano"] = {"level": miss, "detail": "Nano not answering on serial"}
+        else:
+            h["nano"] = {"level": OK, "detail": f"belt {self._nano_status.get('belt_pct', '?')} %"}
         if not self._require_ack:
             h["unoq"] = {"level": WARN, "detail": "acknowledgement not required (bench mode)"}
         elif self._link_down:

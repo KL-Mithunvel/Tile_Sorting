@@ -238,3 +238,54 @@ def test_external_tap_topic_calls_the_capture_hook():
     c.start()
     bus.publish("station/tap", {})
     assert calls == [1]
+
+
+# ---- striker tile-present flag + Nano link ----------------------------------
+
+
+def test_strike_with_no_tile_under_it_does_not_use_a_tile_slot(rig):
+    clock, bus, store, c = rig
+    camera(bus, "T1", "Grade A")
+    assert c.on_tap(GOOD_TAP, tile_present=False) is None
+    assert c.snapshot()["awaiting_count"] == 1
+    assert c.snapshot()["counters"]["empty_strikes"] == 1
+    assert c.on_tap(GOOD_TAP, tile_present=True) == "T1"
+
+
+def test_tile_under_striker_but_no_camera_result_is_sent_as_hold_to_keep_order(rig):
+    clock, bus, store, c = rig
+    tid = c.on_tap(GOOD_TAP, tile_present=True)  # the camera never reported this tile
+    assert tid.startswith("UNKNOWN-")
+    final = finals(bus)[0]
+    assert final["final_grade"] == "Hold" and final["destination"] == "manual" and final["camera_grade"] is None
+    snap = c.snapshot()
+    assert snap["counters"]["missed_camera"] == 1
+    assert any(a["kind"] == "missed_camera" for a in snap["alarms"])
+
+
+def test_unknown_presence_stays_a_plain_orphan(rig):
+    clock, bus, store, c = rig
+    assert c.on_tap(GOOD_TAP, tile_present=None) is None
+    assert finals(bus) == []
+
+
+def test_tap_event_is_kept_for_its_clip_and_expires_if_no_clip_comes(rig):
+    clock, bus, store, c = rig
+    bus.publish("station/tap", {"seq": 1, "tile_present": True})
+    assert c.pop_tap_event()["tile_present"] is True
+    assert c.pop_tap_event() is None
+    bus.publish("station/tap", {"seq": 2, "tile_present": False})
+    clock.t += 6.0  # its clip never arrived
+    assert c.pop_tap_event() is None
+
+
+def test_nano_health_is_a_warning_until_required_then_a_fault():
+    for required, expected in ((False, WARN), (True, FAIL)):
+        clock, bus, store = Clock(), InMemoryBus(), TileStore(":memory:")
+        c = StationCoordinator(dict(CFG, nano={"required": required, "stale_s": 3.0}), bus, store, clock=clock)
+        c.start()
+        assert c.snapshot()["health"]["nano"]["level"] == expected
+        bus.publish("station/nano/status", {"state": "online", "link": True, "belt_pct": 50})
+        assert c.snapshot()["health"]["nano"]["level"] == OK
+        clock.t += 5.0
+        assert c.snapshot()["health"]["nano"]["level"] == expected

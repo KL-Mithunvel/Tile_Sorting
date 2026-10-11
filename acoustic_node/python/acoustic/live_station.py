@@ -100,6 +100,34 @@ def main(argv=None) -> None:
         demo_thread.start()
         print("DEMO MODE: everything you see is synthetic.")
 
+    # The Nano (striker + belt) on USB serial. A port that cannot be opened is
+    # reported, not fatal: the health strip shows the Nano as missing and, once
+    # station.nano.required is true, the station is in FAULT.
+    bridge = None
+    nano_cfg = st_cfg.get("nano") or {}
+    if nano_cfg.get("enabled") and not args.demo:
+        from acoustic.tap_bridge import TapBridge, open_pyserial
+
+        try:
+            ser = open_pyserial(nano_cfg["port"], int(nano_cfg.get("baud", 115200)))
+        except Exception as exc:  # noqa: BLE001 - no port / no pyserial / permission
+            print(f"Nano serial port {nano_cfg.get('port')!r} could not be opened: {exc}", file=sys.stderr)
+        else:
+            bridge = TapBridge(
+                ser, bus,
+                ping_s=float(nano_cfg.get("ping_s", 0.5)),
+                stale_s=float(nano_cfg.get("stale_s", 3.0)),
+            )
+            bridge.start()
+            print(f"Nano bridge on {nano_cfg['port']} @ {nano_cfg.get('baud', 115200)}.")
+
+    def _shutdown() -> None:
+        if bridge is not None:
+            bridge.stop()
+        if demo_thread is not None:
+            demo_thread.stop()
+        service.shutdown()
+
     if args.no_dashboard:
         print("GUI disabled (--no-dashboard). Ctrl+C to stop.")
         try:
@@ -110,7 +138,7 @@ def main(argv=None) -> None:
         except KeyboardInterrupt:
             pass
         finally:
-            service.shutdown()
+            _shutdown()
         return
 
     controls = bool(args.controls or args.demo or dash_cfg.get("controls_enabled", False))
@@ -122,9 +150,7 @@ def main(argv=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        if demo_thread is not None:
-            demo_thread.stop()
-        service.shutdown()
+        _shutdown()
 
 
 if __name__ == "__main__":

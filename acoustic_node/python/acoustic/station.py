@@ -212,7 +212,9 @@ class StationService:
             with self._lock:
                 self._last_tap = preview
             return None
-        tile_id = self.coordinator.on_tap(result)
+        event = self.coordinator.pop_tap_event()
+        tile_present = event.get("tile_present") if event else None
+        tile_id = self.coordinator.on_tap(result, tile_present=tile_present)
         preview["tile_id"] = tile_id
         with self._lock:
             self._last_tap = preview

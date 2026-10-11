@@ -135,8 +135,8 @@ let lastShownTile = null;
 
 function renderHealth(health) {
   const box = $("health"); box.replaceChildren();
-  const names = {broker:"Broker", camera:"Camera", mic:"Microphone", unoq:"UNO Q link"};
-  for (const k of ["camera","mic","broker","unoq"]) {
+  const names = {broker:"Broker", camera:"Camera", mic:"Microphone", nano:"Striker (Nano)", unoq:"UNO Q link"};
+  for (const k of ["camera","mic","nano","broker","unoq"]) {
     const v = health[k]; if (!v) continue;
     const c = h("div", "chip " + v.level);
     c.appendChild(h("b", null, names[k]));

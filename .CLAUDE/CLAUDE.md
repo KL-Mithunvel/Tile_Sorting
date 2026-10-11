@@ -150,7 +150,7 @@ a batch analysis script) before those values get copied into
 + `tune_from_labels.py` (a self-contained HTML sheet of the borderline tiles from
 `data/videos/` for a human to label fine / chipped / cracked, then threshold advice from
 those labels — it prints, it never edits config), with the pure logic in `review_tools.py`
-(tested in `tests/test_dev_review_tools.py`).
+(tested in `tests/test_dev_review_tools.py`). Also `export_tile_dataset.py` (2026-10-11): every graded tile of every video in `data/videos/` saved as a lossless crop + a context picture + a labels CSV/JSON (pipeline readings, source video/frame/time, model guess, blank `human_label`) + manifest (git commit, settings) + the config used, in `data/tile_dataset/<date_time>/`; `--merge-labels` copies a review-sheet export's human labels in (pure logic in `dataset_tools.py`, tests in `tests/test_dev_dataset_tools.py`).
 
 `camera_models/` (added 2026-08-20, reorganized into this shared parent folder
 2026-08-26 — previously `cam_yolo/`/`cam_vit/` sat loose at the repo root) is another

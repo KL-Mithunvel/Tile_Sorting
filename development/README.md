@@ -366,8 +366,9 @@ Which setting is right needs a human to say which tiles are *really* damaged. Th
 turns that into numbers.
 
 ```powershell
-python developmentuild_review_sheet.py          # ~10 min: runs the shipped pipeline on dataideos# open the .html it prints (dataevieweview_sheet_<date>_<time>.html) and label tiles
-python development	une_from_labels.py path	o	ile_labels_<id>.json
+python development\build_review_sheet.py          # ~10 min: runs the shipped pipeline on data\videos\
+# open the .html it prints (data\review\review_sheet_<date>_<time>.html) and label tiles
+python development\tune_from_labels.py path\to\tile_labels_<id>.json
 ```
 
 1. **`build_review_sheet.py`** runs the shipped pipeline (config.yaml, no overrides) over every
@@ -390,6 +391,40 @@ python development	une_from_labels.py path	o	ile_labels_<id>.json
 
 Needs the videos in `data/videos/`. The pipeline is the real one (`process_video_file` with an
 `on_tile` hook), so the sheet shows exactly the frame each tile was graded on.
+
+## Saving every graded tile as a labelled picture: `export_tile_dataset.py`
+
+Runs every video in `data\videos\` through the shipped pipeline and keeps each graded tile,
+so the pictures and readings can be reused later (re-grade with new thresholds without
+re-running the videos, train or evaluate a model, hand-label them).
+
+```powershell
+python development\export_tile_dataset.py                    # -> data\tile_dataset\<date>_<time>\
+python development\export_tile_dataset.py --only 12_16_03    # one video
+```
+
+One dated folder per run (an export never overwrites a previous one; `data\` is gitignored):
+
+| File | What |
+|---|---|
+| `tiles/<id>.png` | the exact crop the checks and the model were given (lossless) |
+| `context/<id>.jpg` | the same tile with belt around it, full resolution |
+| `labels.csv` / `labels.json` | one row per tile: id, video, frame, time, position; the grade and every measurement behind it (crack length, corner fill and gap depth, sharpness); the model's guess; file names; empty `human_label` / `human_note` |
+| `manifest.json` | when, the git commit (and whether the tree was dirty), the settings, per-video facts, counts |
+| `config_used.yaml` | the exact `config.yaml` that run used |
+| `README.txt` | the same explanation, inside the folder |
+
+The ids (`WIN_20261011_12_16_03_t006`) are stable, so later runs and labels can be matched to
+the same tile. **The labels are the pipeline's own readings plus a blank slot for a human
+verdict** - nothing is checked by eye unless someone fills in `human_label`. To add human
+labels, label tiles in the review sheet (`build_review_sheet.py`), then:
+
+```powershell
+python development\export_tile_dataset.py --merge-labels tile_labels_<id>.json --into data\tile_dataset\<run>
+```
+
+(matched on video file name + tile number; it reports labels that matched nothing). The pure
+helpers are `dataset_tools.py`.
 
 ## Data
 

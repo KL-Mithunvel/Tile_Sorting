@@ -114,8 +114,14 @@ segmentation:
   belt_roi:
     mode: "color"
     rect: [0.0, 0.0, 1.0, 1.0]       # used by mode "fixed"
-    hsv_lower: [45, 60, 40]          # the lab conveyor's saturated green mat
-    hsv_upper: [85, 255, 255]
+    # The lab conveyor's mat. It reads GREEN (hue ~60-75) in the phone clip but TEAL
+    # (hue ~86-93) in the laptop-webcam recordings, so the range runs from green to
+    # cyan. Measured over 24 frames of each of 5 videos: an upper bound of 85 finds
+    # the belt in only 3/24 frames of two of them; 95 finds it in 24/24 of all; from
+    # 100 up other colours (dark jeans, bluish shadows) leak in and the belt's
+    # direction becomes unreliable. Re-measure if the belt, light or camera change.
+    hsv_lower: [45, 60, 40]
+    hsv_upper: [95, 255, 255]
     margin_px: 25                    # a tile can overhang the belt edge
     min_area_px: 2000                # ignore specks of belt colour
 
@@ -198,11 +204,25 @@ processing_trigger: "line_crossing"
 
 trigger_line:
   # Where the line sits, as a fraction of the frame (0.0-1.0), so one value
-  # stays correct at any camera resolution. For "vertical" this is a fraction
-  # of the WIDTH (the line runs top-to-bottom; tiles cross it travelling
-  # left/right); for "horizontal", a fraction of the HEIGHT.
+  # stays correct at any camera resolution. 0.5 is the middle pixel of the feed.
+  # For a "vertical" line this is a fraction of the WIDTH (the line runs
+  # top-to-bottom; tiles cross it travelling left/right); for "horizontal", a
+  # fraction of the HEIGHT.
   position: 0.5
-  orientation: "vertical"
+  # Which way the line runs:
+  #   "auto"       - PERPENDICULAR TO THE BELT, whichever way the belt runs in the
+  #                  frame. Read from the belt itself (segmentation.belt_roi), so
+  #                  it is right for a portrait phone clip and a landscape webcam
+  #                  alike. The first few frames of a source are used to learn it;
+  #                  no tile can fire before that. REQUIRES belt_roi.mode to be
+  #                  "color" or "fixed" (the station refuses to start otherwise).
+  #   "vertical" / "horizontal" - force it. A belt running top-to-bottom in the
+  #                  frame needs "horizontal"; a left-to-right belt needs
+  #                  "vertical". The old default, "vertical", ran PARALLEL to the
+  #                  belt on both sample recordings, so nothing ever crossed it.
+  orientation: "auto"
+  # How many frames with a readable belt must agree before "auto" commits.
+  auto_frames: 8
   # Which way across the line counts. Set this to the conveyor's actual travel
   # so a tile nudged backwards is not graded twice. "forward" = the centre's
   # coordinate increasing (left->right, or top->bottom). "both" accepts either.

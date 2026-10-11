@@ -22,8 +22,9 @@ No I/O: centres in, ids out, so it is synthetic-sequence testable.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
+from camera.belt_roi import roi_applies
 from camera.line_trigger import LineCrossingDetector
 
 Center = tuple[float, float]
@@ -124,6 +125,9 @@ class Observation:
     track_id: int
     region: Any  # a TileRegion; typed loosely so this module needs no cv2
     crossed: bool
+    # "forward" (the centre's coordinate increased through the line: top-to-bottom
+    # or left-to-right) or "reverse"; None unless `crossed`.
+    direction: Optional[str] = None
 
 
 class LineCrossingTracker:
@@ -134,7 +138,16 @@ class LineCrossingTracker:
     other side of the line is never mistaken for its neighbour crossing it.
 
     `line` is the keyword arguments for `LineCrossingDetector`
-    (position / orientation / direction / hysteresis / max_step).
+    (position / orientation / direction / hysteresis / max_step), except that
+    `orientation` may be **"auto"**: the line is then made PERPENDICULAR to the
+    belt, whichever way the belt runs in the frame. Pass the belt's direction
+    ("vertical" = running top-to-bottom, "horizontal" = left-to-right, as
+    `belt_roi.BeltRoi.axis` reports it) to `update()`; once `auto_frames` frames
+    have agreed, the orientation is fixed for the rest of the run. Until then no
+    tile can fire -- a belt direction that is still being learned is not a
+    reason to guess a line. A camera can be mounted either way round, and the
+    belt can run along either image axis, so a fixed "vertical" default was
+    silently wrong (parallel to the belt, never crossed) for half the setups.
     """
 
     def __init__(
@@ -142,9 +155,19 @@ class LineCrossingTracker:
         line: dict,
         match_distance: float = 0.15,
         max_missed_frames: int = 3,
+        auto_frames: int = 8,
     ):
-        self._line = dict(line)
-        LineCrossingDetector(**self._line)  # validate eagerly, not on the first tile
+        line = dict(line)
+        self._auto = line.get("orientation") == "auto"
+        self._orientation: Optional[str] = None if self._auto else line.get("orientation", "vertical")
+        line.pop("orientation", None)
+        self._line = line
+        # Validate eagerly, not on the first tile ("vertical" stands in while "auto" is unresolved).
+        LineCrossingDetector(orientation=self._orientation or "vertical", **self._line)
+        if auto_frames < 1:
+            raise ValueError(f"LineCrossingTracker: auto_frames must be >= 1, got {auto_frames}")
+        self._auto_frames = int(auto_frames)
+        self._votes = {"vertical": 0, "horizontal": 0}
         self._tracker = RegionTracker(match_distance, max_missed_frames)
         self._detectors: dict[int, LineCrossingDetector] = {}
         self._crossing_count = 0
@@ -153,9 +176,34 @@ class LineCrossingTracker:
     def crossing_count(self) -> int:
         return self._crossing_count
 
-    def update(self, regions: Sequence[Any]) -> list[Observation]:
+    @property
+    def orientation(self) -> Optional[str]:
+        """The line's orientation ("vertical" / "horizontal"), or None while
+        "auto" is still waiting to learn the belt's direction."""
+        return self._orientation
+
+    @property
+    def resolved(self) -> bool:
+        return self._orientation is not None
+
+    def _learn_orientation(self, belt_axis: Optional[str]) -> None:
+        if belt_axis not in self._votes:
+            return  # no belt this frame, or its direction was unclear
+        self._votes[belt_axis] += 1
+        total = self._votes["vertical"] + self._votes["horizontal"]
+        if total < self._auto_frames or self._votes["vertical"] == self._votes["horizontal"]:
+            return
+        belt = "vertical" if self._votes["vertical"] > self._votes["horizontal"] else "horizontal"
+        # The line crosses the belt: perpendicular to the way it runs.
+        self._orientation = "horizontal" if belt == "vertical" else "vertical"
+
+    def update(self, regions: Sequence[Any], belt_axis: Optional[str] = None) -> list[Observation]:
         """Feed every region found this frame (anything with
-        `.center_normalized`); returns one Observation per region, same order."""
+        `.center_normalized`); returns one Observation per region, same order.
+        `belt_axis` is only used while the orientation is "auto" and unresolved."""
+        if not self.resolved:
+            self._learn_orientation(belt_axis)
+
         ids = self._tracker.update([r.center_normalized for r in regions])
 
         for tid in self._tracker.lost:
@@ -163,13 +211,20 @@ class LineCrossingTracker:
 
         observed: list[Observation] = []
         for tid, region in zip(ids, regions):
-            detector = self._detectors.get(tid)
-            if detector is None:
-                detector = self._detectors[tid] = LineCrossingDetector(**self._line)
-            crossed = bool(detector.update(region.center_normalized))
-            if crossed:
-                self._crossing_count += 1
-            observed.append(Observation(track_id=tid, region=region, crossed=crossed))
+            crossed = False
+            direction = None
+            if self.resolved:
+                detector = self._detectors.get(tid)
+                if detector is None:
+                    detector = self._detectors[tid] = LineCrossingDetector(
+                        orientation=self._orientation, **self._line
+                    )
+                event = detector.update(region.center_normalized)
+                crossed = bool(event)
+                if crossed:
+                    self._crossing_count += 1
+                    direction = event.direction
+            observed.append(Observation(track_id=tid, region=region, crossed=crossed, direction=direction))
         return observed
 
     @property
@@ -177,3 +232,16 @@ class LineCrossingTracker:
         """Ids currently tracked -- for callers that keep per-track display
         state and want to prune it."""
         return self._tracker.active_ids
+
+
+def validate_line_config(trigger_cfg: Optional[dict], seg_cfg: dict) -> None:
+    """Refuse a configuration that could never fire, at start-up rather than as
+    a silent "0 tiles". `orientation: "auto"` reads the belt's direction from the
+    belt ROI, so it cannot work with the ROI off."""
+    orientation = (trigger_cfg or {}).get("orientation", "auto")
+    if orientation == "auto" and not roi_applies(seg_cfg.get("belt_roi")):
+        raise ValueError(
+            "trigger_line.orientation is 'auto', which reads the belt's direction from "
+            "segmentation.belt_roi, but the belt ROI is off. Turn the belt ROI on "
+            "(mode 'color' or 'fixed') or set trigger_line.orientation to 'vertical' or 'horizontal'."
+        )

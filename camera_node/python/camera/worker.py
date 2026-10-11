@@ -22,7 +22,7 @@ from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
 from camera.pipeline import TileRecord, grading_options, process_tile
 from camera.recorder import Recorder
-from camera.region_tracker import LineCrossingTracker
+from camera.region_tracker import LineCrossingTracker, validate_line_config
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.sources import recordings_root
@@ -198,6 +198,12 @@ class SharedState:
         with self._lock:
             self._info = dict(info)
 
+    def update_info(self, **facts) -> None:
+        """Change individual facts in `info` (the trigger line's orientation is
+        learned from the belt a few frames after a source opens)."""
+        with self._lock:
+            self._info.update(facts)
+
     def set_station_state(self, state: str) -> None:
         with self._lock:
             self._station_state = state
@@ -289,6 +295,8 @@ class CameraWorker:
             )
 
         self._line_cfg = config.get("trigger_line") or {}
+        if self._mode == "line_crossing":
+            validate_line_config(self._line_cfg, config["segmentation"])
 
         # Loaded once here, not per tile: building an ONNX session takes tens
         # of milliseconds and holds the weights, so rebuilding it per tile
@@ -308,9 +316,11 @@ class CameraWorker:
                 "line_position": self._line_cfg.get("position")
                 if self._mode == "line_crossing"
                 else None,
-                "line_orientation": self._line_cfg.get("orientation")
-                if self._mode == "line_crossing"
-                else None,
+                # "auto" is resolved from the belt; None until then (see _step).
+                "line_orientation": None
+                if self._line_cfg.get("orientation", "auto") == "auto"
+                else self._line_cfg.get("orientation"),
+                "line_orientation_auto": self._line_cfg.get("orientation", "auto") == "auto",
             }
         )
 
@@ -331,14 +341,20 @@ class CameraWorker:
             self._crossing = LineCrossingTracker(
                 line=dict(
                     position=self._line_cfg.get("position", 0.5),
-                    orientation=self._line_cfg.get("orientation", "vertical"),
+                    orientation=self._line_cfg.get("orientation", "auto"),
                     direction=self._line_cfg.get("direction", "both"),
                     hysteresis=self._line_cfg.get("hysteresis", 0.02),
                     max_step=self._line_cfg.get("max_step"),
                 ),
                 match_distance=self._line_cfg.get("match_distance", 0.15),
                 max_missed_frames=self._line_cfg.get("max_missed_frames", 3),
+                auto_frames=self._line_cfg.get("auto_frames", 8),
             )
+        self._frames_since_reset = 0
+        self._orientation_reported: Optional[str] = None
+        self._auto_warned = False
+        if self._crossing is not None and not self._crossing.resolved:
+            self._state.update_info(line_orientation=None)  # a new source: relearn the belt
         self._seq = 0
         self._best_seen_region: Optional[TileRegion] = None
         # track id (None in departure mode, which has no ids) -> (grade, model
@@ -574,6 +590,26 @@ class CameraWorker:
             self._state.set_station_state("waiting")
         self._publish()
 
+    # How long to wait for the belt's direction before saying it cannot be read.
+    _AUTO_ORIENTATION_PATIENCE_FRAMES = 90
+
+    def _report_line_orientation(self) -> None:
+        """Tell the dashboard which way the line ended up, once; and if the
+        belt's direction still has not been read after a few seconds, say so
+        instead of leaving a station that silently never fires."""
+        self._frames_since_reset += 1
+        crossing = self._crossing
+        if crossing.resolved:
+            if crossing.orientation != self._orientation_reported:
+                self._orientation_reported = crossing.orientation
+                self._state.update_info(line_orientation=crossing.orientation)
+        elif self._frames_since_reset >= self._AUTO_ORIENTATION_PATIENCE_FRAMES and not self._auto_warned:
+            self._auto_warned = True
+            self._state.record_error(
+                "could not read the belt's direction, so the trigger line is not active: "
+                "set trigger_line.orientation to 'vertical' or 'horizontal' in config.yaml"
+            )
+
     def _step(self, frame: np.ndarray) -> None:
         seg_cfg = self._config["segmentation"]
         crack_cfg = self._config["crack_detection"]
@@ -596,7 +632,8 @@ class CameraWorker:
         in_view: list[tuple[TileRegion, Optional[int]]]
 
         if self._mode == "line_crossing":
-            observations = self._crossing.update(regions)
+            observations = self._crossing.update(regions, belt_axis=getattr(belt_roi, "axis", None))
+            self._report_line_orientation()
             in_view = [(o.region, o.track_id) for o in observations]
             # Grade THIS frame, for each tile that just crossed. That is the
             # point of the line: every tile is captured at the same place in
@@ -672,7 +709,11 @@ class CameraWorker:
         annotated = _draw_overlay(
             frame,
             tiles,
-            line=self._line_cfg if self._crossing is not None else None,
+            line=(
+                {**self._line_cfg, "orientation": self._crossing.orientation}
+                if self._crossing is not None and self._crossing.resolved
+                else None
+            ),
             fired=fired,
             roi=belt_roi,
         )

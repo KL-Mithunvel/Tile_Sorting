@@ -28,14 +28,16 @@ from typing import Optional
 
 from camera.capture import VideoFileCapture, load_config
 from camera.grading_model import TileGradeModel
-from camera.region_tracker import LineCrossingTracker
+from camera.region_tracker import LineCrossingTracker, validate_line_config
 from camera.pipeline import TileRecord, grading_options, process_tile, tile_record_to_dict
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
 
 
-def process_video_file(video_path: str, config: dict, save_snapshots: bool = True) -> list[TileRecord]:
+def process_video_file(
+    video_path: str, config: dict, save_snapshots: bool = True, info: Optional[dict] = None
+) -> list[TileRecord]:
     """Runs the full video file to completion and returns one TileRecord per
     tile that was graded, in order (record.seq is that tile's position in this
     run's flow count, 1-indexed).
@@ -51,6 +53,11 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
 
     These pick different frames, so the same clip will give different
     crack/corner measurements under each. That is expected, not a bug.
+
+    `info`, if given, is filled in with what happened around the grading:
+    frames read, frames where the belt was found, the trigger line's
+    orientation (learned from the belt when config says "auto") and how many
+    tiles crossed it.
     """
     seg_cfg = config["segmentation"]
     crack_cfg = config["crack_detection"]
@@ -64,6 +71,8 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
         )
 
     line_cfg = config.get("trigger_line") or {}
+    if mode == "line_crossing":
+        validate_line_config(line_cfg, seg_cfg)
     crossing: Optional[LineCrossingTracker] = None
     if mode == "line_crossing":
         # Same tracker the live worker uses, so an offline run on a clip gives
@@ -72,13 +81,14 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
         crossing = LineCrossingTracker(
             line=dict(
                 position=line_cfg.get("position", 0.5),
-                orientation=line_cfg.get("orientation", "vertical"),
+                orientation=line_cfg.get("orientation", "auto"),
                 direction=line_cfg.get("direction", "both"),
                 hysteresis=line_cfg.get("hysteresis", 0.02),
                 max_step=line_cfg.get("max_step"),
             ),
             match_distance=line_cfg.get("match_distance", 0.15),
             max_missed_frames=line_cfg.get("max_missed_frames", 3),
+            auto_frames=line_cfg.get("auto_frames", 8),
         )
 
     # Built once for the whole file, like worker.py does for the whole run.
@@ -93,6 +103,7 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
     records: list[TileRecord] = []
     best_seen_region: Optional[TileRegion] = None
     seq = 0
+    frames_read = belt_frames = 0
 
     with VideoFileCapture(video_path) as capture:
         while True:
@@ -101,14 +112,18 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
             except StopIteration:
                 break
 
-            regions, _roi = locate_tiles(frame, seg_cfg)
+            regions, belt = locate_tiles(frame, seg_cfg)
+            frames_read += 1
+            belt_frames += belt is not None
             region = regions[0] if regions else None
             tile_present = region is not None
             departed = tracker.process_frame(tile_present)
 
             regions_to_process: list[TileRegion] = []
             if mode == "line_crossing":
-                regions_to_process = [o.region for o in crossing.update(regions) if o.crossed]
+                regions_to_process = [
+                    o.region for o in crossing.update(regions, belt_axis=getattr(belt, "axis", None)) if o.crossed
+                ]
             else:
                 if tile_present:
                     # Same "largest sighting, not latest" choice as worker.py -
@@ -144,6 +159,13 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
             if regions_to_process:
                 best_seen_region = None
 
+    if info is not None:
+        info.update(
+            frames=frames_read,
+            belt_frames=belt_frames,
+            line_orientation=crossing.orientation if crossing is not None else None,
+            crossings=crossing.crossing_count if crossing is not None else None,
+        )
     return records
 
 

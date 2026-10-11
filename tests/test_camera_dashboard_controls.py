@@ -40,6 +40,7 @@ class Cam:
 def api(tmp_path):
     cfg = load_config()
     cfg["segmentation"]["belt_roi"] = {"mode": "off"}
+    cfg["trigger_line"]["orientation"] = "horizontal"   # "auto" needs the belt ROI, which is off here
     cfg["capture_snapshots"]["enabled"] = False
     cfg["grading_model"]["enabled"] = False
     cfg["recording"]["output_dir"] = str(tmp_path / "recordings")

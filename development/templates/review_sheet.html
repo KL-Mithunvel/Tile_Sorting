@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Review Sheet</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #181d23; --line: #2a313a; --text: #e8ecf0; --muted: #8b98a5;
+    --ok: #4cd964; --warn: #f0c93d; --orange: #ff9f43; --bad: #ff5c5c; --accent: #4aa8ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  .wrap { max-width: 1500px; margin: 0 auto; padding: 0 16px 4rem; }
+  header.top { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 0.8rem 0 0.7rem; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 1.15rem; margin: 0 0 0.3rem; }
+  .row { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; }
+  .muted { color: var(--muted); }
+  .help { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem 1rem; margin: 1rem 0; font-size: 0.9rem; line-height: 1.5; }
+  .help b { color: var(--text); }
+  .progress { flex: 1 1 14rem; height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; min-width: 8rem; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+  .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 0.4rem 0.8rem;
+         font: inherit; font-size: 0.88rem; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #04121f; font-weight: 600; }
+  .btn[aria-pressed=true] { background: var(--line); }
+  .btn:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .counts span { margin-right: 0.8rem; font-variant-numeric: tabular-nums; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 1rem; margin-top: 1rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem; display: grid; gap: 0.5rem; }
+  .card.done { border-color: #2e5a3a; }
+  .card.current { border-color: var(--accent); }
+  .card h3 { margin: 0; font-size: 0.95rem; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; }
+  .imgs { display: grid; grid-template-columns: 1fr; gap: 0.4rem; }
+  body.detector .imgs { grid-template-columns: 1fr 1fr; }
+  .imgs figure { margin: 0; }
+  .imgs img { display: block; width: 100%; height: auto; background: #000; border-radius: 4px; cursor: zoom-in; }
+  .imgs figcaption { font-size: 0.72rem; color: var(--muted); text-align: center; margin-top: 0.15rem; }
+  .imgs .det { display: none; }
+  body.detector .imgs .det { display: block; }
+  .readings { font-size: 0.82rem; color: var(--muted); display: none; }
+  body.detector .readings { display: block; }
+  .tag { font-size: 0.72rem; border: 1px solid var(--line); border-radius: 999px; padding: 0 0.5rem; color: var(--muted); }
+  .verdict { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .verdict button { flex: 1 1 auto; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+                    padding: 0.45rem 0.5rem; font: inherit; font-size: 0.85rem; cursor: pointer; }
+  .verdict button:hover { border-color: var(--muted); }
+  .verdict button[aria-pressed=true] { color: #04121f; font-weight: 600; }
+  .verdict button[data-l=fine][aria-pressed=true] { background: var(--ok); border-color: var(--ok); }
+  .verdict button[data-l=chipped][aria-pressed=true] { background: var(--orange); border-color: var(--orange); }
+  .verdict button[data-l=cracked][aria-pressed=true] { background: var(--warn); border-color: var(--warn); }
+  .verdict button[data-l=both][aria-pressed=true] { background: var(--bad); border-color: var(--bad); }
+  .verdict button[data-l=unsure][aria-pressed=true] { background: var(--muted); border-color: var(--muted); }
+  kbd { font: inherit; font-size: 0.72rem; border: 1px solid var(--line); border-radius: 3px; padding: 0 0.3rem; color: var(--muted); }
+  .g-A { color: var(--ok); } .g-B { color: var(--warn); } .g-C { color: var(--orange); } .g-Reject { color: var(--bad); }
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.88); display: none; align-items: center; justify-content: center; z-index: 20; cursor: zoom-out; padding: 1rem; }
+  .lightbox.on { display: flex; }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
+  .empty { padding: 3rem 0; text-align: center; color: var(--muted); }
+  @media (max-width: 600px) { .wrap { padding: 0 8px 4rem; } body.detector .imgs { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="row">
+      <h1>Tile review sheet</h1>
+      <span class="muted" id="created"></span>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn" id="btn-detector" aria-pressed="false" title="Show what the detectors measured. Off by default so your first look is not biased.">Show detector readings</button>
+      <button class="btn primary" id="btn-export">Export labels</button>
+    </div>
+    <div class="row" style="margin-top:0.5rem">
+      <div class="progress" aria-hidden="true"><i id="bar"></i></div>
+      <div class="counts muted" id="counts"></div>
+      <div class="row" role="group" aria-label="Filter">
+        <button class="btn" data-filter="all" aria-pressed="true">All</button>
+        <button class="btn" data-filter="todo" aria-pressed="false">Not yet labelled</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="help">
+    <b>What to do.</b> For each tile, look at the photo and say what you see &mdash; ignore what the software thought.
+    <b>Fine</b>: no visible damage. <b>Chipped</b>: a piece of the corner or edge is missing.
+    <b>Cracked</b>: a visible crack line on the surface. <b>Both</b>, or <b>Unsure</b> if you can't tell
+    (unsure tiles are left out of the maths). Click a photo to enlarge it.
+    Keys: <kbd>1</kbd> fine &nbsp;<kbd>2</kbd> chipped &nbsp;<kbd>3</kbd> cracked &nbsp;<kbd>4</kbd> both &nbsp;<kbd>5</kbd> unsure
+    &nbsp;<kbd>&larr;</kbd><kbd>&rarr;</kbd> move &nbsp;<kbd>Backspace</kbd> clear.
+    The tiles most worth your time are first; even the first 20 are useful.
+    Answers save in this browser as you go. When you finish (or stop), press <b>Export labels</b>
+    and give me the file.
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>Nothing to show with this filter.</div>
+</div>
+<div class="lightbox" id="lightbox"><img alt="enlarged tile"></div>
+
+<script id="data" type="application/json">__DATA_JSON__</script>
+<script>
+(function () {
+  const SHEET = JSON.parse(document.getElementById('data').textContent);
+  const KEY = 'tile-review:' + SHEET.id;
+  const LABELS = [['fine', 'Fine', '1'], ['chipped', 'Chipped', '2'], ['cracked', 'Cracked', '3'], ['both', 'Both', '4'], ['unsure', 'Unsure', '5']];
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+  let labels = {};
+  try { labels = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { labels = {}; }
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(labels)); } catch (e) { /* private mode: still works this session */ } };
+
+  let filter = 'all', current = null;
+  $('created').textContent = SHEET.created + ' · ' + SHEET.items.length + ' tiles';
+
+  function card(it) {
+    const readings = 'corner fill ' + it.fill.toFixed(3) + ' · gap depth ' + it.extent.toFixed(3) +
+      ' · crack ' + it.crack_severity + (it.crack_length_px ? ' ' + Math.round(it.crack_length_px) + ' px' : '');
+    const g = it.grade.replace('Grade ', '');
+    return '<article class="card" tabindex="0" id="c-' + esc(it.id) + '" data-id="' + esc(it.id) + '">' +
+      '<h3><span>#' + it.seq + '</span><span class="muted">' + esc(it.video_short) + ' · ' + it.time_s.toFixed(1) + ' s</span></h3>' +
+      '<div class="imgs"><figure><img loading="lazy" alt="tile ' + it.seq + '" src="data:image/jpeg;base64,' + it.img + '"><figcaption>the photo</figcaption></figure>' +
+      '<figure class="det"><img loading="lazy" alt="tile ' + it.seq + ' with detector outline" src="data:image/jpeg;base64,' + it.img_det + '"><figcaption>what the detector saw (red = outline, blue = ideal rectangle)</figcaption></figure></div>' +
+      '<div class="readings">' + esc(readings) + ' · graded <b class="g-' + esc(g) + '">' + esc(it.grade) + '</b></div>' +
+      '<div class="row">' + it.reasons.map(r => '<span class="tag">' + esc(r) + '</span>').join('') + '</div>' +
+      '<div class="verdict" role="group" aria-label="Your verdict for tile ' + it.seq + '">' +
+      LABELS.map(l => '<button type="button" data-l="' + l[0] + '" aria-pressed="false">' + l[1] + ' <kbd>' + l[2] + '</kbd></button>').join('') + '</div>' +
+      '</article>';
+  }
+
+  $('grid').innerHTML = SHEET.items.map(card).join('');
+
+  function paint() {
+    let done = 0; const per = {};
+    SHEET.items.forEach(it => {
+      const el = $('c-' + it.id), lab = labels[it.id] || null;
+      el.classList.toggle('done', !!lab);
+      el.classList.toggle('current', current === it.id);
+      el.hidden = filter === 'todo' && !!lab;
+      el.querySelectorAll('.verdict button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.l === lab)));
+      if (lab) { done++; per[lab] = (per[lab] || 0) + 1; }
+    });
+    const total = SHEET.items.length;
+    $('bar').style.width = (100 * done / total).toFixed(1) + '%';
+    $('counts').innerHTML = '<span><b>' + done + '</b> / ' + total + ' labelled</span>' +
+      LABELS.filter(l => per[l[0]]).map(l => '<span>' + l[1] + ' ' + per[l[0]] + '</span>').join('');
+    $('empty').hidden = !(filter === 'todo' && done === total);
+  }
+
+  function setLabel(id, lab) {
+    if (lab) labels[id] = lab; else delete labels[id];
+    save(); paint();
+  }
+
+  function nextTodo(fromId) {
+    const ids = SHEET.items.map(i => i.id);
+    const start = Math.max(0, ids.indexOf(fromId));
+    for (let k = 1; k <= ids.length; k++) {
+      const id = ids[(start + k) % ids.length];
+      if (!labels[id]) return id;
+    }
+    return null;
+  }
+
+  function focusCard(id) {
+    if (!id) return;
+    current = id; paint();
+    const el = $('c-' + id); el.focus({preventScroll: true});
+    el.scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
+
+  $('grid').addEventListener('click', e => {
+    const card = e.target.closest('.card'); if (!card) return;
+    const btn = e.target.closest('.verdict button');
+    const img = e.target.closest('.imgs img');
+    current = card.dataset.id;
+    if (btn) {
+      const same = labels[card.dataset.id] === btn.dataset.l;
+      setLabel(card.dataset.id, same ? null : btn.dataset.l);
+    } else if (img) {
+      const lb = $('lightbox'); lb.querySelector('img').src = img.src; lb.classList.add('on');
+    } else paint();
+  });
+  $('lightbox').onclick = () => $('lightbox').classList.remove('on');
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { $('lightbox').classList.remove('on'); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const ids = SHEET.items.map(i => i.id).filter(id => !$('c-' + id).hidden);
+    if (!ids.length) return;
+    if (current === null || !ids.includes(current)) current = ids[0];
+    const i = ids.indexOf(current);
+    const lab = LABELS.find(l => l[2] === e.key);
+    if (lab) { e.preventDefault(); setLabel(current, lab[0]); focusCard(nextTodo(current)); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); focusCard(ids[Math.min(ids.length - 1, i + 1)]); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); focusCard(ids[Math.max(0, i - 1)]); }
+    else if (e.key === 'Backspace') { e.preventDefault(); setLabel(current, null); }
+  });
+
+  document.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => {
+    filter = b.dataset.filter;
+    document.querySelectorAll('[data-filter]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    paint();
+  });
+
+  $('btn-detector').onclick = () => {
+    const on = document.body.classList.toggle('detector');
+    $('btn-detector').setAttribute('aria-pressed', String(on));
+    $('btn-detector').textContent = on ? 'Hide detector readings' : 'Show detector readings';
+  };
+
+  $('btn-export').onclick = () => {
+    const out = {
+      sheet: SHEET.id, created: SHEET.created, exported: new Date().toISOString(), tool: 'development/build_review_sheet.py',
+      items: SHEET.items.map(it => ({
+        id: it.id, video: it.video, seq: it.seq, frame: it.frame, time_s: it.time_s, label: labels[it.id] || null,
+        grade: it.grade, fill: it.fill, extent: it.extent, corner_broken: it.corner_broken,
+        crack_severity: it.crack_severity, crack_length_px: it.crack_length_px, reasons: it.reasons,
+      })),
+    };
+    const done = out.items.filter(i => i.label).length;
+    const blob = new Blob([JSON.stringify(out, null, 2)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'tile_labels_' + SHEET.id + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    alert('Saved ' + done + ' labelled tiles of ' + out.items.length + ' as ' + a.download + ' in your Downloads folder.');
+  };
+
+  paint();
+})();
+</script>
+</body>
+</html>

@@ -145,7 +145,12 @@ Conveyor stays on the Arduino Mega (not App-Lab-class, not part of this conventi
 node, not part of the App Bricks convention above. It holds tooling for calibrating
 `camera_node`'s vision thresholds against real tile photos (an interactive GUI tuner and
 a batch analysis script) before those values get copied into
-`camera_node/python/camera/config.yaml`. See `development/README.md`.
+`camera_node/python/camera/config.yaml`. See `development/README.md`. Added 2026-10-11:
+`corner_sensitivity.py` (the corner threshold trade-off in numbers), `build_review_sheet.py`
++ `tune_from_labels.py` (a self-contained HTML sheet of the borderline tiles from
+`data/videos/` for a human to label fine / chipped / cracked, then threshold advice from
+those labels — it prints, it never edits config), with the pure logic in `review_tools.py`
+(tested in `tests/test_dev_review_tools.py`).
 
 `camera_models/` (added 2026-08-20, reorganized into this shared parent folder
 2026-08-26 — previously `cam_yolo/`/`cam_vit/` sat loose at the repo root) is another

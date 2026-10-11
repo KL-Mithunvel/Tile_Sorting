@@ -24,7 +24,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from camera.capture import VideoFileCapture, load_config
 from camera.grading_model import TileGradeModel
@@ -36,7 +36,11 @@ from camera.tile_tracker import TileTracker
 
 
 def process_video_file(
-    video_path: str, config: dict, save_snapshots: bool = True, info: Optional[dict] = None
+    video_path: str,
+    config: dict,
+    save_snapshots: bool = True,
+    info: Optional[dict] = None,
+    on_tile: Optional[Callable[[TileRecord, TileRegion, Any, int], None]] = None,
 ) -> list[TileRecord]:
     """Runs the full video file to completion and returns one TileRecord per
     tile that was graded, in order (record.seq is that tile's position in this
@@ -58,6 +62,11 @@ def process_video_file(
     frames read, frames where the belt was found, the trigger line's
     orientation (learned from the belt when config says "auto") and how many
     tiles crossed it.
+
+    `on_tile(record, region, frame, frame_index)`, if given, is called as each tile
+    is graded, with the full frame it was graded on. It exists so tools (the
+    review sheet) can cut their own pictures without this function holding
+    every frame in memory; it must not modify `frame`.
     """
     seg_cfg = config["segmentation"]
     crack_cfg = config["crack_detection"]
@@ -156,6 +165,8 @@ def process_video_file(
                     path = save_tile_snapshot(record, resolve_output_dir(config))
                     record.snapshot_path = str(path)
                 records.append(record)
+                if on_tile is not None:
+                    on_tile(record, region_to_process, frame, frames_read - 1)
             if regions_to_process:
                 best_seen_region = None
 

@@ -284,3 +284,21 @@ class TestCrossingDirection:
     def test_direction_is_none_when_nothing_crossed(self):
         t = LineCrossingTracker({**LINE, "orientation": "horizontal"})
         assert all(o.direction is None for y in (0.1, 0.2) for o in t.update([centre((0.5, y))]))
+
+
+def test_on_tile_callback_receives_each_graded_tile_with_its_frame(tmp_path):
+    """The review-sheet builder uses this hook to cut its own pictures."""
+    path = tmp_path / "clip.avi"
+    out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 20, (400, 300))
+    for pos in np.linspace(40, 260, 20).astype(int):
+        out.write(scene("vertical", tile_pos=int(pos)))
+    out.release()
+
+    seen = []
+    records = process_video_file(
+        str(path), worker_config(), save_snapshots=False,
+        on_tile=lambda rec, region, frame, idx: seen.append((rec.seq, region.bbox, frame.shape, idx)),
+    )
+    assert len(records) == len(seen) == 1
+    seq, bbox, shape, idx = seen[0]
+    assert seq == 1 and shape == (300, 400, 3) and 0 <= idx < 20

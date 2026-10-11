@@ -358,6 +358,39 @@ git-tracked like `roboflow_dataset_manifest.csv`) recording every
 source → output mapping and whether each output was an original copy or an
 augmented variant.
 
+## Setting the corner / crack thresholds from your own eyes: `build_review_sheet.py` + `tune_from_labels.py`
+
+The corner and crack checks have thresholds that trade "a damaged tile ships" against
+"a good tile is rejected" (`corner_sensitivity.py` prints the trade for the corner check).
+Which setting is right needs a human to say which tiles are *really* damaged. This pair
+turns that into numbers.
+
+```powershell
+python developmentuild_review_sheet.py          # ~10 min: runs the shipped pipeline on dataideos# open the .html it prints (dataevieweview_sheet_<date>_<time>.html) and label tiles
+python development	une_from_labels.py path	o	ile_labels_<id>.json
+```
+
+1. **`build_review_sheet.py`** runs the shipped pipeline (config.yaml, no overrides) over every
+   video in `data/videos/` and writes one self-contained HTML page (images embedded, works
+   offline, gitignored) of the tiles worth a look: the **contested** corner readings first
+   (fill 0.78-0.93, where the threshold choice changes the answer), then tiles the crack check
+   flagged, then clearly broken ones (positive examples), then a few clean **controls**.
+   `--only 12_16_03` for one video, `--max`, `--controls` to resize.
+2. **The sheet**: for each tile press **1** fine, **2** chipped, **3** cracked, **4** both,
+   **5** unsure (arrow keys move, Backspace clears; or click). The detector's readings and
+   outline are hidden until you press *Show detector readings*, so your first look isn't
+   biased. Answers save in the browser as you go; **Export labels** downloads a JSON.
+   Even the first 20 tiles are useful.
+3. **`tune_from_labels.py`** reads that JSON and prints, from your labels: how the shipped
+   corner thresholds did, the best setting under a false-reject budget (`--max-fpr`, default 5%)
+   with a table around it, and how the crack check did plus what a minimum-length cutoff
+   would change. It **changes nothing** - you copy the numbers into
+   `camera_node/python/camera/config.yaml` yourself - and it says how few labels it is working
+   from and when it cannot decide. The maths is `review_tools.py` (unit-tested).
+
+Needs the videos in `data/videos/`. The pipeline is the real one (`process_video_file` with an
+`on_tile` hook), so the sheet shows exactly the frame each tile was graded on.
+
 ## Data
 
 Sample photos live in the repo root's `data/` (gitignored — see `.gitignore`,

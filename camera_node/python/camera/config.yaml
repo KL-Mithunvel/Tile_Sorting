@@ -397,3 +397,17 @@ dashboard:
   # network. Set false (or host: "127.0.0.1") on a station that should not be
   # re-pointed by whoever is on the WiFi. Files can only be opened from data/.
   controls_enabled: true
+
+# ---------------------------------------------------------------------------
+# Hand-off to the Pi's acoustic/decision service (camera/publisher.py).
+# When enabled, every tile graded from a LIVE camera is published to the
+# station's MQTT broker with a tile id minted here, and a heartbeat is sent so
+# the station knows this process is alive. Recordings/files are never sent.
+# Contract: documents/programming/station_coordination.md
+# ---------------------------------------------------------------------------
+mqtt:
+  enabled: false        # turn on at the station once mosquitto is running on the Pi
+  host: "127.0.0.1"     # the broker is on this same Pi
+  port: 1883
+  client_id: "tile-camera"
+  heartbeat_s: 2.0

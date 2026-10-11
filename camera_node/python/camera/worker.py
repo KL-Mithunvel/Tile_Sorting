@@ -297,8 +297,12 @@ class CameraWorker:
         config: dict,
         state: SharedState,
         source: Optional[dict] = None,
+        publisher=None,
     ):
         self._capture = capture
+        # Forwards each graded tile to the station's broker (camera/publisher.py).
+        # None = this camera node runs stand-alone, as before.
+        self._publisher = publisher
         self._config = config
         self._state = state
         self._source = dict(source) if source else {"kind": "camera", "label": "Camera"}
@@ -532,6 +536,22 @@ class CameraWorker:
         result = session.set_verdict(seq, **verdict)
         self._state.set_labelling(session.summary())
         return result
+
+    def _forward_tile(self, record: TileRecord) -> None:
+        """Hand the graded tile to the station (tile id minted there). Never
+        raises: a broker problem must cost the hand-off, not the inspection of
+        the next tile, and it is shown on the dashboard rather than hidden."""
+        pub = self._publisher
+        if pub is None:
+            return
+        kind = self._source.get("kind", "camera")
+        try:
+            sent = pub.publish_tile(tile_record_to_dict(record), kind)
+        except Exception as exc:  # noqa: BLE001
+            self._state.record_error(f"tile #{record.seq} could not be sent to the station: {exc}")
+            return
+        if sent is None and kind == "camera":
+            self._state.record_error(f"tile #{record.seq} was graded but NOT delivered to the station")
 
     def _save_labelled_tile(self, record: TileRecord, region: TileRegion, frame: np.ndarray) -> None:
         session = self._labels
@@ -812,6 +832,7 @@ class CameraWorker:
                 else self._tracker.tile_count
             )
             self._state.record_tile(record, count)
+            self._forward_tile(record)
             # The frame the tile was graded in: with sharpest-frame picking that is an
             # earlier frame than the current one.
             pick_frame = pick.frame if pick is not None and pick.frame is not None else frame

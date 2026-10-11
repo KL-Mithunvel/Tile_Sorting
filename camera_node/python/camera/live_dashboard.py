@@ -33,6 +33,7 @@ import sys
 
 from camera.capture import list_cameras, load_config
 from camera.dashboard import create_app
+from camera.publisher import TilePublisher, status_from_shared_state
 from camera.station import StationController
 from camera.worker import SharedState
 
@@ -122,8 +123,18 @@ def main(argv: list[str] | None = None) -> None:
         config["camera"]["backend"] = args.backend
 
     state = SharedState()
+    # Optional hand-off to the Pi's acoustic/decision service. Off unless
+    # config.yaml's mqtt.enabled is true, so a stand-alone camera is unchanged.
+    publisher = None
+    mqtt_cfg = config.get("mqtt") or {}
+    if mqtt_cfg.get("enabled"):
+        publisher = TilePublisher(mqtt_cfg, status_source=lambda: status_from_shared_state(state))
+        publisher.start()
+        state.update_info(mqtt=True)
+        print(f"Forwarding graded tiles to the station broker at {mqtt_cfg.get('host')}:{mqtt_cfg.get('port')} "
+              f"(run {publisher.run_id}).")
     try:
-        controller = StationController(config, state)
+        controller = StationController(config, state, publisher=publisher)
     except ValueError as exc:
         print(f"Bad configuration: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -150,6 +161,8 @@ def main(argv: list[str] | None = None) -> None:
             pass
         finally:
             controller.shutdown()
+            if publisher is not None:
+                publisher.stop()
         return
 
     dash_cfg = config["dashboard"]
@@ -162,6 +175,8 @@ def main(argv: list[str] | None = None) -> None:
         pass
     finally:
         controller.shutdown()
+        if publisher is not None:
+            publisher.stop()
 
 
 if __name__ == "__main__":

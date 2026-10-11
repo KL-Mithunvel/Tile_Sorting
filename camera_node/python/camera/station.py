@@ -48,6 +48,7 @@ class StationController:
         usb_factory: Callable[[dict], object] = WebcamCapture,
         csi_factory: Callable[[dict], object] = PiCameraCapture,
         file_factory: Callable[..., object] = PacedVideoCapture,
+        publisher=None,
     ):
         self._config = config
         self._state = state
@@ -55,7 +56,7 @@ class StationController:
         self._usb_factory = usb_factory
         self._csi_factory = csi_factory
         self._file_factory = file_factory
-        self.worker = CameraWorker(None, config, state)
+        self.worker = CameraWorker(None, config, state, publisher=publisher)
 
         self._scan_lock = threading.Lock()
         self._cameras: dict = {"usb": [], "csi": []}

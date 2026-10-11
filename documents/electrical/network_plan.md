@@ -122,7 +122,7 @@ device (`ip link` on Linux, router client list, or the board's label).
 |---|---|---|---|---|---|---|
 | Router | D-Link DIR-825 | `tile-router` | `192.168.1.1` | — | — | to configure |
 | Master | Owner's PC | `tile-master` | `192.168.1.10` | _TBD_ | Ethernet | PC is master (**Decided**, §5.1). **Observed 2026-10-11:** the laptop's Ethernet is a *manual* static `192.168.1.33/24`, no gateway, no DNS — not `.10` |
-| Vision + audio | Raspberry Pi 5 16 GB | `tile-pi` | `192.168.1.11` | **`88:a2:9e:49:e1:ca`** (observed 2026-10-11) | Ethernet | **On the LAN, reservation verified 2026-10-11** (first leased `.150` from the pool, moved to `.11` once the entry existed). OS services, SSH and Wi-Fi not set up |
+| Vision + audio | Raspberry Pi 5 16 GB | `tile-pi` | `192.168.1.11` | **`88:a2:9e:49:e1:ca`** (observed 2026-10-11) | Ethernet | **On the LAN, reservation verified 2026-10-11** (first leased `.150` from the pool, moved to `.11` once the entry existed). **Surveyed over SSH 2026-10-11** (user `klm`, hostname currently `klmpi`; Debian 13 trixie, 64-bit, Python 3.13.5, Wi-Fi on the hotspot at `172.20.10.4`, **routing fixed — §5.1**). No camera detected; `python3-opencv`/`flask` not installed; camera service not installed |
 | Audio (future split) | 2nd Pi / compute unit | `tile-audio` | `192.168.1.12` | _TBD_ | Ethernet | **reserved only** — used if a second unit is bought |
 | Measurement | undecided | `tile-measure` | `192.168.1.13` | _TBD_ | Ethernet | node not decided |
 | Pick-and-place | Arduino UNO Q | `tile-gantry` | `192.168.1.15` | **`dc:04:5a:9f:0a:1b`** (the hub's adapter, observed 2026-10-11) | **Ethernet via owner's USB-C hub — works** (§3 notes) | lab board named `KLM`. **Reservation works (verified 2026-10-11):** after the entry's IP was corrected from `.142` to `.15` the board's wired link leased `192.168.1.15/24` |
@@ -208,7 +208,7 @@ has no uplink, so a Pi that believed it would lose internet or have traffic blac
   directly-connected subnet.
 - Prefer the router on **wired Ethernet** and the external link on Wi-Fi, so the two never
   contend for the one radio.
-- None of this has been tried on the Pi. Verify with `ip route` on the Pi once both are up.
+- Tried on the Pi 2026-10-11 — the problem was real and is fixed; see §5.1.
 
 ### 5.1 Observed on the UNO Q and the dev laptop (2026-10-11)
 
@@ -234,6 +234,31 @@ IPv6 (Wi-Fi stays 45). Stronger fallback if it recurs:
 `Set-NetIPInterface -InterfaceAlias "Ethernet" -AddressFamily <IPv4|IPv6> -AutomaticMetric Enabled`.
 Applies to the adapter *named* `Ethernet` (Intel I219-LM) only — a USB/dock adapter would
 need the same. Keep the laptop's Wi-Fi **on**: it is the only internet path.
+
+**Raspberry Pi 5 — same fault, fixed (2026-10-11).** The Pi had *already* joined the iPhone
+hotspot (`wlan0` `172.20.10.4`) and the D-Link (`eth0` `192.168.1.11`), so it was reachable
+on both. Observed before the fix: two default routes, wired via `192.168.1.1` (metric 100)
+beating Wi-Fi (600); `/etc/resolv.conf` listed the D-Link `192.168.1.1` first; and
+`getent hosts github.com` returned `192.0.2.1` (a reserved placeholder address — the D-Link's
+DNS relay is the likely source, not checked). Result: no usable internet from the Pi.
+- **Fix:** on the NetworkManager connection `netplan-eth0`, `ipv4.never-default`,
+  `ipv6.never-default`, `ipv4.ignore-auto-dns` and `ipv6.ignore-auto-dns` all set to `yes`,
+  applied live with `nmcli device reapply eth0` (SSH was not dropped).
+- **Persistent:** this OS (trixie) has NetworkManager write its profiles as netplan files;
+  the four options are in `/etc/netplan/90-NM-75a1216a-….yaml`, so they survive a reboot.
+  No hand-edited netplan was needed.
+- **After:** only default route via `172.20.10.1` on `wlan0`; `192.168.1.0/24` still on
+  `eth0`; `resolv.conf` = hotspot DNS only; `github.com` and `pypi.org` resolve to real
+  addresses. **Not tested:** `apt`/`git clone`/`pip` actually downloading, and behaviour
+  after a reboot or when the hotspot address changes.
+- **Undo:** the same four options set to `no` on `netplan-eth0`, then `reapply`.
+- **Access:** SSH user `klm` (password kept out of the repo; **it is weak and must be
+  changed**); SSH host key `SHA256:5xktU4J2su8byYwyFrbv7eSupcToWs2FTdey/QExjvE`
+  (ssh-ed25519, captured over the LAN on first contact, not verified out of band). VNC
+  answers on 5900 (probably the Wayland VNC server; `vncserver-x11-serviced` is inactive).
+  `sudo` needs a password (not passwordless).
+- The hotspot address `172.20.10.4` is a phone-DHCP lease and may change; the stable
+  address is `192.168.1.11`.
 
 ---
 
@@ -272,10 +297,12 @@ timestamps as approximate and correlate on `tile_id`, not on time.
 - [ ] Collect MACs for all nodes; fill §3; get **every** reservation honoured. UNO Q done
       (`dc:04:5a:9f:0a:1b` → `.15`, verified); Pi done (`88:a2:9e:49:e1:ca` → `.11`, verified 2026-10-11); laptop still TBD
       (planned `.10`, currently a manual static `.33`).
-- [ ] **Pi networking** (next session): enable SSH and record the username; set
-      never-default on its wired connection (§5); join the external hotspot / extended
-      Wi-Fi — a subnet other than `192.168.1.x` — and verify `ip route`. Then turn the
-      router's SSH and Telnet off.
+- [x] **Pi networking** — SSH enabled (user `klm`), wired never-default + DNS fix applied
+      and verified, Wi-Fi already on the hotspot (2026-10-11, §5.1).
+- [ ] **Pi next:** change the weak SSH/VNC password and move to SSH keys; confirm the fix
+      survives a reboot and that `apt`/`git clone` really download; decide the final
+      "extended Wi-Fi" (the hotspot is a stand-in; it must not use `192.168.1.x`); set the
+      hostname to `tile-pi` (currently `klmpi`). Then turn the router's SSH and Telnet off.
 - [x] Test the Ethernet hub on the UNO Q — works (`cdc_ether`, `enxdc045a9f0a1b`, DHCP
       lease). Power passthrough under load still untested.
 - [ ] Confirm the laptop no longer drops internet with the cable plugged in (§5.1).

@@ -4,8 +4,11 @@ rem The SSH password lives in secrets.bat (gitignored) - see secrets.bat.example
 rem No "setlocal" here on purpose: this file is meant to be called from another
 rem .bat so these variables stay set in the caller's environment.
 
-rem Hotspot DHCP lease - has been .2 and .3; update when it moves (ping to check).
-set UNO_Q_HOST=172.20.10.3
+rem D-Link control LAN: DHCP reservation for the hub's MAC dc:04:5a:9f:0a:1b (verified
+rem 2026-10-11, documents/electrical/network_plan.md). Needs the laptop on the D-Link LAN.
+rem Fallback: the board is still on the phone hotspot at 172.20.10.3 (Wi-Fi, has moved
+rem between .2 and .3 before) - swap the line below if the D-Link is off.
+set UNO_Q_HOST=192.168.1.15
 set UNO_Q_USER=arduino
 
 rem Pinned host key fingerprint (ssh-ed25519, captured 2026-07-28). Passed explicitly

@@ -21,6 +21,7 @@ import numpy as np
 from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
 from camera.pipeline import TileRecord, grading_options, process_tile
+from camera.ratemeter import RateMeter
 from camera.recorder import Recorder
 from camera.region_tracker import LineCrossingTracker, validate_line_config
 from camera.segmentation import TileRegion, locate_tiles
@@ -29,6 +30,10 @@ from camera.sources import recordings_root
 from camera.tile_tracker import TileTracker
 
 log = logging.getLogger(__name__)
+
+
+def _round(v):
+    return None if v is None else round(v, 1)
 
 _OVERLAY_OK_COLOR = (0, 200, 0)  # BGR
 _OVERLAY_BAD_COLOR = (0, 0, 220)
@@ -149,6 +154,7 @@ class SharedState:
         self._playback: Optional[dict] = None  # file sources only
         self._recording: Optional[dict] = None  # set while recording
         self._last_recording: Optional[dict] = None  # the one that just finished
+        self._perf: Optional[dict] = None  # frame rates, skipped frames, the camera's real settings
 
     def record_error(self, message: str) -> None:
         with self._lock:
@@ -188,6 +194,10 @@ class SharedState:
     def set_recording(self, recording: Optional[dict]) -> None:
         with self._lock:
             self._recording = dict(recording) if recording else None
+
+    def set_perf(self, perf: Optional[dict]) -> None:
+        with self._lock:
+            self._perf = dict(perf) if perf else None
 
     def set_last_recording(self, meta: Optional[dict]) -> None:
         with self._lock:
@@ -247,6 +257,7 @@ class SharedState:
                 },
                 "recording": dict(self._recording) if self._recording else None,
                 "last_recording": dict(self._last_recording) if self._last_recording else None,
+                "perf": dict(self._perf) if self._perf else None,
             }
 
 
@@ -264,10 +275,11 @@ class CameraWorker:
     Flask's request threads, so they are serialised by `_control_lock`.
     """
 
-    # Consecutive failed reads before the dashboard says the camera has stopped
-    # delivering frames (a USB camera pulled out mid-run), rather than just
-    # showing a frozen picture.
-    _READ_FAILURES_BEFORE_ERROR = 50
+    # How long reads must keep failing before the dashboard says the camera has
+    # stopped delivering frames (a USB camera pulled out mid-run), rather than
+    # just showing a frozen picture. Time, not a count: with the threaded capture
+    # a silent camera makes each failed read wait a second.
+    _READ_FAILURE_SECONDS = 3.0
     _PUBLISH_EVERY_S = 0.25
 
     def __init__(
@@ -285,7 +297,9 @@ class CameraWorker:
         self._rec_lock = threading.Lock()  # serialises recorder.write() against stop()
         self._recorder: Optional[Recorder] = None
         self._last_publish = 0.0
-        self._read_failures = 0
+        self._read_failed_since: Optional[float] = None
+        self._proc_meter = RateMeter(30)
+        self._reported_read_failure = False
 
         self._mode = config.get("processing_trigger", "line_crossing")
         if self._mode not in ("line_crossing", "departure"):
@@ -353,6 +367,7 @@ class CameraWorker:
         self._frames_since_reset = 0
         self._orientation_reported: Optional[str] = None
         self._auto_warned = False
+        self._proc_meter.reset()
         if self._crossing is not None and not self._crossing.resolved:
             self._state.update_info(line_orientation=None)  # a new source: relearn the belt
         self._seq = 0
@@ -361,7 +376,7 @@ class CameraWorker:
         # grade) for tiles already graded and still in view; drives the labels.
         self._graded: dict[Optional[int], tuple[str, Optional[str]]] = {}
         self._seen_errors: set[str] = set()
-        self._read_failures = 0
+        self._read_failed_since = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -526,6 +541,17 @@ class CameraWorker:
                 {"active": True, "folder": rec.folder.name, "frames": rec.frames, "elapsed_s": round(rec.elapsed_s, 1)}
             )
         cap = self._capture
+        if cap is not None and not hasattr(cap, "frame_count"):
+            captured = getattr(cap, "frames_captured", None)
+            skipped = getattr(cap, "frames_skipped", None)
+            self._state.set_perf(
+                {
+                    "capture_fps": _round(getattr(cap, "capture_fps", None)),
+                    "process_fps": _round(self._proc_meter.rate()),
+                    "skipped_pct": round(100.0 * skipped / captured, 1) if captured else None,
+                    "camera": getattr(cap, "settings", None) or None,
+                }
+            )
         if cap is not None and hasattr(cap, "frame_count"):
             self._state.set_playback(
                 {
@@ -552,14 +578,18 @@ class CameraWorker:
                 self._state.set_source_status("finished")
                 break
             except RuntimeError:
-                self._read_failures += 1
-                if self._read_failures == self._READ_FAILURES_BEFORE_ERROR:
+                now = time.monotonic()
+                if self._read_failed_since is None:
+                    self._read_failed_since = now
+                elif now - self._read_failed_since >= self._READ_FAILURE_SECONDS and not self._reported_read_failure:
+                    self._reported_read_failure = True
                     self._state.set_source_status("error", "the camera has stopped delivering frames")
                 time.sleep(0.01)  # transient capture hiccup; do not spin the CPU
                 continue
-            if self._read_failures >= self._READ_FAILURES_BEFORE_ERROR:
+            if self._reported_read_failure:
                 self._state.set_source_status("running")  # it came back
-            self._read_failures = 0
+                self._reported_read_failure = False
+            self._read_failed_since = None
             self._safe_step(frame)
 
     def _safe_step(self, frame: np.ndarray) -> None:
@@ -588,6 +618,7 @@ class CameraWorker:
                 log.exception("frame processing failed (first occurrence of this error)")
             # Never leave the station showing "processing" for a tile that failed.
             self._state.set_station_state("waiting")
+        self._proc_meter.tick(time.monotonic())
         self._publish()
 
     # How long to wait for the belt's direction before saying it cannot be read.
@@ -717,6 +748,12 @@ class CameraWorker:
             fired=fired,
             roi=belt_roi,
         )
+        # The browser feed is for looking at, not measuring: send it at a width a WiFi link
+        # can carry at the camera's frame rate. Detection ran on the full-size frame above.
+        stream_w = self._config["dashboard"].get("stream_width")
+        if stream_w and annotated.shape[1] > stream_w:
+            scale = stream_w / annotated.shape[1]
+            annotated = cv2.resize(annotated, (int(stream_w), int(annotated.shape[0] * scale)), interpolation=cv2.INTER_AREA)
         ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
         if ok:
             self._state.update_frame(buf.tobytes())

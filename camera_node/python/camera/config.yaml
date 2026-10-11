@@ -364,6 +364,11 @@ dashboard:
   host: "0.0.0.0"
   port: 5000
   jpeg_quality: 80
+  # Width of the video the BROWSER receives (detection always runs on the full-size
+  # frame). A 1920-wide frame JPEG-encoded 30 times a second is several MB/s - too
+  # much for a typical WiFi link, which shows up as a stuttering, low-frame-rate feed.
+  # null = send full size.
+  stream_width: 960
   # Lets the page switch the video source, open files and start/stop recording.
   # Anyone who can reach the dashboard can use these, and it is served on the
   # network. Set false (or host: "127.0.0.1") on a station that should not be

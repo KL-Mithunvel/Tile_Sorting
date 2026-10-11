@@ -67,6 +67,7 @@ def create_app(
                 "source": status["source"],
                 "recording": status["recording"],
                 "last_recording": status["last_recording"],
+                "perf": status["perf"],
                 "controls": bool(controller is not None and controls_enabled),
             }
         )

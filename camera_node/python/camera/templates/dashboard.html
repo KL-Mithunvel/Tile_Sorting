@@ -49,6 +49,8 @@
      push the rest of the page off-screen and a wide one can't overflow. */
   .video-box { height: clamp(260px, calc(100vh - 190px), 900px); background: #000; border-radius: 4px; }
   .video-box img { width: 100%; height: 100%; object-fit: contain; }
+  .perf { margin-top: 0.4rem; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 1.2em; }
+  .perf b.slow { color: var(--warn); }
   @media (max-width: 900px) { .video-box { height: clamp(240px, 60vh, 640px); } }
   .tile-box { position: relative; min-height: 120px; background: #000; border-radius: 4px; }
   .tile-box img { width: 100%; max-height: clamp(160px, 32vh, 340px); object-fit: contain; }
@@ -204,6 +206,7 @@
     <div class="panel">
       <h2><span id="feed-title">Live camera</span> <span class="muted" id="trigger-info"></span></h2>
       <div class="video-box"><img src="/video_feed" alt="live camera feed"></div>
+      <div class="perf" id="perf" aria-live="off"></div>
     </div>
 
     <div class="panel">
@@ -397,6 +400,26 @@
         loadSources();
       }
     }
+
+    // Frame rates: what the camera really delivers, how many frames per second the checks
+    // keep up with, and what the driver actually gave (asking is not getting).
+    const perf = data.perf, pbf = src.playback;
+    let line = '';
+    if (src.kind === 'file' && pbf) {
+      line = 'file ' + pbf.fps + ' fps';
+    } else if (perf) {
+      const cam = perf.camera || {};
+      const parts = [];
+      if (cam.width) parts.push(cam.width + '×' + cam.height + (cam.fourcc ? ' ' + esc(cam.fourcc) : ''));
+      if (perf.capture_fps != null) parts.push('camera <b>' + perf.capture_fps + '</b> fps');
+      if (perf.process_fps != null) {
+        const slow = perf.capture_fps != null && perf.process_fps < 0.7 * perf.capture_fps;
+        parts.push('checks <b' + (slow ? ' class="slow"' : '') + '>' + perf.process_fps + '</b> fps');
+      }
+      if (perf.skipped_pct) parts.push(perf.skipped_pct + '% of frames skipped');
+      line = parts.join(' · ');
+    }
+    $('perf').innerHTML = line;
 
     // File playback
     const pb = src.playback, isFile = src.kind === 'file';

@@ -339,7 +339,7 @@ class TestRecording:
 
 class TestCameraTrouble:
     def test_an_unplugged_camera_is_reported_and_recovery_clears_it(self, monkeypatch):
-        monkeypatch.setattr(CameraWorker, "_READ_FAILURES_BEFORE_ERROR", 3)
+        monkeypatch.setattr(CameraWorker, "_READ_FAILURE_SECONDS", 0.05)
 
         class Flaky:
             def __init__(self):

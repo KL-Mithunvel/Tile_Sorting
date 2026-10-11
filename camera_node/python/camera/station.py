@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from camera.capture import (
+    LatestFrameCapture,
     PacedVideoCapture,
     PiCameraCapture,
     WebcamCapture,
@@ -75,9 +76,10 @@ class StationController:
             self.open_camera(device)
         else:
             capture = create_capture(self._config)
+            csi = isinstance(capture, PiCameraCapture)
+            capture = LatestFrameCapture(capture)  # live camera: always the newest frame, never a queue
             cam_cfg = self._config["camera"]
             index = cam_cfg.get("device_index", 0)
-            csi = isinstance(capture, PiCameraCapture)
             if csi:
                 index = (cam_cfg.get("picamera2") or {}).get("camera_num", 0)
             self.worker.switch_source(
@@ -99,12 +101,12 @@ class StationController:
         cfg = copy.deepcopy(self._config)
         if csi:
             cfg["camera"].setdefault("picamera2", {})["camera_num"] = index
-            capture = self._csi_factory(cfg)
+            capture = LatestFrameCapture(self._csi_factory(cfg))
             source = {"kind": "camera", "label": f"CSI camera {index}", "index": index, "csi": True}
         else:
             cfg["camera"]["device_index"] = index
             cfg["camera"]["backend"] = "usb"
-            capture = self._usb_factory(cfg)
+            capture = LatestFrameCapture(self._usb_factory(cfg))
             source = {"kind": "camera", "label": f"Camera {index}", "index": index, "csi": False}
         self.worker.switch_source(capture, source)
         return source

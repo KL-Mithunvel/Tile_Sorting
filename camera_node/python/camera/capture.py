@@ -31,6 +31,7 @@ not the Arduino UNO Q. See camera_node/README.md and camera_node/deploy/.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -38,6 +39,8 @@ from typing import Any, Optional
 import cv2
 import numpy as np
 import yaml
+
+from camera.ratemeter import RateMeter
 
 
 def load_config(path: Optional[Path] = None) -> dict:
@@ -402,6 +405,114 @@ def _now() -> float:
 
 def _sleep(seconds: float) -> None:
     time.sleep(seconds)
+
+
+class LatestFrameCapture:
+    """Reads a LIVE camera on its own thread and always hands out the newest frame.
+
+    Without this the pipeline reads a frame, processes it (~55 ms at 1080p), then
+    reads the next, and the camera driver queues the frames in between: every
+    frame is older than the last, and the picture lags and stutters. Here the
+    camera runs at its own rate and `read_frame()` returns the most recent frame
+    that has not been handed out yet, waiting for a new one if it must. Frames the
+    consumer was too slow to take are SKIPPED, counted, and shown on the dashboard,
+    rather than queued.
+
+    Same start()/read_frame()/stop() contract as every backend; wrap live cameras
+    only (a file must be read in order, see PacedVideoCapture).
+    """
+
+    _WAIT_S = 1.0  # how long read_frame() waits for a frame before saying there isn't one
+
+    def __init__(self, inner, clock=time.monotonic):
+        self._inner = inner
+        self._clock = clock
+        self._cond = threading.Condition()
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._frame: Optional[np.ndarray] = None
+        self._seq = 0  # number of frames captured
+        self._delivered_seq = 0  # seq of the last frame handed out
+        self._delivered = 0
+        self._error: Optional[BaseException] = None
+        self._meter = RateMeter(30)
+
+    # ---- the capture contract -------------------------------------------
+
+    def start(self) -> None:
+        self._inner.start()
+        self._running = True
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def read_frame(self) -> np.ndarray:
+        with self._cond:
+            end = self._clock() + self._WAIT_S
+            while self._seq == self._delivered_seq and self._error is None:
+                remaining = end - self._clock()
+                if remaining <= 0 or not self._running:
+                    raise RuntimeError("LatestFrameCapture: no new frame from the camera")
+                self._cond.wait(timeout=remaining)
+            if self._seq == self._delivered_seq and self._error is not None:
+                error, self._error = self._error, None
+                raise error
+            self._delivered_seq = self._seq
+            self._delivered += 1
+            return self._frame
+
+    def stop(self) -> None:
+        self._running = False
+        with self._cond:
+            self._cond.notify_all()
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+            self._thread = None
+        self._inner.stop()
+
+    # ---- what the dashboard shows ---------------------------------------
+
+    @property
+    def settings(self) -> dict:
+        """What the underlying camera driver actually gave (empty if it keeps no record)."""
+        return getattr(self._inner, "settings", {}) or {}
+
+    @property
+    def capture_fps(self) -> Optional[float]:
+        with self._cond:
+            return self._meter.rate()
+
+    @property
+    def frames_captured(self) -> int:
+        return self._seq
+
+    @property
+    def frames_skipped(self) -> int:
+        """Captured but never handed out: the consumer was still busy with an earlier one."""
+        return max(0, self._seq - self._delivered)
+
+    # ---- the capture thread ---------------------------------------------
+
+    def _pump(self) -> None:
+        while self._running:
+            try:
+                frame = self._inner.read_frame()
+            except StopIteration as exc:
+                self._publish_error(exc)
+                return
+            except RuntimeError as exc:
+                self._publish_error(exc)
+                time.sleep(0.01)  # a transient read failure: do not spin
+                continue
+            with self._cond:
+                self._frame = frame
+                self._seq += 1
+                self._meter.tick(self._clock())
+                self._cond.notify_all()
+
+    def _publish_error(self, exc: BaseException) -> None:
+        with self._cond:
+            self._error = exc
+            self._cond.notify_all()
 
 
 def create_capture(config: dict):

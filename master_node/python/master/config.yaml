@@ -1,0 +1,15 @@
+# Master PC observer. Optional: the line runs without it.
+broker:
+  host: "192.168.1.11"   # tile-pi, network_plan.md section 3 (the broker runs on the Pi)
+  port: 1883
+  client_id: "tile-master"
+
+store:
+  path: "data/master/master.db"   # relative to the repo root; data/ is gitignored
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8000             # network_plan.md section 3.1 (reserved for the master dashboard)
+  # Commands (sound vote, hold-all, belt speed) change how the LINE behaves.
+  # Off by default; turn on deliberately, the page is not authenticated.
+  controls_enabled: false

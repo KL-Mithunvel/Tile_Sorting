@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master</title>
+<style>
+  :root { --bg:#0e1116; --panel:#171c24; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3;
+    --a:#2fbf71; --b:#e3b341; --c:#f0883e; --rej:#f85149; --hold:#a371f7; --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:14px 16px; }
+  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+  h1 { margin:0; font-size:20px; } h2 { margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .pill { padding:5px 14px; border-radius:999px; border:2px solid var(--line); font-weight:700; text-transform:uppercase; }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.warn { color:var(--warn); border-color:var(--warn); }
+  .pill.fail { color:#fff; background:var(--fail); border-color:var(--fail); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; min-width:0; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { border:1px solid var(--line); border-left:6px solid var(--muted); border-radius:8px; padding:6px 10px; }
+  .chip.ok { border-left-color:var(--ok); } .chip.warn { border-left-color:var(--warn); } .chip.fail { border-left-color:var(--fail); }
+  .chip b { display:block; font-size:12px; color:var(--muted); text-transform:uppercase; }
+  .counts { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; text-align:center; }
+  .counts .n { font-size:28px; font-weight:800; }
+  .g-Grade-A { color:var(--a); } .g-Grade-B { color:var(--b); } .g-Grade-C { color:var(--c); } .g-Reject { color:var(--rej); } .g-Hold { color:var(--hold); }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th,td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; }
+  .wrap { overflow-x:auto; }
+  button,input { font:inherit; padding:6px 12px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); }
+  button { cursor:pointer; } button:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+  #banner { display:none; background:#3a1518; border:2px solid var(--fail); border-radius:10px; padding:10px 14px; margin-bottom:12px; font-weight:700; }
+  .muted { color:var(--muted); } a { color:#58a6ff; }
+</style>
+</head>
+<body>
+<div id="banner"></div>
+<header>
+  <h1>Tile station — master</h1>
+  <span class="pill" id="broker">broker</span>
+  <span class="pill" id="state">station</span>
+  <span class="muted" id="ctl"></span>
+  <span style="flex:1"></span>
+  <a href="/api/export.csv">Download CSV</a>
+</header>
+
+<div class="grid">
+  <section class="card"><h2>Station health</h2><div class="chips" id="health"></div></section>
+  <section class="card"><h2>Final grades (this master's record)</h2><div class="counts" id="counts"></div></section>
+  <section class="card">
+    <h2>Commands</h2>
+    <div class="row"><button id="voteOn">Sound vote ON</button><button id="voteOff">Sound vote OFF</button></div>
+    <div class="row"><button id="holdOn">Hold all ON</button><button id="holdOff">Hold all OFF</button></div>
+    <div class="row"><input id="belt" type="number" min="0" max="100" value="50" style="width:5em"> %
+      <button id="beltSet">Set belt speed</button></div>
+    <div class="row"><button id="strikeOn">Allow striker</button><button id="strikeOff">Inhibit striker</button>
+      <button id="clr">Clear alarms</button></div>
+    <div class="muted" id="cmdmsg"></div>
+  </section>
+  <section class="card" style="grid-column:1/-1"><h2>Alarms</h2><div id="alarms" class="muted">none</div></section>
+  <section class="card" style="grid-column:1/-1"><h2>Recent tiles</h2>
+    <div class="wrap"><table><thead><tr><th>First seen</th><th>Tile</th><th>Camera</th><th>Sound</th><th>Final</th><th>Bin</th><th>Counted</th><th>UNO Q ack</th></tr></thead>
+    <tbody id="tiles"></tbody></table></div></section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const gcls = g => "g-" + String(g || "").replace(/\s+/g, "-");
+function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const t = ts => ts ? new Date(ts * 1000).toLocaleTimeString() : "";
+let controls = false;
+
+async function cmd(path, body) {
+  const r = await fetch("/api/command/" + path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  $("cmdmsg").textContent = r.ok ? "sent: " + JSON.stringify(j.sent) : (j.error || r.status);
+}
+
+async function poll() {
+  let o;
+  try { o = await (await fetch("/api/overview", {cache: "no-store"})).json(); }
+  catch (e) { $("banner").style.display = "block"; $("banner").textContent = "Lost contact with the master program."; return; }
+  controls = o.controls;
+  $("ctl").textContent = controls ? "controls enabled" : "read-only (dashboard.controls_enabled: false)";
+  for (const b of document.querySelectorAll("button, #belt")) b.disabled = !controls;
+  const broker = $("broker"); broker.textContent = o.broker_connected ? "broker connected" : "broker down"; broker.className = "pill " + (o.broker_connected ? "ok" : "fail");
+  const s = o.station, age = o.station_age_s;
+  const state = $("state");
+  if (!s || age == null || age > 8) { state.textContent = "station silent"; state.className = "pill fail"; }
+  else { state.textContent = s.state; state.className = "pill " + (s.state === "fault" ? "fail" : s.state === "hold_all" ? "warn" : "ok"); }
+  const banner = $("banner");
+  banner.style.display = (!s || age == null || age > 8) ? "block" : "none";
+  banner.textContent = "The Pi station has not reported for " + (age == null ? "ever" : age + " s") + ". The line decides on its own; check the Pi.";
+  const hl = $("health"); hl.replaceChildren();
+  for (const [k, v] of Object.entries((s && s.health) || {})) {
+    const c = h("div", "chip " + v.level); c.appendChild(h("b", null, k)); c.appendChild(h("span", null, v.detail)); hl.appendChild(c);
+  }
+  const cn = $("counts"); cn.replaceChildren();
+  for (const g of ["Grade A", "Grade B", "Grade C", "Reject", "Hold"]) {
+    const d = h("div"); d.appendChild(h("div", "n " + gcls(g), String(o.tally[g] || 0))); d.appendChild(h("div", "muted", g.replace("Grade ", ""))); cn.appendChild(d);
+  }
+  const al = $("alarms"); al.replaceChildren();
+  const live = o.alarms.filter(a => a.level === "alarm");
+  if (!live.length) al.textContent = "none";
+  for (const a of live.slice(0, 10)) al.appendChild(h("div", null, t(a.ts) + "  [" + a.kind + "]  " + a.message));
+  const tb = $("tiles"); tb.replaceChildren();
+  for (const r of o.recent) {
+    const tr = h("tr");
+    tr.append(h("td", null, t(r.first_ts)), h("td", null, r.tile_id), h("td", gcls(r.camera_grade), r.camera_grade || "—"),
+      h("td", null, r.acoustic_grade || (r.acoustic_status === "invalid" ? "invalid" : "—")),
+      h("td", gcls(r.final_grade), r.final_grade || "…"), h("td", null, r.destination || ""),
+      h("td", null, r.acoustic_counted ? "yes" : "no"), h("td", null, r.ack_status || ""));
+    tb.appendChild(tr);
+  }
+}
+
+$("voteOn").onclick = () => cmd("vote", {enabled: true});
+$("voteOff").onclick = () => cmd("vote", {enabled: false});
+$("holdOn").onclick = () => cmd("hold_all", {enabled: true});
+$("holdOff").onclick = () => cmd("hold_all", {enabled: false});
+$("beltSet").onclick = () => cmd("belt", {percent: Number($("belt").value)});
+$("strikeOn").onclick = () => cmd("strike", {enabled: true});
+$("strikeOff").onclick = () => cmd("strike", {enabled: false});
+$("clr").onclick = () => cmd("clear_alarms");
+poll(); setInterval(poll, 1000);
+</script>
+</body>
+</html>

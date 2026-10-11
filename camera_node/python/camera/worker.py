@@ -20,7 +20,7 @@ import numpy as np
 
 from camera.capture import PiCameraCapture, WebcamCapture
 from camera.grading_model import TileGradeModel
-from camera.pipeline import TileRecord, process_tile
+from camera.pipeline import TileRecord, grading_options, process_tile
 from camera.region_tracker import LineCrossingTracker
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
@@ -232,6 +232,9 @@ class CameraWorker:
         # of milliseconds and holds the weights, so rebuilding it per tile
         # would dwarf the inference it exists to run.
         self._model = TileGradeModel.from_config(config)
+        # Validated here, at start-up: a tier the map can't translate must stop
+        # the station now, not raise on the first tile that gets that tier.
+        self._grading_opts = grading_options(config, self._model)
 
         self._state.set_info(
             {
@@ -379,6 +382,7 @@ class CameraWorker:
                 tile_size_inches=corner_cfg.get("tile_size_inches"),
                 grading_model=self._model,
                 trigger=self._mode,
+                **self._grading_opts,
             )
             if snapshot_cfg["enabled"]:
                 path = save_tile_snapshot(record, resolve_output_dir(self._config))

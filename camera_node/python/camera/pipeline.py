@@ -56,11 +56,83 @@ class TileRecord:
     corner_ms: Optional[float] = None
     total_ms: Optional[float] = None
 
+    # How `grade` (the station's single decision) was reached. `grade` is the
+    # worse of the two below when the model took part; with no model, or one
+    # too unsure to count, it equals rule_grade.
+    rule_grade: Optional[str] = None  # from measured crack/corner geometry only
+    model_station_grade: Optional[str] = None  # the model's tier mapped to a station grade
+    model_used: bool = False  # True when the model's tier actually fed `grade`
+
+
+# Best -> worst. Every grade the station can output, in one vocabulary, so the
+# rule-based decision (measured defects) and the model's cosmetic tier
+# (3A/3B/4/5) can be compared and combined on a single scale.
+GRADE_ORDER = ("Grade A", "Grade B", "Grade C", "Reject")
+
+
+def worse_grade(a: str, b: str) -> str:
+    """The worse of two station grades (Reject worst)."""
+    return a if GRADE_ORDER.index(a) >= GRADE_ORDER.index(b) else b
+
+
+def validate_tier_map(tier_map: dict, classes: list[str]) -> None:
+    """Fail loudly at start-up, not on the first tile, if the config cannot
+    translate every class the model can output into a station grade."""
+    missing = [c for c in classes if c not in tier_map]
+    if missing:
+        raise ValueError(
+            f"grading.tier_map has no entry for model class(es) {missing}; it maps {sorted(tier_map)}"
+        )
+    bad = {k: v for k, v in tier_map.items() if v not in GRADE_ORDER}
+    if bad:
+        raise ValueError(f"grading.tier_map values must be one of {list(GRADE_ORDER)}, got {bad}")
+
+
+def fuse_grade(
+    rule_grade: str,
+    model_station_grade: Optional[str],
+    model_confidence: Optional[float],
+    min_confidence: float,
+) -> tuple[str, bool]:
+    """Combine the defect-based grade with the model's mapped tier.
+
+    The two see different things: the rules see cracks and broken corners and
+    are blind to cosmetic tier; the model sees cosmetic tier and is blind to
+    cracks. So neither may rescue a tile the other has condemned: the result is
+    the WORSE of the two. The model only gets a vote when it is sure enough
+    (`min_confidence`); below that it abstains and the rules stand alone. That
+    matters now: on this rig the model scores ~30% on a 4-class problem, which
+    is close to chance, and letting that decide a sort would be random.
+
+    Returns (final_grade, model_was_used).
+    """
+    if model_station_grade is None or model_confidence is None or model_confidence < min_confidence:
+        return rule_grade, False
+    return worse_grade(rule_grade, model_station_grade), True
+
+
+def grading_options(config: dict, model: Optional[object]) -> dict:
+    """The `tier_map` / `model_min_confidence` keyword arguments for
+    `process_tile()`, from config.yaml's `grading` block, validated against the
+    model's classes. Shared by the live worker and the offline video processor
+    so they cannot grade the same footage differently. Returns {} (model stays
+    display-only) when there is no model or no tier map."""
+    grading_cfg = config.get("grading") or {}
+    tier_map = grading_cfg.get("tier_map")
+    if model is None or not tier_map:
+        return {}
+    validate_tier_map(tier_map, list(model.classes))
+    return {
+        "tier_map": dict(tier_map),
+        "model_min_confidence": float(grading_cfg.get("model_min_confidence", 0.6)),
+    }
+
 
 def grade_tile(crack: CrackResult, corner: CornerResult) -> str:
     """First-pass rule-based grading — see project_charter.md §10.1 for the
     same style of rule used for the full multi-station system. This is the
-    camera station's own local grade, not the master's fused final grade."""
+    camera station's own local grade, not the master's fused final grade.
+    Defects only; the model's tier is folded in afterwards by `fuse_grade`."""
     if corner.corner_broken or crack.severity == "major":
         return "Reject"
     if crack.severity == "minor":
@@ -83,6 +155,8 @@ def process_tile(
     tile_size_inches: Optional[float] = None,
     grading_model: Optional[object] = None,
     trigger: Optional[str] = None,
+    tier_map: Optional[dict] = None,
+    model_min_confidence: float = 0.6,
 ) -> TileRecord:
     """Run the detectors on one tile region and build its record.
 
@@ -95,6 +169,11 @@ def process_tile(
     A model failure is caught and recorded as no prediction rather than
     propagated: a classifier that cannot load an image must not stop the
     station from reporting the crack/corner result it already computed.
+
+    `tier_map` translates the model's tiers (3A/3B/4/5) into station grades.
+    With it, the model's tier is combined with the defect-based grade through
+    `fuse_grade`; without it (None) the model is display-only and `grade` is
+    purely rule-based, exactly as before.
     """
     t_start = time.perf_counter()
     crack = detect_cracks(
@@ -123,6 +202,7 @@ def process_tile(
         crack=crack,
         corner=corner,
         grade=grade,
+        rule_grade=grade,
         tile_bgr=region.cropped_bgr,
         center=region.center,
         trigger=trigger,
@@ -140,6 +220,14 @@ def process_tile(
             record.model_confidence = prediction.confidence
             record.model_probabilities = prediction.probabilities
             record.model_inference_ms = prediction.inference_ms
+            if tier_map is not None:
+                record.model_station_grade = tier_map.get(prediction.label)
+                record.grade, record.model_used = fuse_grade(
+                    record.rule_grade,
+                    record.model_station_grade,
+                    prediction.confidence,
+                    model_min_confidence,
+                )
 
     record.total_ms = (time.perf_counter() - t_start) * 1000.0
     return record
@@ -154,6 +242,9 @@ def tile_record_to_dict(record: TileRecord) -> dict:
         "seq": record.seq,
         "timestamp": record.timestamp,
         "grade": record.grade,
+        "rule_grade": record.rule_grade,
+        "model_station_grade": record.model_station_grade,
+        "model_used": record.model_used,
         "crack_detected": record.crack.crack_detected,
         "crack_length_px": round(record.crack.crack_length_px, 1),
         "crack_severity": record.crack.severity,

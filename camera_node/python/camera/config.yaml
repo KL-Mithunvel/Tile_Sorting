@@ -259,6 +259,26 @@ grading_model:
   # preprocess: "yolo_cls"   # or "vit_hf" for a ViT export
   # input_size: 224
 
+# The station's single grade (added 2026-10-10). Two things grade a tile: the
+# crack/corner rules (measured defects -> Grade A / Grade B / Reject) and the
+# model (cosmetic tier 3A / 3B / 4 / 5). They are blind to each other's
+# defects, so they are put on ONE scale and combined as the WORSE of the two.
+#   tier_map              model tier -> station grade. Every class the model can
+#                         output must be listed or the station refuses to start.
+#   model_min_confidence  the model only gets a vote at or above this. Below it
+#                         the model abstains and the rules stand alone. On this
+#                         rig the model scores ~30% on 4 classes (near chance),
+#                         so at 0.6 it abstains almost every time until it is
+#                         retrained on this camera. Lower it only with evidence.
+# Ignored when grading_model.enabled is false (grade is then purely rule-based).
+grading:
+  tier_map:
+    "3A": "Grade A"
+    "3B": "Grade B"
+    "4": "Grade C"
+    "5": "Reject"
+  model_min_confidence: 0.6
+
 capture_snapshots:
   # When enabled, each tile's isolated photo is saved to disk on departure
   # (see camera/snapshot.py), named by its sequence number, so it can be

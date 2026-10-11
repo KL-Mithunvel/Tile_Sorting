@@ -29,7 +29,7 @@ from typing import Optional
 from camera.capture import VideoFileCapture, load_config
 from camera.grading_model import TileGradeModel
 from camera.region_tracker import LineCrossingTracker
-from camera.pipeline import TileRecord, process_tile, tile_record_to_dict
+from camera.pipeline import TileRecord, grading_options, process_tile, tile_record_to_dict
 from camera.segmentation import TileRegion, locate_tiles
 from camera.snapshot import resolve_output_dir, save_tile_snapshot
 from camera.tile_tracker import TileTracker
@@ -83,6 +83,7 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
 
     # Built once for the whole file, like worker.py does for the whole run.
     model = TileGradeModel.from_config(config)
+    grading_opts = grading_options(config, model)
 
     tracker = TileTracker(
         min_present_frames=config["tile_tracker"]["min_present_frames"],
@@ -134,6 +135,7 @@ def process_video_file(video_path: str, config: dict, save_snapshots: bool = Tru
                     tile_size_inches=corner_cfg.get("tile_size_inches"),
                     grading_model=model,
                     trigger=mode,
+                    **grading_opts,
                 )
                 if save_snapshots and snapshot_cfg["enabled"]:
                     path = save_tile_snapshot(record, resolve_output_dir(config))

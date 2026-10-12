@@ -75,7 +75,7 @@ def client(controls):
 
 def test_overview_and_page_render():
     c, bus, cl = client(False)
-    assert b"Tile station" in cl.get("/").data
+    assert b"Tile station" in cl.get("/classic").data
     j = cl.get("/api/overview").get_json()
     assert j["controls"] is False and j["broker_connected"] is True and "tally" in j
     assert cl.get("/api/export.csv").mimetype == "text/csv"

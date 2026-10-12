@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master</title>
+<style>
+  :root { --bg:#0b0e13; --panel:rgba(20,26,35,.88); --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3;
+    --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; --off:#6b7480; --accent:#58a6ff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); overflow:hidden;
+    font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  #scene { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .hud { position:fixed; z-index:2; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; backdrop-filter:blur(6px); }
+  h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  #top { top:10px; left:10px; right:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 12px; }
+  #top h1 { font-size:16px; margin:0 6px 0 0; }
+  .tab { padding:5px 12px; border-radius:8px; border:1px solid var(--line); color:var(--muted); text-decoration:none; }
+  .tab.on { color:var(--text); border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .tab.soon { opacity:.5; cursor:not-allowed; }
+  .pill { padding:3px 12px; border-radius:999px; border:2px solid var(--line); font-weight:700; text-transform:uppercase; font-size:12px; }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.warn { color:var(--warn); border-color:var(--warn); }
+  .pill.fail { color:#fff; background:var(--fail); border-color:var(--fail); } .pill.offline { color:var(--off); }
+  .pill.demo { color:#a371f7; border-color:#a371f7; }
+  #left { top:70px; left:10px; width:250px; max-height:calc(100% - 150px); overflow:auto; }
+  #right { top:70px; right:10px; width:290px; max-height:calc(100% - 150px); overflow:auto; }
+  #bottom { left:10px; right:10px; bottom:10px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; padding:8px 14px; }
+  .st { display:flex; gap:8px; align-items:flex-start; padding:7px 6px; border-radius:8px; cursor:pointer; border:1px solid transparent; }
+  .st:hover, .st.sel { border-color:var(--accent); background:rgba(88,166,255,.08); }
+  .dot { width:12px; height:12px; border-radius:50%; margin-top:4px; flex:none; background:var(--off); }
+  .dot.ok { background:var(--ok); box-shadow:0 0 8px var(--ok); } .dot.warn { background:var(--warn); box-shadow:0 0 8px var(--warn); }
+  .dot.fail { background:var(--fail); box-shadow:0 0 10px var(--fail); animation:pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity:.35; } }
+  .st b { display:block; font-size:13px; } .st span { color:var(--muted); font-size:12px; }
+  button,input { font:inherit; padding:6px 12px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); }
+  button { cursor:pointer; } button:hover:not(:disabled) { border-color:var(--accent); } button:disabled { opacity:.4; cursor:not-allowed; }
+  button.go { border-color:var(--ok); color:var(--ok); } button.stop { border-color:var(--fail); color:var(--fail); }
+  .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+  .muted { color:var(--muted); } .big { font-size:22px; font-weight:800; }
+  .g-A { color:var(--ok); } .g-B { color:var(--warn); } .g-C { color:#f0883e; } .g-R { color:var(--fail); } .g-H { color:#a371f7; }
+  #views { position:fixed; z-index:2; left:50%; transform:translateX(-50%); bottom:70px; display:flex; gap:6px; }
+  #views button { background:var(--panel); }
+  #hint { position:fixed; z-index:2; left:50%; transform:translateX(-50%); top:62px; color:var(--muted); font-size:12px; pointer-events:none; }
+  #banner { display:none; position:fixed; z-index:3; top:62px; left:50%; transform:translateX(-50%); background:#3a1518;
+    border:2px solid var(--fail); border-radius:10px; padding:8px 14px; font-weight:700; max-width:80vw; }
+  @media (max-width:900px) { #left { display:none; } #right { top:auto; bottom:110px; width:calc(100% - 20px); max-height:34%; } #hint { display:none; } }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="top" class="hud panel">
+  <h1>Tile line — master</h1>
+  <a class="tab on" href="/">Plant 3D</a>
+  <span class="tab soon" title="next step">Analysis</span>
+  <span class="tab soon" title="next step">Troubleshoot</span>
+  <span class="tab soon" title="next step">AI insights</span>
+  <a class="tab" href="/classic">Classic view</a>
+  <span style="flex:1"></span>
+  <span class="pill demo" id="demo" style="display:none">demo — synthetic line</span>
+  <span class="pill" id="broker">broker</span>
+  <span class="pill" id="state">line</span>
+</div>
+<div id="hint">drag = orbit · wheel = zoom · right-drag = pan · W A S D / Q E = move · click a station</div>
+<div id="banner"></div>
+
+<div id="left" class="hud panel"><h2>Stations</h2><div id="stations"></div></div>
+
+<div id="right" class="hud panel">
+  <h2>Selected</h2>
+  <div id="sel" class="muted">Click a station in the scene or the list.</div>
+  <h2 style="margin-top:14px">Line control</h2>
+  <div class="row"><button id="start" class="go">Start belt</button><button id="stop" class="stop">Stop belt</button></div>
+  <div class="row"><input id="belt" type="range" min="0" max="100" value="60" style="flex:1;padding:0"><span id="beltv">60 %</span>
+    <button id="beltSet">Set</button></div>
+  <div class="row"><button id="holdOn">Hold all ON</button><button id="holdOff">OFF</button></div>
+  <div class="row"><button id="voteOn">Sound vote ON</button><button id="voteOff">OFF</button></div>
+  <div class="row"><button id="strikeOn">Allow striker</button><button id="strikeOff">Inhibit</button></div>
+  <div class="row"><button id="clr">Clear alarms</button></div>
+  <div class="muted" id="cmdmsg" style="min-height:1.4em"></div>
+  <div class="muted" id="ctl"></div>
+</div>
+
+<div id="views" class="hud">
+  <button data-v="overview">Overview</button><button data-v="camera">Camera</button>
+  <button data-v="acoustic">Acoustic</button><button data-v="gantry">Gantry</button><button data-v="bins">Bins</button>
+</div>
+
+<div id="bottom" class="hud panel">
+  <span class="muted">Final grades</span>
+  <span><span class="big g-A" id="nA">0</span> A</span><span><span class="big g-B" id="nB">0</span> B</span>
+  <span><span class="big g-C" id="nC">0</span> C</span><span><span class="big g-R" id="nR">0</span> Reject</span>
+  <span><span class="big g-H" id="nH">0</span> Hold</span>
+  <span class="muted" id="belttxt"></span>
+  <span style="flex:1"></span><span id="alarm" class="muted">no alarms</span>
+</div>
+
+<script type="importmap">{ "imports": { "three": "/static/vendor/three/three.module.min.js" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from '/static/vendor/three/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+const COL = { ok:0x2fbf71, warn:0xe3b341, fail:0xf85149, offline:0x6b7480 };
+const GRADE = { "Grade A":0x2fbf71, "Grade B":0xe3b341, "Grade C":0xf0883e, "Reject":0xf85149, "Hold":0xa371f7 };
+const BELT_X0 = -10, BELT_X1 = 10, BELT_Y = 0.65;
+const ux = u => BELT_X0 + (BELT_X1 - BELT_X0) * u;
+// destination -> where the tile ends up (4 stacks beyond the belt end + a hold tray)
+const BIN_POS = { bin_1:[12.2,-3.9], bin_2:[12.2,-1.3], bin_3:[12.2,1.3], bin_reject:[12.2,3.9], bin_hold:[9,-4.6] };
+
+// ---------- renderer / scene ----------
+const canvas = $('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e13);
+scene.fog = new THREE.Fog(0x0b0e13, 40, 90);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.maxPolarAngle = Math.PI * 0.48; controls.minDistance = 3; controls.maxDistance = 60;
+
+scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x1a1f28, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(-8, 16, 10); scene.add(sun);
+const grid = new THREE.GridHelper(80, 80, 0x2a313c, 0x171c24); grid.position.y = 0; scene.add(grid);
+
+const mat = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color:c, roughness:.6, metalness:.2 }, o));
+const box = (w, h, d, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
+function label(text) {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 96;
+  const g = c.getContext('2d'); g.fillStyle = 'rgba(14,17,22,.85)'; g.fillRect(0, 0, 512, 96);
+  g.strokeStyle = '#2a313c'; g.strokeRect(1, 1, 510, 94); g.fillStyle = '#e8ecf1';
+  g.font = 'bold 40px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 256, 50);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map:new THREE.CanvasTexture(c), depthTest:false }));
+  s.scale.set(4, 0.75, 1); s.renderOrder = 10; return s;
+}
+
+// ---------- belt ----------
+const beltTex = (() => {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const g = c.getContext('2d'); g.fillStyle = '#1d242e'; g.fillRect(0, 0, 64, 64);
+  g.fillStyle = '#2c3643'; g.fillRect(0, 0, 8, 64);
+  const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping; t.repeat.set(20, 1); return t;
+})();
+const belt = box(BELT_X1 - BELT_X0, 0.3, 2.6, new THREE.MeshStandardMaterial({ map:beltTex, roughness:.9 }));
+belt.position.set((BELT_X0 + BELT_X1) / 2, BELT_Y - 0.15, 0); scene.add(belt);
+for (const x of [-9.5, -3.2, 3.2, 9.5]) for (const z of [-1.1, 1.1]) {
+  const leg = box(0.18, 0.5, 0.18, mat(0x3a4452)); leg.position.set(x, 0.25, z); scene.add(leg);
+}
+
+// ---------- stations ----------
+const stationObj = {};           // id -> { group, lamp, level, tint: [materials to colour] }
+function lamp(parent, y) {
+  const m = new THREE.MeshStandardMaterial({ color:COL.offline, emissive:COL.offline, emissiveIntensity:.9 });
+  const s = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), m); s.position.y = y; parent.add(s); return m;
+}
+function register(id, group, lampMat, text, labelY) {
+  group.userData.station = id; group.traverse(o => { o.userData.station = id; });
+  const l = label(text); l.position.set(0, labelY, 0); group.add(l);
+  scene.add(group); stationObj[id] = { group, lampMat, level:'offline' };
+}
+
+// camera station: arch over the belt + camera + light cone
+{
+  const g = new THREE.Group(); g.position.set(ux(0.25), 0, 0);
+  const m = mat(0x4a5666);
+  for (const z of [-1.9, 1.9]) { const p = box(0.3, 3.4, 0.3, m); p.position.set(0, 1.7, z); g.add(p); }
+  const beam = box(0.4, 0.35, 4.1, m); beam.position.set(0, 3.4, 0); g.add(beam);
+  const cam = box(0.9, 0.55, 0.9, mat(0x222a35)); cam.position.set(0, 3.0, 0); g.add(cam);
+  const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.2, 16), mat(0x0a0d12)); lens.position.set(0, 2.65, 0); g.add(lens);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(1.3, 2.0, 24, 1, true),
+    new THREE.MeshBasicMaterial({ color:COL.ok, transparent:true, opacity:.14, side:THREE.DoubleSide, depthWrite:false }));
+  cone.position.set(0, 1.7, 0); g.add(cone); g.userData.cone = cone;
+  register('camera', g, lamp(g, 3.9), 'CAMERA', 4.8); stationObj.camera.cone = cone;
+}
+// acoustic station: translucent enclosure + striker
+let striker;
+{
+  const g = new THREE.Group(); g.position.set(ux(0.6), 0, 0);
+  const shell = box(2.4, 2.6, 3.2, new THREE.MeshStandardMaterial({ color:0x58708a, transparent:true, opacity:.22, roughness:.3 }));
+  shell.position.set(0, BELT_Y + 1.3, 0); g.add(shell);
+  const frame = new THREE.LineSegments(new THREE.EdgesGeometry(shell.geometry), new THREE.LineBasicMaterial({ color:0x58a6ff }));
+  frame.position.copy(shell.position); g.add(frame);
+  striker = new THREE.Group(); striker.position.set(0, 2.9, 0);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.0, 12), mat(0xb8c2cf)); striker.add(rod);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 12), mat(0xd0d6de)); ball.position.y = -0.6; striker.add(ball);
+  g.add(striker);
+  const mic = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5, 12), mat(0x222a35)); mic.position.set(0.8, 1.6, 0.9); mic.rotation.z = 0.8; g.add(mic);
+  register('acoustic', g, lamp(g, 3.5), 'ACOUSTIC', 4.4);
+}
+// pick & place gantry over the belt end
+let carriage;
+{
+  const g = new THREE.Group(); g.position.set(ux(0.9), 0, 0);
+  const m = mat(0x4a5666);
+  for (const z of [-5.4, 5.4]) { const p = box(0.3, 3.6, 0.3, m); p.position.set(2.2, 1.8, z); g.add(p); }
+  const beam = box(0.35, 0.35, 11.2, m); beam.position.set(2.2, 3.6, 0); g.add(beam);
+  carriage = new THREE.Group(); carriage.position.set(0, 3.2, 0);
+  const car = box(0.7, 0.4, 0.7, mat(0x2d3643)); carriage.add(car);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.2, 0.2, 16), mat(0xd0d6de)); cup.position.y = -0.7; carriage.add(cup);
+  const hose = box(0.06, 0.6, 0.06, mat(0xb8c2cf)); hose.position.y = -0.35; carriage.add(hose);
+  g.add(carriage); carriage.userData.g = g;
+  register('gantry', g, lamp(g, 4.1), 'PICK & PLACE', 5.0);
+}
+// conveyor "station" = the drive end (motor box); the belt itself is also clickable
+{
+  const g = new THREE.Group(); g.position.set(BELT_X0 - 0.9, 0, 0);
+  const motor = box(1.2, 0.9, 1.4, mat(0x3a4452)); motor.position.y = 0.5; g.add(motor);
+  register('conveyor', g, lamp(g, 1.4), 'CONVEYOR', 2.3);
+  belt.userData.station = 'conveyor';
+}
+// the Pi station service: a small rack at the side
+{
+  const g = new THREE.Group(); g.position.set(ux(0.45), 0, -5.2);
+  const r = box(1.2, 1.8, 0.9, mat(0x2d3643)); r.position.y = 0.9; g.add(r);
+  for (let i = 0; i < 4; i++) { const led = box(0.9, 0.08, 0.05, mat(0x58a6ff, { emissive:0x58a6ff, emissiveIntensity:.5 })); led.position.set(0, 0.5 + i * 0.35, 0.47); g.add(led); }
+  register('pi', g, lamp(g, 2.3), 'PI STATION', 3.2);
+}
+// bins: four stacks + a hold tray
+for (const [k, [x, z]] of Object.entries(BIN_POS)) {
+  const hold = k === 'bin_hold';
+  const b = box(hold ? 1.8 : 2.0, 0.5, hold ? 1.4 : 2.0, mat(hold ? 0x4a3d6b : 0x2a313c));
+  b.position.set(x, 0.25, z); scene.add(b);
+  const l = label(k === 'bin_reject' ? 'REJECT' : hold ? 'HOLD' : k.replace('bin_', 'BIN '));
+  l.scale.set(2.2, 0.42, 1); l.position.set(x, 1.1, z); scene.add(l);
+}
+
+// ---------- tiles ----------
+const tiles = new Map();           // tile_id -> { mesh, target:Vector3, struck:boolean }
+const tileGeo = new THREE.BoxGeometry(1.3, 0.12, 1.3);
+function tileTarget(t) {
+  if (t.stage === 'sorted' && t.u >= 0.87 && BIN_POS[t.destination]) {
+    const [x, z] = BIN_POS[t.destination]; return new THREE.Vector3(x, 0.62, z);
+  }
+  return new THREE.Vector3(ux(Math.min(t.u, 1)), BELT_Y + 0.07, 0);
+}
+function syncTiles(list) {
+  const seen = new Set();
+  for (const t of list) {
+    seen.add(t.tile_id);
+    let o = tiles.get(t.tile_id);
+    if (!o) {
+      const mesh = new THREE.Mesh(tileGeo, mat(0x8a8f98, { roughness:.8 }));
+      mesh.position.set(BELT_X0 - 0.5, BELT_Y + 0.07, 0); scene.add(mesh);
+      o = { mesh, target:new THREE.Vector3(), struck:false }; tiles.set(t.tile_id, o);
+    }
+    o.mesh.material.color.setHex(GRADE[t.grade] ?? 0x8a8f98);
+    o.target.copy(tileTarget(t));
+    if (t.stage === 'acoustic' && !o.struck) { o.struck = true; strikeT = 0.0001; }
+  }
+  for (const [id, o] of tiles) if (!seen.has(id)) { scene.remove(o.mesh); tiles.delete(id); }
+}
+
+// ---------- state + HUD ----------
+let plant = null, selected = null, strikeT = 0, beltPct = 0;
+const LEVEL_TEXT = { ok:'OK', warn:'warning', fail:'FAULT', offline:'offline' };
+function applyLevels(stations) {
+  for (const s of stations) {
+    const o = stationObj[s.id]; if (!o) continue;
+    o.level = s.level; const c = COL[s.level] ?? COL.offline;
+    o.lampMat.color.setHex(c); o.lampMat.emissive.setHex(c);
+    if (o.cone) o.cone.material.color.setHex(c);
+  }
+}
+function renderStations(stations) {
+  const el = $('stations'); el.replaceChildren();
+  for (const s of stations) {
+    const d = document.createElement('div'); d.className = 'st' + (selected === s.id ? ' sel' : '');
+    const dot = document.createElement('div'); dot.className = 'dot ' + s.level;
+    const t = document.createElement('div');
+    const b = document.createElement('b'); b.textContent = s.label;
+    const sp = document.createElement('span'); sp.textContent = LEVEL_TEXT[s.level] + ' — ' + s.detail;
+    t.append(b, sp); d.append(dot, t); d.onclick = () => select(s.id, true); el.appendChild(d);
+  }
+}
+function renderSelected() {
+  const el = $('sel'); el.replaceChildren();
+  const s = plant && plant.stations.find(x => x.id === selected);
+  if (!s) { el.className = 'muted'; el.textContent = 'Click a station in the scene or the list.'; return; }
+  el.className = '';
+  const h = document.createElement('div'); h.className = 'big'; h.textContent = s.label;
+  const p = document.createElement('span'); p.className = 'pill ' + s.level; p.textContent = LEVEL_TEXT[s.level];
+  const d = document.createElement('div'); d.className = 'muted'; d.style.marginTop = '6px'; d.textContent = s.detail || '';
+  el.append(h, p, d);
+}
+function select(id, fly) { selected = id; if (plant) { renderStations(plant.stations); renderSelected(); } if (fly) flyTo(id); }
+
+const VIEWS = {
+  overview: { pos:[1, 17, 25], at:[5.5, 0, 0] },
+  camera:   { pos:[ux(.25) - 7, 5, 7], at:[ux(.25), 1.6, 0] },
+  acoustic: { pos:[ux(.6) - 6, 5, 7], at:[ux(.6), 1.8, 0] },
+  gantry:   { pos:[ux(.9) - 5, 7, 11], at:[ux(.9) + 2, 1.5, 0] },
+  bins:     { pos:[7, 9, 11], at:[12, 0.5, 0] },
+  pi:       { pos:[ux(.45) - 4, 4, 2], at:[ux(.45), 1.2, -5.2] },
+  conveyor: { pos:[BELT_X0 - 7, 5, 6], at:[BELT_X0, 0.8, 0] },
+};
+let tween = null;
+function flyTo(name) {
+  const v = VIEWS[name === 'pi' || name === 'conveyor' ? name : name] || VIEWS.overview;
+  tween = { t:0, p0:camera.position.clone(), a0:controls.target.clone(),
+            p1:new THREE.Vector3(...v.pos), a1:new THREE.Vector3(...v.at) };
+}
+document.querySelectorAll('#views button').forEach(b => b.onclick = () => flyTo(b.dataset.v));
+camera.position.set(...VIEWS.overview.pos); controls.target.set(...VIEWS.overview.at);
+
+// pick a station by clicking in the scene (ignore drags)
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let down = null;
+canvas.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  ptr.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObjects(scene.children, true).find(h => h.object.userData.station);
+  if (hit) select(hit.object.userData.station, false);
+});
+
+// WASD / QE: move the point being looked at
+const keys = new Set();
+addEventListener('keydown', e => { if (e.target.tagName !== 'INPUT') keys.add(e.key.toLowerCase()); });
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+
+// ---------- animation ----------
+const clock = new THREE.Clock(); const fwd = new THREE.Vector3(), right = new THREE.Vector3();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.1), time = clock.elapsedTime;
+  const w = innerWidth, h = innerHeight;
+  if (canvas.width !== Math.floor(w * renderer.getPixelRatio())) { renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+
+  if (tween) {
+    tween.t = Math.min(1, tween.t + dt / 0.9); const k = tween.t * tween.t * (3 - 2 * tween.t);
+    camera.position.lerpVectors(tween.p0, tween.p1, k); controls.target.lerpVectors(tween.a0, tween.a1, k);
+    if (tween.t >= 1) tween = null;
+  }
+  if (keys.size) {
+    camera.getWorldDirection(fwd); fwd.y = 0; fwd.normalize(); right.crossVectors(fwd, camera.up).normalize();
+    const v = new THREE.Vector3(), sp = 9 * dt;
+    if (keys.has('w')) v.addScaledVector(fwd, sp); if (keys.has('s')) v.addScaledVector(fwd, -sp);
+    if (keys.has('d')) v.addScaledVector(right, sp); if (keys.has('a')) v.addScaledVector(right, -sp);
+    if (keys.has('e')) v.y += sp; if (keys.has('q')) v.y -= sp;
+    if (v.lengthSq()) { camera.position.add(v); controls.target.add(v); tween = null; }
+  }
+  beltTex.offset.x -= (beltPct / 100) * 0.6 * dt;
+
+  for (const o of tiles.values()) o.mesh.position.lerp(o.target, 1 - Math.exp(-6 * dt));
+
+  // fault lamps pulse; the camera cone breathes
+  for (const o of Object.values(stationObj)) {
+    const f = o.level === 'fail' ? 0.5 + 0.5 * Math.sin(time * 7) : o.level === 'offline' ? 0.25 : 0.9;
+    o.lampMat.emissiveIntensity = 0.3 + f;
+  }
+  if (strikeT > 0) {                                   // ball drop
+    strikeT += dt; const p = strikeT / 0.7;
+    striker.position.y = p < .5 ? 2.9 - 1.5 * (p / .5) : 1.4 + 1.5 * ((p - .5) / .5);
+    if (p >= 1) { strikeT = 0; striker.position.y = 2.9; }
+  }
+  // carriage follows the tile being picked, else goes home
+  let goal = new THREE.Vector3(0, 3.2, 0);
+  for (const t of (plant ? plant.tiles : [])) if (t.stage === 'sorted' && t.u >= 0.87 && t.u < 1) {
+    const o = tiles.get(t.tile_id); if (o) { goal.set(o.mesh.position.x - carriage.userData.g.position.x, 3.2, o.mesh.position.z); break; }
+  }
+  carriage.position.lerp(goal, 1 - Math.exp(-3 * dt));
+
+  controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------- polling ----------
+const gkey = { 'Grade A':'nA', 'Grade B':'nB', 'Grade C':'nC', 'Reject':'nR', 'Hold':'nH' };
+let controlsOn = false;
+async function poll() {
+  let p;
+  try { p = await (await fetch('/api/plant', { cache:'no-store' })).json(); }
+  catch (e) { $('banner').style.display = 'block'; $('banner').textContent = 'Lost contact with the master program.'; return; }
+  plant = p; controlsOn = p.controls;
+  const ln = p.line, silent = ln.state === 'silent';
+  const st = $('state'); st.textContent = ln.state || '—';
+  st.className = 'pill ' + (silent ? 'offline' : ln.state === 'fault' ? 'fail' : ln.state === 'hold_all' ? 'warn' : 'ok');
+  const br = $('broker'); br.textContent = p.broker_connected ? 'broker connected' : 'broker down'; br.className = 'pill ' + (p.broker_connected ? 'ok' : 'fail');
+  $('demo').style.display = p.demo ? '' : 'none';
+  const bn = $('banner');
+  bn.style.display = silent ? 'block' : 'none';
+  bn.textContent = 'The Pi station is not reporting. The line decides on its own; check the Pi.';
+  beltPct = typeof ln.belt_pct === 'number' ? ln.belt_pct : 0;
+  $('belttxt').textContent = 'Belt ' + (typeof ln.belt_pct === 'number' ? ln.belt_pct.toFixed(0) + ' %' : '—') + ' · awaiting tap ' + ln.awaiting;
+  applyLevels(p.stations); renderStations(p.stations); renderSelected(); syncTiles(p.tiles);
+  for (const [g, id] of Object.entries(gkey)) $(id).textContent = p.tally[g] || 0;
+  $('alarm').textContent = p.alarms.length ? p.alarms[0].message : 'no alarms';
+  $('alarm').style.color = p.alarms.length ? 'var(--fail)' : '';
+  $('ctl').textContent = controlsOn ? 'controls enabled' : 'read-only — start with --controls to enable';
+  for (const b of document.querySelectorAll('#right button, #belt')) b.disabled = !controlsOn;
+}
+async function cmd(path, body, ask) {
+  if (ask && !confirm(ask)) return;
+  const r = await fetch('/api/command/' + path, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  $('cmdmsg').textContent = r.ok ? 'sent: ' + path + ' ' + JSON.stringify(body || {}) : (j.error || r.status);
+  poll();
+}
+$('belt').oninput = () => { $('beltv').textContent = $('belt').value + ' %'; };
+$('beltSet').onclick = () => cmd('belt', { percent:Number($('belt').value) });
+$('start').onclick = () => cmd('belt', { percent:Number($('belt').value) || 60 });
+$('stop').onclick = () => cmd('belt', { percent:0 }, 'Stop the belt?');
+$('holdOn').onclick = () => cmd('hold_all', { enabled:true }, 'Hold EVERY tile for a person?');
+$('holdOff').onclick = () => cmd('hold_all', { enabled:false });
+$('voteOn').onclick = () => cmd('vote', { enabled:true });
+$('voteOff').onclick = () => cmd('vote', { enabled:false });
+$('strikeOn').onclick = () => cmd('strike', { enabled:true });
+$('strikeOff').onclick = () => cmd('strike', { enabled:false }, 'Inhibit the striker? Tiles will have no sound result.');
+$('clr').onclick = () => cmd('clear_alarms');
+poll(); setInterval(poll, 600);
+</script>
+</body>
+</html>

@@ -9,19 +9,35 @@ line of defence but it is the first.
 
 from __future__ import annotations
 
-from typing import Optional
+import time
+from typing import Callable, Optional
 
 from flask import Flask, Response, jsonify, render_template, request
 
 from master.collector import MasterCollector
+from master.plant import build_plant
 
 
-def create_app(collector: MasterCollector, bus, controls_enabled: bool = False) -> Flask:
+def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
+               demo: bool = False, clock: Callable[[], float] = time.time) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
     def index():
+        return render_template("plant.html")
+
+    @app.route("/classic")
+    def classic():
         return render_template("master.html")
+
+    @app.route("/api/plant")
+    def api_plant():
+        now = clock()
+        plant = build_plant(collector.snapshot(now=now), now)
+        plant["controls"] = controls_enabled
+        plant["broker_connected"] = bool(bus.connected)
+        plant["demo"] = demo
+        return jsonify(plant)
 
     @app.route("/api/overview")
     def api_overview():

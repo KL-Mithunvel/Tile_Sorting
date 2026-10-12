@@ -33,6 +33,8 @@ def main(argv=None) -> None:
     p.add_argument("--host", default=None, help="MQTT broker (default: config.yaml broker.host)")
     p.add_argument("--port", type=int, default=None)
     p.add_argument("--controls", action="store_true", help="enable the command buttons for this run")
+    p.add_argument("--demo", action="store_true",
+                   help="no broker: drive the pages from a synthetic line (implies --controls)")
     args = p.parse_args(argv)
 
     cfg = load_config()
@@ -42,19 +44,34 @@ def main(argv=None) -> None:
     db = Path(cfg["store"]["path"])
     dash = cfg["dashboard"]
 
-    collector = MasterCollector(db if db.is_absolute() else REPO_ROOT / db)
-    bus = MqttBus(host, port, client_id=broker.get("client_id", "tile-master"))
-    collector.attach(bus)
-    bus.start()
+    # A demo run must never write synthetic tiles into the real record.
+    collector = MasterCollector(":memory:" if args.demo else (db if db.is_absolute() else REPO_ROOT / db))
+    demo_line = None
+    if args.demo:
+        from master.bus import InMemoryBus
+        from master.demo import DemoLine
 
-    controls = bool(args.controls or dash.get("controls_enabled", False))
-    app = create_app(collector, bus, controls_enabled=controls)
-    print(f"Master at http://{dash['host']}:{dash['port']}/  broker {host}:{port}  controls {'ON' if controls else 'off'}")
+        bus = InMemoryBus()
+        collector.attach(bus)
+        demo_line = DemoLine(bus)
+        demo_line.start()
+        where = "DEMO (synthetic line, no broker)"
+    else:
+        bus = MqttBus(host, port, client_id=broker.get("client_id", "tile-master"))
+        collector.attach(bus)
+        bus.start()
+        where = f"broker {host}:{port}"
+
+    controls = bool(args.controls or args.demo or dash.get("controls_enabled", False))
+    app = create_app(collector, bus, controls_enabled=controls, demo=args.demo)
+    print(f"Master at http://{dash['host']}:{dash['port']}/  {where}  controls {'ON' if controls else 'off'}")
     try:
         app.run(host=dash["host"], port=int(dash["port"]), threaded=True)
     except KeyboardInterrupt:
         pass
     finally:
+        if demo_line is not None:
+            demo_line.stop()
         bus.stop()
         collector.close()
 

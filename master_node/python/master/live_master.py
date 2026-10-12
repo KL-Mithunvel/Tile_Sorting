@@ -21,6 +21,7 @@ import yaml
 from master.app import create_app
 from master.bus import MqttBus
 from master.collector import MasterCollector
+from master.llm import build_provider
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -37,6 +38,8 @@ def main(argv=None) -> None:
     p.add_argument("--controls", action="store_true", help="enable the command buttons for this run")
     p.add_argument("--demo", action="store_true",
                    help="no broker: drive the pages from a synthetic line (implies --controls)")
+    p.add_argument("--ai", choices=("none", "ollama", "anthropic"), default=None,
+                   help="language model that explains anomalies (default: config.yaml insights.provider)")
     args = p.parse_args(argv)
 
     cfg = load_config()
@@ -77,8 +80,13 @@ def main(argv=None) -> None:
     threading.Thread(target=_watch, daemon=True, name="health-watch").start()
 
     controls = bool(args.controls or args.demo or dash.get("controls_enabled", False))
-    app = create_app(collector, bus, controls_enabled=controls, demo=args.demo)
-    print(f"Master at http://{dash['host']}:{dash['port']}/  {where}  controls {'ON' if controls else 'off'}")
+    ai_cfg = dict(cfg.get("insights") or {})
+    if args.ai:
+        ai_cfg["provider"] = args.ai
+    llm = build_provider(ai_cfg)
+    app = create_app(collector, bus, controls_enabled=controls, demo=args.demo, llm=llm)
+    print(f"Master at http://{dash['host']}:{dash['port']}/  {where}  controls {'ON' if controls else 'off'}  "
+          f"AI explainer {llm.name + ' (' + str(getattr(llm, 'model', '')) + ')' if llm else 'off'}")
     try:
         app.run(host=dash["host"], port=int(dash["port"]), threaded=True)
     except KeyboardInterrupt:

@@ -37,11 +37,11 @@ touches `data/master/master.db`. Everything it shows is synthetic.
 **Honest limits.** Tile positions are *derived* (age along the belt, held at the next
 station until it has reported), not measured. "Start/Stop belt" only sends a belt
 percent to the Nano; there is no whole-line start/stop message in the contract yet.
-The AI insights tab is a placeholder for the next step.
+All four views are built; Phase 2 adaptive grading (AI_Software_Novelty.md Idea B) is not started.
 Checked in headless Edge at 1500 px only; the page JS has no automated tests, and
 clicking a station / the camera fly-to were not exercised.
 
-Status: built and unit-tested on the dev laptop (51 tests), page rendered against seeded
+Status: built and unit-tested on the dev laptop (79 tests), page rendered against seeded
 data; **never connected to a real broker**. The page is unauthenticated; the commands
 change how the line behaves, so they stay disabled unless you ask for them, and the
 network is assumed isolated (`documents/electrical/network_plan.md`).
@@ -79,3 +79,36 @@ a per-station health timeline with uptime, recent level changes and recent alarm
 - The Pi's own "station reports a fault" is hidden when a specific failing station explains it.
 - Recorded history only starts when this master starts; it says nothing about the line
   while the master was not running.
+
+## AI insights view (added 2026-10-12)
+
+`/insights` (`GET /api/insights?window=`, `GET /api/insights/provider`,
+`POST /api/insights/explain`). Two layers, kept apart on purpose:
+
+1. **Rule-based anomaly detection (`insights.py`, always on, no model).** Compares the
+   recent quarter of the window with the stretch before it and flags what moved by more
+   than chance: reject / hold / no-tap-timeout rate (two-proportion z >= 2.5 *and* >= 10
+   points), camera-vs-sound agreement, camera-to-final time (>= 1.5x and >= 1 s),
+   throughput, and one alarm kind repeating (>= 5). Each carries its numbers. Too little data
+   flags nothing. It shows behaviour *changed*, not why, and is relative to this master's own
+   history - a line that has always been bad reads as normal.
+2. **Language-model explanation (`llm.py`, only when you click Explain).** Writes a short
+   plain-English reading of what layer 1 and the Troubleshoot findings reported. It never
+   decides what is an anomaly and cannot change the line. Only a whitelisted summary is sent
+   (titles, numbers, station names, status text - no tile ids or rows) and the page shows
+   exactly what was sent. Output is labelled AI-generated; a 10 s cool-down stops loops.
+
+```bash
+python -m master.live_master --demo --ai ollama       # local model, works on the isolated LAN
+ollama pull llama3.2:3b                                # once; the page says so if it is missing
+set ANTHROPIC_API_KEY=...                              # then:  --ai anthropic  (needs internet)
+```
+
+`insights.provider` in `config.yaml` is `none` by default. The Claude API key is read only
+from the `ANTHROPIC_API_KEY` environment variable, never from a file, and is never returned
+or logged; choosing `anthropic` sends the summary to api.anthropic.com when you click.
+
+**Not done / not trusted:** no model has been run end to end (Ollama is installed on the dev
+laptop but has no model pulled; the Claude path has never been called) - the HTTP layer is
+tested with a fake transport only. The thresholds are reasoned, not tuned on real line data.
+The prompt has not been evaluated for faithfulness. Phase 2 adaptive grading is untouched.

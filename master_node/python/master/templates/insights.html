@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master — AI insights</title>
+<style>
+  :root { --bg:#0b0e13; --panel:#141a23; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3; --accent:#58a6ff;
+    --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; --ai:#a371f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:12px 14px 40px; }
+  nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }
+  nav h1 { font-size:16px; margin:0 6px 0 0; }
+  .tab { padding:5px 12px; border-radius:8px; border:1px solid var(--line); color:var(--muted); text-decoration:none; }
+  .tab.on { color:var(--text); border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .pill { padding:2px 10px; border-radius:999px; border:2px solid var(--line); font-weight:700; text-transform:uppercase; font-size:11px; white-space:nowrap; }
+  .pill.warn { color:var(--warn); border-color:var(--warn); } .pill.info { color:var(--accent); border-color:var(--accent); }
+  .pill.demo { color:var(--ai); border-color:var(--ai); font-size:12px; padding:3px 12px; }
+  .bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  button { font:inherit; padding:6px 14px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); cursor:pointer; }
+  button.on { border-color:var(--accent); background:rgba(88,166,255,.12); }
+  button.ai { border-color:var(--ai); color:var(--ai); } button:disabled { opacity:.45; cursor:not-allowed; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+  h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .anom { border-left:6px solid var(--muted); padding:8px 12px; margin:8px 0; background:rgba(255,255,255,.02); border-radius:0 8px 8px 0; }
+  .anom.warn { border-left-color:var(--warn); } .anom.info { border-left-color:var(--accent); }
+  .anom h3 { margin:0 0 2px; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .nums { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .muted { color:var(--muted); } .good { color:var(--ok); font-weight:600; }
+  .note { border:1px solid var(--warn); border-radius:8px; padding:6px 10px; color:var(--warn); font-size:13px; margin-bottom:8px; }
+  .ai-box { border:1px solid var(--ai); border-radius:10px; padding:10px 12px; margin-top:10px; white-space:pre-wrap; }
+  .err { color:var(--fail); margin-top:8px; }
+  pre { background:#0e1116; border:1px solid var(--line); border-radius:8px; padding:8px; overflow:auto; max-height:260px; font-size:12px; }
+  details { margin-top:8px; } summary { cursor:pointer; color:var(--muted); }
+</style>
+</head>
+<body>
+<nav>
+  <h1>Tile line — master</h1>
+  <a class="tab" href="/">Plant 3D</a><a class="tab" href="/analysis">Analysis</a><a class="tab" href="/troubleshoot">Troubleshoot</a>
+  <span class="tab on">AI insights</span><a class="tab" href="/classic">Classic view</a>
+  <span style="flex:1"></span><span class="pill demo" id="demo" style="display:none">demo — synthetic line</span>
+</nav>
+
+<div class="bar" id="windows"><span class="muted">Compare the most recent quarter of</span></div>
+
+<section class="card">
+  <h2>What changed (rule-based, always on)</h2>
+  <div id="notice"></div>
+  <div id="anoms" class="muted">Loading…</div>
+  <div class="muted" style="margin-top:8px;font-size:12px">These compare the latest stretch with the stretch before it, using only this master's own record. They show that behaviour <em>changed</em>, not why. A line that has been bad all along reads as normal.</div>
+</section>
+
+<section class="card">
+  <h2>Explain it (language model, only when you ask)</h2>
+  <div id="provider" class="muted"></div>
+  <div class="bar" style="margin-top:8px"><button class="ai" id="explain">Explain these</button><span id="busy" class="muted"></span></div>
+  <div id="result"></div>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+const WINDOWS = {{ windows|tojson }};
+let windowS = {{ default_window }}, provider = null, working = false;
+function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const wl = s => s >= 86400 ? "24 h" : s >= 3600 ? (s / 3600) + " h" : (s / 60) + " min";
+
+function numbers(ev) {
+  return Object.entries(ev).map(([k, v]) => k.replace(/_/g, " ") + ": " + v).join("   ·   ");
+}
+function render(d) {
+  $("demo").style.display = d.demo ? "" : "none";
+  const n = $("notice"); n.replaceChildren();
+  if (!d.enough_data) n.appendChild(h("div", "note",
+    "Not enough tiles in this window to compare (" + d.baseline_tiles + " before, " + d.recent_tiles + " recent). Nothing is flagged on thin data."));
+  const box = $("anoms"); box.replaceChildren(); box.className = "";
+  if (!d.anomalies.length) {
+    box.appendChild(h("div", d.enough_data ? "good" : "muted", d.enough_data
+      ? "No change worth flagging: the latest stretch looks like the one before it." : "Nothing flagged."));
+  }
+  for (const a of d.anomalies) {
+    const c = h("div", "anom " + a.severity);
+    const t = h("h3"); t.append(h("span", "pill " + a.severity, a.severity === "warn" ? "warning" : "note"), document.createTextNode(a.title));
+    c.append(t, h("div", null, a.summary), h("div", "nums", numbers(a.evidence)));
+    box.appendChild(c);
+  }
+  if (d.last_explanation && !working && !$("result").children.length) showResult(d.last_explanation);
+}
+
+function showResult(r) {
+  const box = $("result"); box.replaceChildren();
+  const who = r.provider + (r.model ? " · " + r.model : "") + (r.skipped ? "" : " · " + r.ms + " ms");
+  box.appendChild(h("div", "ai-box", r.text));
+  box.appendChild(h("div", "muted", "AI-generated from the numbers above (" + who + "). It can be wrong - check it against the line before acting."));
+  const det = h("details"); det.appendChild(h("summary", null, "Exactly what was sent to the model"));
+  det.appendChild(h("pre", null, JSON.stringify(r.sent, null, 1))); box.appendChild(det);
+}
+function showProvider(d) {
+  const p = $("provider"); p.replaceChildren();
+  const b = $("explain");
+  if (!d.provider) {
+    p.textContent = "No language model is configured. Set insights.provider to \"ollama\" (local) or \"anthropic\" in master_node/python/master/config.yaml and restart the master.";
+    b.disabled = true; return;
+  }
+  provider = d.provider; b.disabled = false;
+  p.appendChild(h("div", null, "Provider: " + provider.name + (provider.model ? " · " + provider.model : "")));
+  p.appendChild(h("div", provider.leaves_the_network ? "note" : "muted", provider.leaves_the_network
+    ? "Clicking Explain sends the summary shown under “Exactly what was sent” to " + provider.destination + " over the internet."
+    : "Runs on " + provider.destination + " - nothing leaves this network."));
+  fetch("/api/insights/provider").then(r => r.json()).then(s => {
+    p.appendChild(h("div", s.ok ? "good" : "err", s.detail));
+    if (!s.ok && provider.name === "ollama") b.disabled = false;   // let them try; the error will say why
+  });
+}
+
+async function load() {
+  let d;
+  try { d = await (await fetch("/api/insights?window=" + windowS, {cache:"no-store"})).json(); } catch (e) { return; }
+  if (d.ok === false) return;
+  render(d);
+  if (provider === null || (d.provider && d.provider.name !== provider.name)) showProvider(d);
+}
+async function ask() {
+  working = true; $("explain").disabled = true; $("busy").textContent = "asking " + (provider ? provider.name : "") + "…";
+  $("result").replaceChildren();
+  try {
+    const r = await fetch("/api/insights/explain", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({window:windowS})});
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok) showResult(j); else $("result").appendChild(h("div", "err", j.error || ("error " + r.status)));
+  } catch (e) { $("result").appendChild(h("div", "err", "Could not reach the master program.")); }
+  working = false; $("explain").disabled = false; $("busy").textContent = "";
+}
+function windowsBar() {
+  const w = $("windows");
+  for (const s of WINDOWS) {
+    const b = h("button", s === windowS ? "on" : "", wl(s));
+    b.onclick = () => { windowS = s; for (const x of w.querySelectorAll("button")) x.className = ""; b.className = "on"; load(); };
+    w.appendChild(b);
+  }
+}
+$("explain").onclick = ask;
+windowsBar(); load(); setInterval(load, 5000);
+</script>
+</body>
+</html>

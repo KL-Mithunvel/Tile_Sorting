@@ -114,3 +114,70 @@ def test_alarm_burst_counts_only_recent_alarms_and_sorts_warnings_first():
 def test_empty_input_is_quiet():
     r = detect([], [], NOW, W)
     assert r["anomalies"] == [] and r["enough_data"] is False
+
+
+# ---- endpoints --------------------------------------------------------------
+
+import json as _json
+
+from master.app import create_app
+from master.bus import InMemoryBus
+from master.collector import MasterCollector
+from master.llm import AnthropicProvider, LlmError, OllamaProvider
+
+
+def _app(llm=None, clock=lambda: NOW):
+    bus, col = InMemoryBus(), MasterCollector(clock=clock)
+    col.attach(bus)
+    now = clock()
+    for i in range(60):       # a line that was fine, then started rejecting a lot
+        col.handle_message(f"tile/B{i}/final", _json.dumps({"final_grade": "Reject" if i % 15 == 0 else "Grade A",
+                                                            "ts": now - 3500 + i}).encode(), now=now - 3500 + i)
+    for i in range(20):
+        col.handle_message(f"tile/R{i}/final", _json.dumps({"final_grade": "Reject" if i % 3 == 0 else "Grade A",
+                                                            "ts": now - 500 + i}).encode(), now=now - 500 + i)
+    return create_app(col, bus, clock=clock, llm=llm).test_client()
+
+
+class _Http:
+    def __init__(self, reply=None, exc=None):
+        self.reply, self.exc, self.calls = reply, exc, 0
+
+    def __call__(self, *a):
+        self.calls += 1
+        if self.exc:
+            raise self.exc
+        return self.reply
+
+
+def test_insights_endpoint_flags_the_rise_and_hides_the_key_and_provider_when_none():
+    c = _app()
+    d = c.get("/api/insights?window=3600").get_json()
+    assert [a["kind"] for a in d["anomalies"]] == ["reject_rate"] and d["provider"] is None
+    assert c.get("/api/insights?window=12").status_code == 400
+    assert c.get("/insights").status_code == 200
+    r = c.post("/api/insights/explain", json={"window": 3600})
+    assert r.status_code == 409 and c.get("/api/insights/provider").get_json()["configured"] is False
+
+
+def test_explain_is_json_only_validated_and_rate_limited():
+    http = _Http({"message": {"content": "Probably a dirty lens."}})
+    c = _app(OllamaProvider(http=http))
+    assert c.post("/api/insights/explain", data="x").status_code == 415
+    assert c.post("/api/insights/explain", json={"window": 7}).status_code == 400
+    assert http.calls == 0                                     # nothing sent for rejected requests
+    ok = c.post("/api/insights/explain", json={"window": 3600})
+    assert ok.status_code == 200 and ok.get_json()["text"] == "Probably a dirty lens."
+    assert http.calls == 1
+    assert c.post("/api/insights/explain", json={"window": 3600}).status_code == 429
+    assert http.calls == 1                                     # the cool-down stopped a second call
+    assert c.get("/api/insights?window=3600").get_json()["last_explanation"]["text"].startswith("Probably")
+
+
+def test_provider_errors_become_a_502_with_the_reason():
+    c = _app(OllamaProvider(http=_Http(exc=LlmError("cannot reach localhost:11434: refused"))))
+    r = c.post("/api/insights/explain", json={"window": 3600})
+    assert r.status_code == 502 and "cannot reach" in r.get_json()["error"]
+    key = _app(AnthropicProvider(http=_Http({}), environ={}))
+    r = key.post("/api/insights/explain", json={"window": 3600})
+    assert r.status_code == 502 and "ANTHROPIC_API_KEY" in r.get_json()["error"]

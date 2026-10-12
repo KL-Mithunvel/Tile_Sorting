@@ -16,12 +16,14 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from master.collector import MasterCollector
 from master.analysis import DEFAULT_WINDOW_S, WINDOWS_S, build_analysis
+from master.insights import detect
+from master.llm import LlmError, explain
 from master.plant import STATIONS, build_plant, stations_from_snapshot
 from master.troubleshoot import diagnose, timeline
 
 
 def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
-               demo: bool = False, clock: Callable[[], float] = time.time) -> Flask:
+               demo: bool = False, clock: Callable[[], float] = time.time, llm=None) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
@@ -77,6 +79,77 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
             "changes": [e for e in events if e["ts"] >= now - window][-40:][::-1],
             "alarms": [a for a in snap.get("alarms") or []][:25],
         })
+
+    # ---- AI insights ----------------------------------------------------------
+    # The rule-based detection is always on; the language model only explains it,
+    # only when asked, and nothing it says reaches the line.
+    explain_state = {"last": None, "at": 0.0}
+    EXPLAIN_COOLDOWN_S = 10.0
+
+    def _window_arg():
+        try:
+            w = int(request.args.get("window", DEFAULT_WINDOW_S))
+        except ValueError:
+            w = -1
+        return w if w in WINDOWS_S else None
+
+    def _insights_now(window: int):
+        now = clock()
+        since = now - window
+        ins = detect(collector.analysis_rows(since), collector.alarm_rows(since), now, window)
+        snap = collector.snapshot(now=now, recent=0)
+        connected = bool(bus.connected)
+        findings = diagnose(stations_from_snapshot(snap), collector.health_events(now - 600),
+                            collector.alarm_rows(now - 600), now, master_connected=connected)
+        return now, ins, findings
+
+    @app.route("/insights")
+    def insights_page():
+        return render_template("insights.html", windows=WINDOWS_S, default_window=DEFAULT_WINDOW_S)
+
+    @app.route("/api/insights")
+    def api_insights():
+        window = _window_arg()
+        if window is None:
+            return jsonify(ok=False, error=f"window must be one of {list(WINDOWS_S)} seconds"), 400
+        now, ins, findings = _insights_now(window)
+        ins["demo"] = demo
+        ins["findings"] = [{k: f.get(k) for k in ("station", "level", "title", "detail")} for f in findings]
+        ins["provider"] = None if llm is None else {
+            "name": llm.name, "model": getattr(llm, "model", None), "destination": llm.destination,
+            "leaves_the_network": llm.leaves_the_network}
+        ins["last_explanation"] = explain_state["last"]
+        return jsonify(ins)
+
+    @app.route("/api/insights/provider")
+    def api_insights_provider():
+        if llm is None:
+            return jsonify(ok=False, configured=False,
+                           detail="No language model is configured (insights.provider is none).")
+        return jsonify(configured=True, **llm.check())
+
+    @app.route("/api/insights/explain", methods=["POST"])
+    def api_insights_explain():
+        if not request.is_json:
+            return jsonify(ok=False, error="send a JSON body (Content-Type: application/json)"), 415
+        if llm is None:
+            return jsonify(ok=False, error="no language model is configured (insights.provider is none)"), 409
+        body = request.get_json(silent=True)
+        body = body if isinstance(body, dict) else {}
+        window = body.get("window", DEFAULT_WINDOW_S)
+        if isinstance(window, bool) or window not in WINDOWS_S:
+            return jsonify(ok=False, error=f"window must be one of {list(WINDOWS_S)} seconds"), 400
+        t = time.monotonic()
+        if t - explain_state["at"] < EXPLAIN_COOLDOWN_S:
+            return jsonify(ok=False, error="asked again too soon; wait a few seconds"), 429
+        explain_state["at"] = t
+        now, ins, findings = _insights_now(window)
+        try:
+            result = explain(llm, ins, findings, clock=clock)
+        except LlmError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        explain_state["last"] = result
+        return jsonify(ok=True, **result)
 
     @app.route("/classic")
     def classic():

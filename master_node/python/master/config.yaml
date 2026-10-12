@@ -13,3 +13,16 @@ dashboard:
   # Commands (sound vote, hold-all, belt speed) change how the LINE behaves.
   # Off by default; turn on deliberately, the page is not authenticated.
   controls_enabled: false
+
+# AI insights. The rule-based anomaly detection always runs; this only chooses which
+# language model (if any) EXPLAINS what it found, and only when a person clicks the
+# button on the AI insights page.
+insights:
+  provider: "none"             # none | ollama | anthropic
+  timeout_s: 90
+  ollama:                      # local, works on the isolated control LAN
+    url: "http://localhost:11434"
+    model: "llama3.2:3b"       # install with: ollama pull llama3.2:3b
+  anthropic:                   # needs internet; the key is read ONLY from this environment variable
+    model: "claude-sonnet-5-5"
+    api_key_env: "ANTHROPIC_API_KEY"

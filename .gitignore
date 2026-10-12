@@ -43,3 +43,7 @@ camera_models/cam_vit/.checkpoint_cache/
 # artifact — run the script — and the JSON report beside it, which IS
 # committed, carries the actual findings.
 development/output/*.mp4
+
+# Generated report figures (documents/deliverables/review_2/figures/make_figures.py) - small, and the report needs them
+!documents/deliverables/review_2/figures/
+!documents/deliverables/review_2/figures/*.png

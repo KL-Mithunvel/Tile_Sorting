@@ -2,7 +2,11 @@
 
 Status: **designed and implemented on the Pi side** (`acoustic/tap_protocol.py`,
 `acoustic/tap_bridge.py`, 2026-10-11, unit-tested with a scripted fake serial port).
-**The Nano firmware does not exist yet** — this is the specification it has to meet.
+**The Nano firmware exists as of 2026-10-12** (`acoustic_node/nano_firmware/`: logic in
+`nano_core.h`, tested on a laptop against `tap_protocol.py` and the real bridge; the board
+glue has **never been compiled for AVR or run on a Nano**) — this is the specification it
+meets. Where the firmware had to decide something the spec left open (manual resume after a
+watchdog trip, striker keeps running while ToF 3 holds the belt) see its README.
 Context: `Automation_Architecture.md` §5.3/§5.5 (the Nano runs the striker and belt PWM;
 it is not on the LAN), `station_coordination.md` (what the Pi does with the events).
 
@@ -16,7 +20,7 @@ Every line ends with an **XOR checksum**:
 
 ```
 <payload>*<HH>\n        HH = two upper-case hex digits, XOR of every byte of <payload>
-BELT 55*5E
+BELT 55*3F
 ```
 
 A line with a missing, malformed or wrong checksum is **discarded** (and counted). This

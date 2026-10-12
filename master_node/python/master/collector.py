@@ -168,6 +168,35 @@ class MasterCollector:
             ).fetchall()
         return [self._row(r) for r in rows]
 
+    def analysis_rows(self, since_ts: Optional[float] = None) -> list[dict]:
+        """Tiles first seen at/after `since_ts`, oldest first, with the per-stage
+        timestamps the stations put in their own messages (not the time this
+        master happened to receive them)."""
+        q = "SELECT * FROM tiles"
+        args: tuple = ()
+        if since_ts is not None:
+            q += " WHERE first_ts >= ?"
+            args = (since_ts,)
+        with self._lock:
+            rows = self._db.execute(q + " ORDER BY first_ts, rowid", args).fetchall()
+        out = []
+        for r in rows:
+            d = self._row(r)
+            cam = json.loads(r["camera_json"]) if r["camera_json"] else {}
+            fin = json.loads(r["final_json"]) if r["final_json"] else {}
+            d["camera_ts"] = cam.get("ts")
+            d["final_ts"] = fin.get("ts")
+            out.append(d)
+        return out
+
+    def alarm_rows(self, since_ts: Optional[float] = None) -> list[dict]:
+        q, args = "SELECT ts, kind, message, tile_id FROM alarms", ()
+        if since_ts is not None:
+            q, args = q + " WHERE ts >= ?", (since_ts,)
+        with self._lock:
+            rows = self._db.execute(q + " ORDER BY ts", args).fetchall()
+        return [dict(r) for r in rows]
+
     def tally(self) -> dict:
         with self._lock:
             rows = self._db.execute("SELECT final_json FROM tiles WHERE final_json IS NOT NULL").fetchall()

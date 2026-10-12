@@ -146,3 +146,63 @@ def test_master_sees_what_the_real_station_publishes_and_its_commands_work():
     # the master turns vote off through its own command path
     bus.publish("station/cmd", {"cmd": "vote", "enabled": False})
     assert station.vote_enabled is False
+
+
+# ---- the gantry (UNO Q) -------------------------------------------------------
+
+
+def test_placement_merges_into_the_tile_row_and_the_csv():
+    c = MasterCollector()
+    feed(c, "tile/T1/final", {"final_grade": "Grade B", "destination": "bin_2"}, now=1.0)
+    feed(c, "tile/T1/placed", {"outcome": "placed", "stack_count": 3, "tile_in_cup": False}, now=2.0)
+    feed(c, "tile/T2/final", {"final_grade": "Grade A", "destination": "bin_1"}, now=3.0)
+    feed(c, "tile/T2/placed", {"outcome": "failed", "reason": "grip: VACUUM_TIMEOUT", "tile_in_cup": False}, now=4.0)
+    rows = {r["tile_id"]: r for r in c.recent()}
+    assert rows["T1"]["placement"] == "placed" and rows["T1"]["stack_count"] == 3
+    assert rows["T2"]["placement"] == "failed" and rows["T2"]["placement_reason"] == "grip: VACUUM_TIMEOUT"
+    csv_text = c.export_csv()
+    assert csv_text.splitlines()[0].endswith("placement,placement_reason")
+    assert "failed,grip: VACUUM_TIMEOUT" in csv_text
+
+
+def test_gantry_status_and_command_results_are_tracked_with_age():
+    c = MasterCollector()
+    feed(c, "station/gantry/status", {"state": "online", "level": "ok", "completed": 4}, now=100.0)
+    feed(c, "station/gantry/cmd/result", {"id": "m-1", "cmd": "pause", "ok": True}, now=101.0)
+    snap = c.snapshot(now=110.0)
+    assert snap["gantry"]["completed"] == 4 and snap["gantry_age_s"] == 10.0
+    assert snap["gantry_cmd_results"][0]["cmd"] == "pause"
+
+
+def test_an_older_database_without_the_placement_column_is_upgraded(tmp_path):
+    import sqlite3
+
+    p = tmp_path / "old.db"
+    db = sqlite3.connect(p)
+    db.executescript("CREATE TABLE tiles (tile_id TEXT PRIMARY KEY, first_ts REAL NOT NULL, updated_ts REAL NOT NULL,"
+                     " camera_json TEXT, acoustic_json TEXT, final_json TEXT, ack_status TEXT);"
+                     "INSERT INTO tiles VALUES ('T0', 1, 1, NULL, NULL, '{\"final_grade\":\"Reject\"}', NULL);")
+    db.commit()
+    db.close()
+    c = MasterCollector(p)
+    assert c.recent()[0]["final_grade"] == "Reject" and c.recent()[0]["placement"] is None
+
+
+def test_gantry_commands_are_validated_and_motion_needs_confirmation():
+    c, bus, cl = client(True)
+    ok = cl.post("/api/command/gantry", json={"cmd": "pause"})
+    assert ok.status_code == 200
+    topic, data, qos, _ = bus.published[-1]
+    assert topic == "station/gantry/cmd" and json.loads(data)["cmd"] == "pause" and qos == 1
+    assert cl.post("/api/command/gantry", json={"cmd": "explode"}).status_code == 400
+    assert cl.post("/api/command/gantry", json={"cmd": "home"}).status_code == 400
+    assert cl.post("/api/command/gantry", json={"cmd": "home", "confirm": True}).status_code == 200
+    assert cl.post("/api/command/gantry", json={"cmd": "reset_stack"}).status_code == 400
+    assert cl.post("/api/command/gantry", json={"cmd": "reset_stack", "stack": "bin_1", "count": -1}).status_code == 400
+    r = cl.post("/api/command/gantry", json={"cmd": "reset_stack", "stack": "bin_1", "count": 0})
+    assert r.status_code == 200 and json.loads(bus.published[-1][1])["stack"] == "bin_1"
+
+
+def test_gantry_commands_follow_the_controls_switch():
+    c, bus, cl = client(False)
+    assert cl.post("/api/command/gantry", json={"cmd": "pause"}).status_code == 403

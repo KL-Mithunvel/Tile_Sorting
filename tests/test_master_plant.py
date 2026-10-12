@@ -120,3 +120,21 @@ def test_plant_endpoint_and_pages_render():
     assert c.get("/static/vendor/three/three.module.min.js").status_code == 200
     assert c.get("/static/vendor/three/three.core.min.js").status_code == 200
     json.dumps(j)   # plain data only
+
+
+def test_gantry_station_uses_its_own_status_when_it_is_fresh():
+    from master.plant import stations_from_snapshot
+
+    base = {"station": None, "station_age_s": None}  # the Pi is silent; the gantry is not
+    snap = dict(base, gantry={"state": "online", "level": "ok", "completed": 7, "queue_depth": 2}, gantry_age_s=1.0)
+    g = next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")
+    assert g["level"] == "ok" and "7 placed" in g["detail"]
+    snap["gantry"] = {"state": "online", "level": "fail", "alarm": "LOST_STEPS_X"}
+    g = next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")
+    assert g["level"] == "fail" and "LOST_STEPS_X" in g["detail"]
+    snap["gantry"] = {"state": "online", "level": "warn", "paused": True}
+    assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["detail"] == "paused"
+    snap["gantry"] = {"state": "offline"}
+    assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["level"] == "offline"
+    snap["gantry"], snap["gantry_age_s"] = {"state": "online", "level": "ok"}, 60.0  # stale: not trusted
+    assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["level"] == "offline"

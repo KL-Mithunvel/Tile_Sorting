@@ -77,6 +77,7 @@ class FinalQueue:
         self._seen: "OrderedDict[str, None]" = OrderedDict()
         self._remember = remember
         self._active: Optional[PickJob] = None
+        self._last_finished: Optional[PickJob] = None
         self._lock = threading.Lock()
         self.counters = {"accepted": 0, "duplicates": 0, "rejected": 0, "full": 0, "done": 0, "failed": 0}
 
@@ -148,6 +149,12 @@ class FinalQueue:
             job.state = DONE if ok else FAILED
             self.counters["done" if ok else "failed"] += 1
             self._active = None
+            self._last_finished = job
+
+    @property
+    def last_finished(self) -> Optional[PickJob]:
+        """The job `finish()` most recently closed (what a `placed` report is about)."""
+        return self._last_finished
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -195,7 +202,6 @@ class FeedClient:
             qos=0,
         )
 
-
     def _on_final(self, topic: str, payload: bytes) -> None:
         now = self._clock()
         self.last_message_ts = now
@@ -231,7 +237,18 @@ class PahoFeedBus:
         self._host, self._port, self._client_id = host, port, client_id
         self._subs: list = []
         self._client = None
+        self._will: Optional[tuple] = None
+        self._on_connect_cbs: list = []
         self.connected = False
+
+    def set_will(self, topic: str, payload, retain: bool = True) -> None:
+        """Message the broker publishes if this node dies without saying goodbye.
+        Must be set before start()."""
+        self._will = (topic, payload if isinstance(payload, (bytes, str)) else json.dumps(payload), retain)
+
+    def on_connect(self, callback: Callable[[], None]) -> None:
+        """Called on every (re)connect, e.g. to re-publish a retained status."""
+        self._on_connect_cbs.append(callback)
 
     def subscribe(self, topic_filter: str, callback) -> None:
         self._subs.append((topic_filter, callback))
@@ -246,11 +263,19 @@ class PahoFeedBus:
         else:
             c = mqtt.Client(client_id=self._client_id)
         c.reconnect_delay_set(min_delay=1, max_delay=10)
+        if self._will is not None:
+            topic, payload, retain = self._will
+            c.will_set(topic, payload, qos=1, retain=retain)
 
         def on_connect(cl, userdata, *a):
             self.connected = True
             for f, _ in self._subs:
                 cl.subscribe(f, qos=1)
+            for cb in self._on_connect_cbs:
+                try:
+                    cb()
+                except Exception:  # noqa: BLE001
+                    log.exception("on_connect callback failed")
 
         def on_disconnect(cl, userdata, *a):
             self.connected = False

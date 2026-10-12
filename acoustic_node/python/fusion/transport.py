@@ -40,6 +40,11 @@ TOPIC_DIAG_PING = "station/diag/ping"
 def diag_pong_topic(node: str) -> str:
     return f"station/diag/pong/{node}"
 
+PLACED_FILTER = "tile/+/placed"  # the UNO Q: this tile was placed on a stack (or the pick failed)
+TOPIC_GANTRY_STATUS = "station/gantry/status"  # retained, last-will {"state":"offline"}
+TOPIC_GANTRY_CMD = "station/gantry/cmd"  # master/operator -> UNO Q: pause|resume|acknowledge|reset_stack|home|recover
+TOPIC_GANTRY_CMD_RESULT = "station/gantry/cmd/result"
+
 TOPIC_NANO_STATUS = "station/nano/status"  # the serial bridge: Nano link alive, belt %, ToF ok
 TOPIC_BELT = "station/belt"  # {"percent": 0-100} -> bridge -> Nano (master or operator)
 TOPIC_STRIKE = "station/strike"  # {"enabled": bool} -> bridge -> Nano: allow / inhibit the striker

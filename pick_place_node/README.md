@@ -50,10 +50,31 @@ the pick queue and feed state, and the tile spec. API: `/api/layout`, `/api/job`
 pauses the job where it is. Motion is simulated; the plan, stack heights and counts are
 the real ones.
 
-**Not built:** the MCU firmware (`sketch/sketch.ino` is an empty stub — step generation,
-homing, limits, e-stop, encoders, the line parser). `SerialGantryLink` has never touched
-the board. `python/main.py` is still an App Lab stub. Everything above is tested against
-`SimulatedMcu`, not hardware.
+### On the station bus (added 2026-10-12)
+
+```bash
+# headless UNO Q service: finals in, placed / status / alarms out, remote commands
+python -m pick_place.gantry_station --host 192.168.1.11 --backend sim
+# or the twin page with the same link attached
+python -m pick_place.twin_prototype --station-host 192.168.1.11 --backend sim
+```
+
+Reports `tile/<id>/placed`, a retained `station/gantry/status` (last-will `offline`) and
+`machine/alarm` edges. Remote `pause / resume / acknowledge / reset_stack` are on;
+`home / recover` need `gantry.station.motion_commands_enabled: true`. Contract:
+`documents/programming/station_coordination.md` §4.
+
+### Firmware
+
+`sketch/gantry_core.h` is the firmware's logic, compiled and tested on a PC against the same
+scenarios as `SimulatedMcu` (`tests/test_gantry_firmware_conformance.py`); `sketch/sketch.ino`
+is the board glue. See `sketch/README.md` for what is verified and the ordered list of what
+is not.
+
+**Not built / not verified:** the sketch on the board (never compiled for the UNO Q);
+`SerialGantryLink` has never touched it; how Python reaches the MCU from the App Lab
+container. Everything above is tested against `SimulatedMcu` or the PC build of the
+firmware core, not hardware.
 
 Layout of the line: the **conveyor** delivers each tile to one fixed pickup point
 (`locations.pickup`); the gantry places it on one of **four separate stacks**

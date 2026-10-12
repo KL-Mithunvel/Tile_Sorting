@@ -6,12 +6,12 @@ FR-18) is split between the UNO Q's two brains and how the two halves talk to ea
 Prompted by the owner obtaining a **CNC Shield V3** (4× TMC2208 sockets, Uno form factor)
 and two candidate test sketches from a teammate.
 
-**Status: design only.** `pick_place_node/sketch/sketch.ino` is still an empty stub and
-`pick_place_node/python/pick_place/` currently contains only the digital-twin mock
-(`mock_state.py`, `worker.py`, `dashboard.py` — see
-`documents/project/Pick_Place_Sorting_Subsystem.md`). Nothing in this document has been
-run on hardware. Every pin number, timing constant, and speed here is a placeholder — see
-Open Items. Companion hardware/wiring doc:
+**Status (2026-10-12): Pi side and firmware core built; nothing has run on the board.**
+`pick_place/` has the whole Linux half (§6) and `pick_place_node/sketch/gantry_core.h` is the
+firmware logic, compiled and conformance-tested on a PC against the same scenarios as
+`fake_mcu.py` (§5.8). `sketch.ino` is the board glue around it and has never been compiled for the
+UNO Q. Nothing in this document has been run on hardware. Every pin number, timing constant, and
+speed here is a placeholder — see Open Items. Companion hardware/wiring doc:
 `documents/electrical/schematics/pick_place_hardware_connections_plan.md`.
 
 ---
@@ -179,7 +179,11 @@ Format: `<seq> <VERB> [args...]`, `seq` a monotonically increasing integer.
    `HOME`. The e-stop latch additionally requires the physical loop to be reclosed.
 6. **Unknown or malformed command** → `err <seq> BAD_CMD`, no state change.
 7. **Watchdog:** no command (or `PING`) for `LINK_TIMEOUT_MS` while moving → the MCU
-   raises `alarm LINK_TIMEOUT` and stops. Linux sends `PING` at ~1 Hz when idle.
+   raises `alarm LINK_TIMEOUT` and stops. Linux sends `PING` at ~1 Hz when idle **and every
+   `gantry.runner.keepalive_s` (0.2 s) while a motion is in flight** — a motion can take far longer
+   than the timeout with nothing else to send, so without this every long move would trip it
+   (found 2026-10-12 when the watchdog was first built). `LINK_TIMEOUT_MS` is a firmware
+   constant (500), not pushed by a command.
 
 ### 5.5 Example: one pick-and-place cycle
 
@@ -247,6 +251,28 @@ behaviours the tests pin down:
 - `done` carries the final X/Y/Z (the Linux side shows it even if no further `pos` was sent)
 - closed loop: |encoder − commanded| > `LOST` gives `alarm LOST_STEPS_<axis>`;
   |A − Y| > `SKEW` gives `alarm SKEW_Y`
+
+### 5.8 The firmware core and how it is checked (added 2026-10-12)
+
+`pick_place_node/sketch/gantry_core.h` — portable C++11, header-only, no Arduino includes — holds
+the parser, FSM, trapezoid step generator, homing, limit / e-stop handling, vacuum confirm,
+closed-loop check and watchdog behind a small `Hal`. `sketch.ino` supplies the real `Hal`;
+`pick_place_node/firmware_host/gantry_host.cpp` supplies a simulated machine and speaks the line
+protocol on stdin / stdout. `tests/test_gantry_firmware_conformance.py` builds it and runs:
+
+1. the §5.7 scenarios against **both** `SimulatedMcu` and the compiled core,
+2. the real `JobRunner` placing tiles through the compiled core,
+3. firmware-only behaviour: analytic trapezoid timing, exact step counts, homing order and
+   geometry, limit stop within one step, e-stop not clearable while open, watchdog, encoder
+   wrap-around and fault handling, sensor debounce.
+
+Behaviour the core adds beyond the spec's table: a limit switch ahead of a moving axis stops it
+within one step and latches `LIMIT_<axis>_<MIN|MAX>` (moving *away* from a pressed switch is
+allowed); `CLEARALARM` is refused while the e-stop loop is still open; an unreadable encoder
+raises `ENCODER_<axis>` rather than passing; a homing seek that never finds its switch raises
+`HOME_FAIL`. Closed-loop deviation is measured against the commanded position **at each
+encoder's own read instant** — comparing raw positions read a few ms apart looked like racking
+at speed (found on first run).
 
 ---
 

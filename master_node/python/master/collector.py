@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS tiles (
     camera_json TEXT,
     acoustic_json TEXT,
     final_json TEXT,
-    ack_status TEXT
+    ack_status TEXT,
+    placed_json TEXT
 );
 CREATE TABLE IF NOT EXISTS alarms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,11 +50,12 @@ CREATE TABLE IF NOT EXISTS health_events (
 );
 """
 
-_LEAF_TO_COLUMN = {"camera/result": "camera_json", "acoustic/result": "acoustic_json", "final": "final_json"}
+_LEAF_TO_COLUMN = {"camera/result": "camera_json", "acoustic/result": "acoustic_json", "final": "final_json",
+                   "placed": "placed_json"}
 
 CSV_COLUMNS = [
     "tile_id", "first_seen", "camera_grade", "acoustic_grade", "acoustic_counted", "final_grade",
-    "destination", "timed_out", "delivery_ack", "reasons",
+    "destination", "timed_out", "delivery_ack", "reasons", "placement", "placement_reason",
 ]
 
 
@@ -66,7 +68,14 @@ class MasterCollector:
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
+        # A database written before a column existed: add it, never refuse to start.
+        have = {r["name"] for r in self._db.execute("PRAGMA table_info(tiles)")}
+        if "placed_json" not in have:
+            self._db.execute("ALTER TABLE tiles ADD COLUMN placed_json TEXT")
         self._db.commit()
+        self.gantry_status: Optional[dict] = None
+        self.gantry_status_ts: Optional[float] = None
+        self.gantry_cmd_results: deque = deque(maxlen=20)
         self.station_status: Optional[dict] = None
         self.station_status_ts: Optional[float] = None
         self.camera_status: Optional[dict] = None
@@ -115,6 +124,10 @@ class MasterCollector:
                 self.camera_status, self.camera_status_ts = data, now
             elif topic == "station/nano/status":
                 self.nano_status, self.nano_status_ts = data, now
+            elif topic == "station/gantry/status":
+                self.gantry_status, self.gantry_status_ts = data, now
+            elif topic == "station/gantry/cmd/result":
+                self.gantry_cmd_results.appendleft({**data, "rx_ts": now})
             elif topic == "machine/alarm":
                 self._store_alarm(data, now)
             elif len(parts) >= 3 and parts[0] == "tile":
@@ -154,6 +167,7 @@ class MasterCollector:
         camera = json.loads(r["camera_json"]) if r["camera_json"] else {}
         acoustic = json.loads(r["acoustic_json"]) if r["acoustic_json"] else {}
         final = json.loads(r["final_json"]) if r["final_json"] else {}
+        placed = json.loads(r["placed_json"]) if r["placed_json"] else {}
         return {
             "tile_id": r["tile_id"],
             "first_ts": r["first_ts"],
@@ -167,6 +181,10 @@ class MasterCollector:
             "timed_out": final.get("timed_out"),
             "reasons": final.get("reasons") or [],
             "ack_status": r["ack_status"],
+            "placement": placed.get("outcome"),
+            "placement_reason": placed.get("reason"),
+            "tile_in_cup": placed.get("tile_in_cup"),
+            "stack_count": placed.get("stack_count"),
         }
 
     def recent(self, limit: int = 30) -> list[dict]:
@@ -274,6 +292,9 @@ class MasterCollector:
                 "camera_age_s": age(self.camera_status_ts),
                 "nano": self.nano_status,
                 "nano_age_s": age(self.nano_status_ts),
+                "gantry": self.gantry_status,
+                "gantry_age_s": age(self.gantry_status_ts),
+                "gantry_cmd_results": list(self.gantry_cmd_results)[:10],
                 "alarms": list(self.alarms)[:30],
                 "counters": dict(self.counters),
             }
@@ -292,6 +313,7 @@ class MasterCollector:
             w.writerow([
                 d["tile_id"], d["first_ts"], d["camera_grade"], d["acoustic_grade"], d["acoustic_counted"],
                 d["final_grade"], d["destination"], d["timed_out"], d["ack_status"], " | ".join(d["reasons"]),
+                d["placement"], d["placement_reason"],
             ])
         return buf.getvalue()
 

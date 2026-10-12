@@ -62,7 +62,8 @@ class FakeCameraAndStriker(threading.Thread):
     """Publishes a camera heartbeat and a graded tile every `interval_s`, then
     "taps" it `transit_s` later by publishing station/tap — standing in for the
     camera service and the Nano's strike event. Also answers every final with
-    an ack, standing in for the UNO Q."""
+    an ack and a `placed` report, and keeps a gantry status alive, standing in
+    for the UNO Q."""
 
     def __init__(
         self, bus: Bus, interval_s: float = 4.0, transit_s: float = 2.0, ack: bool = True, tap: bool = True
@@ -72,6 +73,7 @@ class FakeCameraAndStriker(threading.Thread):
         self._tap = tap  # False: a real microphone/striker makes the taps
         self._halt = threading.Event()
         self._n = 0
+        self._placed = 0
 
     def stop(self) -> None:
         self._halt.set()
@@ -91,6 +93,14 @@ class FakeCameraAndStriker(threading.Thread):
                 {"state": "online", "link": True, "belt_pct": 60, "ts": time.time()},
                 qos=0,
             )
+            if self._ack:
+                self._bus.publish(
+                    "station/gantry/status",
+                    {"state": "online", "level": "ok", "phase": "idle", "homed": True, "paused": False,
+                     "queue_depth": 0, "completed": self._placed, "failed": 0, "backend": "demo",
+                     "ts": time.time()},
+                    qos=0,
+                )
             self._bus.publish(
                 "station/camera/status",
                 {"source_kind": "camera", "source_status": "running", "tile_count": tile_count, "ts": time.time()},
@@ -129,5 +139,17 @@ class FakeCameraAndStriker(threading.Thread):
         )
 
     def _answer(self, topic: str, payload: bytes) -> None:
+        import json
+
         tid = topic.split("/")[1]
         self._bus.publish(f"tile/{tid}/ack", {"status": "ok"})
+        try:
+            dest = json.loads(payload).get("destination")
+        except ValueError:
+            dest = None
+        self._placed += 1
+        self._bus.publish(
+            f"tile/{tid}/placed",
+            {"tile_id": tid, "station": "gantry", "outcome": "placed", "destination": dest, "reason": None,
+             "tile_in_cup": False, "stack_count": None, "ts": time.time()},
+        )

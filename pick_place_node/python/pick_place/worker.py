@@ -44,10 +44,12 @@ class SharedState:
 
 class TwinWorker:
     def __init__(self, simulator: MockGantrySimulator, state: SharedState, tick_hz: float = 30.0,
-                 driver=None):
-        """`driver` (optional MockJobDriver) is ticked after every advance."""
+                 driver=None, on_tick=None):
+        """`driver` (optional MockJobDriver / JobRunner) is ticked after every advance;
+        `on_tick()` (optional) runs after that, e.g. the station reporter."""
         self._simulator = simulator
         self._driver = driver
+        self._on_tick = on_tick
         self._state = state
         self._period_s = 1.0 / tick_hz
         self._running = False
@@ -77,3 +79,8 @@ class TwinWorker:
                     self._driver.tick(pose, dt)
                 except Exception:  # noqa: BLE001 - a driver bug must not freeze the twin
                     log.exception("job driver tick failed")
+            if self._on_tick is not None:
+                try:
+                    self._on_tick()
+                except Exception:  # noqa: BLE001 - reporting must never stop the gantry
+                    log.exception("on_tick failed")

@@ -46,6 +46,11 @@ class MockJobDriver:
         self._completed = 0
         self._failed = 0
 
+    @property
+    def holding(self) -> bool:
+        """Lock-free: read from `on_job_done`, which runs inside tick()'s lock."""
+        return self._holding
+
     # ---- one simulation tick ----------------------------------------------
 
     def tick(self, pose, dt_s: float) -> None:

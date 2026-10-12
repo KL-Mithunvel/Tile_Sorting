@@ -19,6 +19,7 @@ import time
 from pick_place.coordinate_model import CoordinateModel
 from pick_place.dashboard import create_app
 from pick_place.gantry_backend import create_backend, create_job_driver
+from pick_place.gantry_station import attach_station_link
 from pick_place.mock_state import load_config
 from pick_place.sequencer import Feeds
 from pick_place.tile_feed import FeedClient
@@ -77,16 +78,18 @@ def main(argv=None) -> None:
     dash_cfg = config["dashboard"]
     model = CoordinateModel.from_config(config)
 
-    feed = feed_bus = None
+    feed = feed_bus = link = None
     feed_source = "station"
     if args.station_host:
         from pick_place.tile_feed import PahoFeedBus
 
         feed_bus = PahoFeedBus(args.station_host, args.station_port)
-        feed = FeedClient(feed_bus)
-        feed.start()
+        link = attach_station_link(config, feed_bus, simulator, model, Feeds.from_config(config),
+                                   config.get("backend", "mock"))
+        feed = link.feed
         feed_bus.start()
-        print(f"Receiving tile finals from the station broker at {args.station_host}:{args.station_port}.")
+        print(f"Receiving tile finals from the station broker at {args.station_host}:{args.station_port}; "
+              "reporting placed / status / alarms back.")
     elif args.demo:
         feed = FeedClient(None)  # a queue with no broker behind it
         feed_source = "demo"
@@ -98,11 +101,15 @@ def main(argv=None) -> None:
         feed_source = "local"
 
     driver = None
-    if feed is not None:
+    on_tick = None
+    if link is not None:
+        driver = link.driver  # already built, with the reporter wired in
+        on_tick = link.tick_hook()
+    elif feed is not None:
         driver = create_job_driver(simulator, feed.queue, model, Feeds.from_config(config), config)
         simulator.set_mode("jobs")  # jog / vacuum / Auto in the page pauses the jobs
 
-    worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"], driver=driver)
+    worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"], driver=driver, on_tick=on_tick)
     worker.start()
 
     demo_stop = threading.Event()
@@ -123,6 +130,9 @@ def main(argv=None) -> None:
     finally:
         demo_stop.set()
         worker.stop()
+        if link is not None:
+            link.reporter.close()
+            time.sleep(0.3)
         if feed_bus is not None:
             feed_bus.stop()
 

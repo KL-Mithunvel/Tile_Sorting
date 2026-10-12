@@ -60,13 +60,36 @@ def _silent(age: Optional[float]) -> bool:
     return age is None or age > SILENT_AFTER_S
 
 
+def _gantry_direct(snap: dict) -> Optional[tuple]:
+    """(level, detail) from the gantry's own retained status, when it is fresh.
+    Preferred over the Pi's `health.gantry`: it is the machine speaking, not the
+    Pi's opinion of it, and it is still there if the Pi is not."""
+    g = snap.get("gantry")
+    if not isinstance(g, dict) or _silent(snap.get("gantry_age_s")):
+        return None
+    if g.get("state") == "offline":
+        return "offline", "gantry service went offline"
+    level = g.get("level") if g.get("level") in LEVELS else "warn"
+    if level == "fail":
+        why = g.get("alarm") or g.get("fault") or ("MCU link down" if g.get("link") is False else "fault")
+        return "fail", f"needs a person: {why}"
+    if g.get("paused"):
+        return "warn", "paused"
+    if g.get("homed") is False:
+        return "warn", "not homed"
+    return level, f"{g.get('completed', 0)} placed, queue {g.get('queue_depth', 0)}"
+
+
 def _stations(snap: dict) -> list[dict]:
     station = snap.get("station")
     silent = station is None or _silent(snap.get("station_age_s"))
     health = (station or {}).get("health") or {}
     out = []
     for sid, label, key in STATIONS:
-        if silent:
+        direct = _gantry_direct(snap) if sid == "gantry" else None
+        if direct is not None:
+            level, detail = direct
+        elif silent:
             level, detail = "offline", "no status from the Pi station"
         elif key is None:
             state = station.get("state", "")
@@ -110,6 +133,7 @@ def build_plant(snap: dict, now: float) -> dict:
             "u": tile_position(stage, age),
             "grade": row.get("final_grade") or row.get("camera_grade"),
             "destination": row.get("destination"),
+            "placement": row.get("placement"),
         })
 
     return {

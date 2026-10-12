@@ -36,7 +36,11 @@ CREATE TABLE IF NOT EXISTS tiles (
     delivery       TEXT NOT NULL DEFAULT 'pending',
     attempts       INTEGER NOT NULL DEFAULT 0,
     ack_ts         REAL,
-    transit_s      REAL
+    transit_s      REAL,
+    placement      TEXT,
+    placement_reason TEXT,
+    tile_in_cup    INTEGER,
+    placed_ts      REAL
 );
 CREATE INDEX IF NOT EXISTS tiles_created ON tiles (created_ts);
 """
@@ -46,6 +50,7 @@ _COLUMNS = {
     "seq", "created_ts", "updated_ts", "state", "camera_grade", "camera_json",
     "acoustic_grade", "acoustic_json", "acoustic_counted", "final_grade",
     "destination", "reasons_json", "delivery", "attempts", "ack_ts", "transit_s",
+    "placement", "placement_reason", "tile_in_cup", "placed_ts",
 }
 
 
@@ -61,8 +66,10 @@ class TileStore:
             # A database written before a column existed: add it rather than
             # refuse to start (the station's record must survive an upgrade).
             have = {r["name"] for r in self._db.execute("PRAGMA table_info(tiles)")}
-            if "transit_s" not in have:
-                self._db.execute("ALTER TABLE tiles ADD COLUMN transit_s REAL")
+            for column, kind in (("transit_s", "REAL"), ("placement", "TEXT"), ("placement_reason", "TEXT"),
+                                 ("tile_in_cup", "INTEGER"), ("placed_ts", "REAL")):
+                if column not in have:
+                    self._db.execute(f"ALTER TABLE tiles ADD COLUMN {column} {kind}")
             self._db.commit()
 
     def upsert(self, tile_id: str, now: float, **fields) -> None:
@@ -76,6 +83,8 @@ class TileStore:
                 fields[name] = json.dumps(fields[name], separators=(",", ":"), default=str)
         if "acoustic_counted" in fields:
             fields["acoustic_counted"] = int(bool(fields["acoustic_counted"]))
+        if fields.get("tile_in_cup") is not None:
+            fields["tile_in_cup"] = int(bool(fields["tile_in_cup"]))
         with self._lock:
             self._db.execute(
                 "INSERT OR IGNORE INTO tiles (tile_id, created_ts, updated_ts, state) VALUES (?,?,?,?)",
@@ -106,6 +115,14 @@ class TileStore:
             ).fetchall()
         return {r["final_grade"]: r["n"] for r in rows}
 
+    def placement_tally(self) -> dict:
+        """placed / failed / overdue counts over everything stored."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT placement, COUNT(*) AS n FROM tiles WHERE placement IS NOT NULL GROUP BY placement"
+            ).fetchall()
+        return {r["placement"]: r["n"] for r in rows}
+
     def recent_transits(self, limit: int = 200) -> list[float]:
         """Camera -> tap times of the most recent tiles that had one (survives
         a restart, so the suggestion does not start from nothing)."""
@@ -128,4 +145,6 @@ def _row(row: sqlite3.Row) -> dict:
         out[name.removesuffix("_json")] = json.loads(raw) if raw else None
         del out[name]
     out["acoustic_counted"] = bool(out["acoustic_counted"])
+    if out.get("tile_in_cup") is not None:
+        out["tile_in_cup"] = bool(out["tile_in_cup"])
     return out

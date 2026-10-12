@@ -12,6 +12,8 @@ Behaviour implemented (the rules the firmware must also follow):
   - `VAC ON` answers `ok` only after the confirm delay, or `err VACUUM_TIMEOUT`
   - an alarm latches: everything but PING/STOP/GETPOS/GETSTATE/CLEARALARM is
     `ALARM_ACTIVE`; CLEARALARM clears it but leaves HOMED=0
+  - link watchdog (optional, `link_timeout_s`): silence during a motion raises
+    `alarm LINK_TIMEOUT`
   - closed loop: an encoder offset beyond the SETTOL `LOST` tolerance raises
     `alarm LOST_STEPS_<axis>`; Y vs A beyond `SKEW` raises `alarm SKEW_Y`
 
@@ -35,11 +37,15 @@ AXES = ("X", "Y", "Z")
 class SimulatedMcu:
     def __init__(self, envelope=((0.0, 600.0), (0.0, 400.0), (0.0, 200.0)), speed_mm_s: float = 400.0,
                  vac_confirm_s: float = 0.05, home_time_s: float = 0.2, heartbeat_s: float = 0.5,
-                 honor_feed: bool = True):
+                 honor_feed: bool = True, link_timeout_s: Optional[float] = None):
         self.envelope = {a: tuple(r) for a, r in zip(AXES, envelope)}
         self._hard_envelope = dict(self.envelope)
         self.speed = float(speed_mm_s)
         self.honor_feed = honor_feed  # False: always move at `speed_mm_s` (fast tests)
+        # Protocol 5.4 rule 7: a motion in flight and no line from the Pi for this long
+        # -> `alarm LINK_TIMEOUT`. None = off (most tests do not ping).
+        self.link_timeout_s = link_timeout_s
+        self._last_rx_t = 0.0
         self.vac_confirm_s = vac_confirm_s
         self.home_time_s = home_time_s
         self.heartbeat_s = heartbeat_s
@@ -66,6 +72,7 @@ class SimulatedMcu:
     def write(self, line: str) -> None:
         with self._lock:
             self.received.append(line.strip())
+            self._last_rx_t = self._t
             self._handle(line.strip())
 
     def read_lines(self) -> list:
@@ -310,6 +317,9 @@ class SimulatedMcu:
                 else:
                     self._emit_pos()
             self._check_closed_loop()
+            if (self.link_timeout_s is not None and self._motion is not None and self.alarm is None
+                    and self._t - self._last_rx_t > self.link_timeout_s):
+                self._raise_alarm("LINK_TIMEOUT")
             if self._t >= self._next_hb:
                 self._next_hb = self._t + self.heartbeat_s
                 self._emit(f"hb {int(self._t * 1000)}")

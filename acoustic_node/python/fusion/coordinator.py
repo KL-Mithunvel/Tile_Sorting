@@ -35,6 +35,7 @@ import time
 from collections import deque
 from typing import Callable, Optional
 
+from fusion.clock_skew import SkewTracker
 from fusion.final_grade import FinalDecision, decide_timeout, fuse_final
 from fusion.grades import FINAL_GRADES, HOLD
 from fusion.ledger import TileEntry, TileLedger
@@ -43,10 +44,12 @@ from fusion.store import TileStore
 from fusion.transport import (
     ACK_FILTER,
     CAMERA_RESULT_FILTER,
+    PLACED_FILTER,
     TOPIC_ALARM,
     TOPIC_CAMERA_STATUS,
     TOPIC_CMD,
     TOPIC_DIAG_PING,
+    TOPIC_GANTRY_STATUS,
     TOPIC_NANO_STATUS,
     TOPIC_STATUS,
     TOPIC_TAP,
@@ -93,8 +96,20 @@ class StationCoordinator:
         self._ack_timeout = float(unoq_cfg.get("ack_timeout_s", 2.0))
         self._retries = int(unoq_cfg.get("retries", 3))
         self._max_outbox = int(unoq_cfg.get("max_outbox", 50))
+        # A tile the UNO Q acknowledged should be reported placed (or failed) well
+        # inside this; 0 turns the check off (bench runs without a real gantry).
+        self._placed_timeout = float(unoq_cfg.get("placed_timeout_s", 180.0))
+        gantry_cfg = cfg.get("gantry") or {}
+        self._gantry_required = bool(gantry_cfg.get("required", False))
+        self._gantry_stale_s = float(gantry_cfg.get("stale_s", 6.0))
+        self._gantry_status: Optional[dict] = None
+        self._gantry_status_ts: Optional[float] = None
+        self._awaiting_placement: dict = {}  # tile_id -> ack time
 
         self._camera_stale_s = float((cfg.get("health") or {}).get("camera_stale_s", 6.0))
+        # Peer clock disagreement, from the timestamps in their heartbeats. Shown
+        # as a warning only: nothing is decided from cross-node time.
+        self._skew = SkewTracker(warn_s=float((cfg.get("health") or {}).get("clock_warn_s", 1.0)))
         nano_cfg = cfg.get("nano") or {}
         # Until the Nano exists there is nothing to be stale: not required, shown
         # as a warning only. Once it is wired, set station.nano.required: true so
@@ -132,6 +147,8 @@ class StationCoordinator:
     def start(self) -> None:
         self._bus.subscribe(CAMERA_RESULT_FILTER, self._on_camera_result)
         self._bus.subscribe(ACK_FILTER, self._on_ack)
+        self._bus.subscribe(PLACED_FILTER, self._on_placed)
+        self._bus.subscribe(TOPIC_GANTRY_STATUS, self._on_gantry_status)
         self._bus.subscribe(TOPIC_CAMERA_STATUS, self._on_camera_status)
         self._bus.subscribe(TOPIC_CMD, self._on_cmd)
         self._bus.subscribe(TOPIC_TAP, self._on_tap_topic)
@@ -389,6 +406,10 @@ class StationCoordinator:
                 self._alarm("unoq_rejected", f"UNO Q rejected the final for {tile_id}: {reason}", tile_id)
             else:
                 self._store.upsert(tile_id, now, delivery="acked", ack_ts=now)
+                if status != "duplicate" and self._placed_timeout > 0 and tile_id not in self._awaiting_placement:
+                    self._awaiting_placement[tile_id] = now
+                    while len(self._awaiting_placement) > 500:
+                        self._awaiting_placement.pop(next(iter(self._awaiting_placement)))
             if self._inflight is not None and self._inflight["tile_id"] == tile_id:
                 self._inflight = None
                 if self._link_down:
@@ -415,6 +436,7 @@ class StationCoordinator:
                 )
                 self._finalize(entry, decision, now, timed_out=True)
             self._pump(now)
+            self._check_placements(now)
             if now - self._last_heartbeat >= self._heartbeat_s:
                 self._last_heartbeat = now
                 snap = self._snapshot_locked(now, recent=0)
@@ -435,6 +457,8 @@ class StationCoordinator:
         with self._lock:
             self._camera_status = data if isinstance(data, dict) else None
             self._camera_status_ts = self._clock()
+            if isinstance(data, dict):
+                self._skew.observe("camera", data.get("ts"), self._camera_status_ts)
 
     def _on_diag_ping(self, topic: str, payload: bytes) -> None:
         try:
@@ -462,6 +486,64 @@ class StationCoordinator:
             },
             qos=0,
         )
+
+    def _on_placed(self, topic: str, payload: bytes) -> None:
+        """The UNO Q's report on one tile: placed on a stack, or the pick failed."""
+        tile_id = tile_id_from_topic(topic)
+        if tile_id is None:
+            return
+        now = self._clock()
+        try:
+            body = json.loads(payload)
+            if not isinstance(body, dict):
+                raise ValueError("payload is not a JSON object")
+        except ValueError as exc:
+            with self._lock:
+                self._counters["bad_messages"] += 1
+                self._alarm("bad_message", f"unreadable placement report for {tile_id}: {exc}", tile_id)
+            return
+        outcome = "placed" if body.get("outcome") == "placed" else "failed"
+        key = "placed" if outcome == "placed" else "pick_failed"
+        with self._lock:
+            self._awaiting_placement.pop(tile_id, None)
+            self._counters[key] = self._counters.get(key, 0) + 1
+            self._store.upsert(
+                tile_id, now, placement=outcome, placement_reason=body.get("reason"),
+                tile_in_cup=body.get("tile_in_cup"), placed_ts=now,
+            )
+            # A failed pick is already announced on machine/alarm by the gantry;
+            # it is recorded here and shown in the tile's row, not raised twice.
+            if outcome == "failed":
+                self._event(f"{tile_id}: pick failed ({body.get('reason') or 'no reason given'})")
+
+    def _check_placements(self, now: float) -> None:
+        """A tile the UNO Q acknowledged but never reported on is a tile nobody
+        knows the fate of. Raised once, then forgotten (the row says 'overdue')."""
+        if self._placed_timeout <= 0 or not self._awaiting_placement:
+            return
+        for tile_id, ack_ts in list(self._awaiting_placement.items()):
+            if now - ack_ts < self._placed_timeout:
+                continue
+            del self._awaiting_placement[tile_id]
+            self._counters["overdue"] = self._counters.get("overdue", 0) + 1
+            self._store.upsert(tile_id, now, placement="overdue")
+            self._alarm(
+                "not_placed",
+                f"{tile_id} was acknowledged by the UNO Q but not reported placed within "
+                f"{self._placed_timeout:g} s",
+                tile_id,
+            )
+
+    def _on_gantry_status(self, topic: str, payload: bytes) -> None:
+        try:
+            data = json.loads(payload)
+        except ValueError:
+            return
+        with self._lock:
+            self._gantry_status = data if isinstance(data, dict) else None
+            self._gantry_status_ts = self._clock()
+            if isinstance(data, dict):
+                self._skew.observe("gantry", data.get("ts"), self._gantry_status_ts)
 
     def _on_nano_status(self, topic: str, payload: bytes) -> None:
         try:
@@ -558,6 +640,22 @@ class StationCoordinator:
             h["nano"] = {"level": miss, "detail": "Nano not answering on serial"}
         else:
             h["nano"] = {"level": OK, "detail": f"belt {self._nano_status.get('belt_pct', '?')} %"}
+        miss = FAIL if self._gantry_required else WARN
+        g = self._gantry_status or {}
+        if self._gantry_status_ts is None:
+            h["gantry"] = {"level": miss, "detail": "no status from the gantry yet"}
+        elif now - self._gantry_status_ts > self._gantry_stale_s:
+            h["gantry"] = {"level": miss, "detail": f"silent for {now - self._gantry_status_ts:.0f} s"}
+        elif g.get("state") == "offline":
+            h["gantry"] = {"level": miss, "detail": "gantry service went offline"}
+        elif g.get("level") == "fail":
+            why = g.get("alarm") or g.get("fault") or ("MCU link down" if g.get("link") is False else "fault")
+            h["gantry"] = {"level": FAIL, "detail": f"needs a person: {why}"}
+        elif g.get("level") == "warn":
+            why = "paused" if g.get("paused") else ("not homed" if g.get("homed") is False else "check the gantry")
+            h["gantry"] = {"level": WARN, "detail": why}
+        else:
+            h["gantry"] = {"level": OK, "detail": f"{g.get('completed', 0)} placed, queue {g.get('queue_depth', 0)}"}
         if not self._require_ack:
             h["unoq"] = {"level": WARN, "detail": "acknowledgement not required (bench mode)"}
         elif self._link_down:
@@ -568,6 +666,9 @@ class StationCoordinator:
             h["unoq"] = {"level": WARN, "detail": "nothing acknowledged yet"}
         else:
             h["unoq"] = {"level": OK, "detail": f"last ack {now - self._last_ack_ts:.0f} s ago"}
+        clock = self._skew.health(now)
+        if clock is not None:
+            h["clock"] = clock
         return h
 
     def _snapshot_locked(self, now: float, recent: int = 15) -> dict:
@@ -599,6 +700,8 @@ class StationCoordinator:
             "last_final": dict(self._last_final) if self._last_final else None,
             "alarms": list(self._alarms)[:20],
             "outbox_depth": len(self._outbox) + (1 if self._inflight else 0),
+            "gantry": dict(self._gantry_status) if self._gantry_status else None,
+            "awaiting_placement": len(self._awaiting_placement),
             "settings": {
                 "vote_enabled": self._vote_enabled,
                 "hold_all": self._hold_all,

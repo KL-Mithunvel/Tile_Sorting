@@ -175,4 +175,29 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
             return jsonify(ok=False, error="enabled must be true or false"), 400
         return _send("station/strike", {"enabled": enabled})
 
+    GANTRY_CMDS = ("pause", "resume", "acknowledge", "reset_stack", "home", "recover")
+
+    @app.route("/api/command/gantry", methods=["POST"])
+    def cmd_gantry():
+        """pause / resume / acknowledge / reset_stack are harmless; home / recover
+        MOVE the gantry, so they need `"confirm": true` here and
+        `gantry.station.motion_commands_enabled` on the UNO Q (checked there)."""
+        denied = _guard()
+        if denied:
+            return denied
+        body = _body()
+        name = body.get("cmd")
+        if name not in GANTRY_CMDS:
+            return jsonify(ok=False, error=f"cmd must be one of {list(GANTRY_CMDS)}"), 400
+        payload = {"id": f"m-{int(clock() * 1000)}", "cmd": name}
+        if name == "reset_stack":
+            stack, count = body.get("stack"), body.get("count", 0)
+            if not isinstance(stack, str) or not stack or isinstance(count, bool) or not isinstance(count, int) \
+                    or count < 0:
+                return jsonify(ok=False, error="reset_stack needs a stack name and a non-negative integer count"), 400
+            payload.update(stack=stack, count=count)
+        if name in ("home", "recover") and body.get("confirm") is not True:
+            return jsonify(ok=False, error=f"{name} moves the machine: send \"confirm\": true"), 400
+        return _send("station/gantry/cmd", payload)
+
     return app

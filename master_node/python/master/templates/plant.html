@@ -188,19 +188,48 @@ let striker;
   const mic = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5, 12), mat(0x222a35)); mic.position.set(0.8, 1.6, 0.9); mic.rotation.z = 0.8; g.add(mic);
   register('acoustic', g, lamp(g, 3.5), 'ACOUSTIC', 4.4);
 }
-// pick & place gantry over the belt end
-let carriage;
+// pick & place: a Cartesian XYZ gantry on four legs. X rails sit on the legs; the Y beam
+// (driven by two motors, Y + cloned A) rides the rails in X; the carriage slides along the
+// beam in Y; the Z column with the vacuum cup moves up and down.
+const GANTRY = { cx:10.9, hw:3.7, hz:6.2, h:4.4, cupUp:2.3, cupDown:0.95, rod:2.6 };
+let gantry;
 {
-  const g = new THREE.Group(); g.position.set(ux(0.9), 0, 0);
-  const m = mat(0x4a5666);
-  for (const z of [-5.4, 5.4]) { const p = box(0.3, 3.6, 0.3, m); p.position.set(2.2, 1.8, z); g.add(p); }
-  const beam = box(0.35, 0.35, 11.2, m); beam.position.set(2.2, 3.6, 0); g.add(beam);
-  carriage = new THREE.Group(); carriage.position.set(0, 3.2, 0);
-  const car = box(0.7, 0.4, 0.7, mat(0x2d3643)); carriage.add(car);
-  const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.2, 0.2, 16), mat(0xd0d6de)); cup.position.y = -0.7; carriage.add(cup);
-  const hose = box(0.06, 0.6, 0.06, mat(0xb8c2cf)); hose.position.y = -0.35; carriage.add(hose);
-  g.add(carriage); carriage.userData.g = g;
-  register('gantry', g, lamp(g, 4.1), 'PICK & PLACE', 5.0);
+  const { cx, hw, hz, h } = GANTRY;
+  const g = new THREE.Group(); g.position.set(cx, 0, 0);
+  const steel = mat(0x4a5666), dark = mat(0x2d3643), alu = mat(0x9aa7b6, { metalness:.5, roughness:.4 });
+  const add = (m, x, y, z) => { m.position.set(x, y, z); g.add(m); return m; };
+  // four legs with foot plates, a floor frame and diagonal braces
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    add(box(0.38, h, 0.38, steel), sx * hw, h / 2, sz * hz);
+    add(box(0.9, 0.08, 0.9, dark), sx * hw, 0.04, sz * hz);
+  }
+  for (const sz of [-1, 1]) add(box(2 * hw, 0.14, 0.14, steel), 0, 0.2, sz * hz);
+  for (const sx of [-1, 1]) add(box(0.14, 0.14, 2 * hz, steel), sx * hw, 0.2, 0);
+  for (const sz of [-1, 1]) {
+    const br = box(0.1, Math.hypot(h * 0.6, 2 * hw), 0.1, dark);   // side brace in the x-y plane
+    br.position.set(0, h * 0.35, sz * hz); br.rotation.z = Math.atan2(h * 0.6, 2 * hw); g.add(br);
+  }
+  // top frame: two X rails on the legs, tied at both ends
+  const topY = h + 0.15;
+  for (const sz of [-1, 1]) add(box(2 * hw + 0.4, 0.3, 0.3, alu), 0, topY, sz * hz);
+  for (const sx of [-1, 1]) add(box(0.3, 0.3, 2 * hz, steel), sx * hw, topY, 0);
+  // Y beam: moves in X on the rails (two end trucks = the Y and A motors)
+  const beam = new THREE.Group(); beam.position.set(0, topY + 0.35, 0); g.add(beam);
+  const bar = box(0.36, 0.36, 2 * hz, steel); beam.add(bar);
+  for (const sz of [-1, 1]) {
+    const truck = box(0.7, 0.4, 0.7, dark); truck.position.set(0, -0.15, sz * hz); beam.add(truck);
+    const motor = box(0.45, 0.45, 0.45, mat(0x1d242e)); motor.position.set(0.55, 0.0, sz * hz); beam.add(motor);
+  }
+  // carriage: moves in Y along the beam
+  const carriage = new THREE.Group(); carriage.position.set(0, 0, 0); beam.add(carriage);
+  carriage.add(box(0.8, 0.55, 0.8, dark));
+  const zmotor = box(0.4, 0.4, 0.4, mat(0x1d242e)); zmotor.position.set(0, 0.5, 0); carriage.add(zmotor);
+  // Z column: a rod with the vacuum cup at its foot, moved up/down relative to the carriage
+  const zaxis = new THREE.Group(); carriage.add(zaxis);
+  const rod = new THREE.Mesh(new THREE.BoxGeometry(0.16, GANTRY.rod, 0.16), alu); rod.position.y = GANTRY.rod / 2; zaxis.add(rod);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.22, 0.2, 18), mat(0xd0d6de)); cup.position.y = -0.1; zaxis.add(cup);
+  gantry = { g, beam, carriage, zaxis, topY: topY + 0.35, x: 0, z: 0, cup: GANTRY.cupUp };
+  register('gantry', g, lamp(g, topY + 1.4), 'PICK & PLACE', topY + 2.3);
 }
 // conveyor "station" = the drive end (motor box); the belt itself is also clickable
 {
@@ -289,7 +318,7 @@ const VIEWS = {
   overview: { pos:[1, 17, 25], at:[5.5, 0, 0] },
   camera:   { pos:[ux(.25) - 7, 5, 7], at:[ux(.25), 1.6, 0] },
   acoustic: { pos:[ux(.6) - 6, 5, 7], at:[ux(.6), 1.8, 0] },
-  gantry:   { pos:[ux(.9) - 5, 7, 11], at:[ux(.9) + 2, 1.5, 0] },
+  gantry:   { pos:[GANTRY.cx - 8, 9, 13], at:[GANTRY.cx, 2, 0] },
   bins:     { pos:[7, 9, 11], at:[12, 0.5, 0] },
   pi:       { pos:[ux(.45) - 4, 4, 2], at:[ux(.45), 1.2, -5.2] },
   conveyor: { pos:[BELT_X0 - 7, 5, 6], at:[BELT_X0, 0.8, 0] },
@@ -301,7 +330,8 @@ function flyTo(name) {
             p1:new THREE.Vector3(...v.pos), a1:new THREE.Vector3(...v.at) };
 }
 document.querySelectorAll('#views button').forEach(b => b.onclick = () => flyTo(b.dataset.v));
-camera.position.set(...VIEWS.overview.pos); controls.target.set(...VIEWS.overview.at);
+{ const v = VIEWS[location.hash.slice(1)] || VIEWS.overview;   // e.g. /#gantry opens on that view
+  camera.position.set(...v.pos); controls.target.set(...v.at); }
 
 // pick a station by clicking in the scene (ignore drags)
 const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let down = null;
@@ -353,12 +383,24 @@ function frame() {
     striker.position.y = p < .5 ? 2.9 - 1.5 * (p / .5) : 1.4 + 1.5 * ((p - .5) / .5);
     if (p >= 1) { strikeT = 0; striker.position.y = 2.9; }
   }
-  // carriage follows the tile being picked, else goes home
-  let goal = new THREE.Vector3(0, 3.2, 0);
-  for (const t of (plant ? plant.tiles : [])) if (t.stage === 'sorted' && t.u >= 0.87 && t.u < 1) {
-    const o = tiles.get(t.tile_id); if (o) { goal.set(o.mesh.position.x - carriage.userData.g.position.x, 3.2, o.mesh.position.z); break; }
+  // gantry: beam to the tile's X, carriage to its Y, then the cup goes down; otherwise home, raised
+  {
+    const G = GANTRY; let gx = -G.hw + 1.4, gz = 0, down = false;
+    for (const t of (plant ? plant.tiles : [])) if (t.stage === 'sorted' && t.u >= 0.87 && t.u < 1) {
+      const o = tiles.get(t.tile_id);
+      if (o) {
+        gx = Math.max(-G.hw + 0.6, Math.min(G.hw - 0.6, o.mesh.position.x - G.cx)); gz = o.mesh.position.z;
+        down = Math.abs(gantry.x - gx) < 0.5 && Math.abs(gantry.z - gz) < 0.5;
+        break;
+      }
+    }
+    const k = 1 - Math.exp(-2.6 * dt);
+    gantry.x += (gx - gantry.x) * k; gantry.z += (gz - gantry.z) * k;
+    gantry.cup += ((down ? G.cupDown : G.cupUp) - gantry.cup) * k;
+    gantry.beam.position.x = gantry.x;
+    gantry.carriage.position.z = gantry.z;
+    gantry.zaxis.position.y = gantry.cup - gantry.topY;   // cup height above the floor, relative to the beam
   }
-  carriage.position.lerp(goal, 1 - Math.exp(-3 * dt));
 
   controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame);
 }

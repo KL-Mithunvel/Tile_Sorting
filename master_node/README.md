@@ -38,8 +38,9 @@ touches `data/master/master.db`. Everything it shows is synthetic.
 station until it has reported), not measured. "Start/Stop belt" only sends a belt
 percent to the Nano; there is no whole-line start/stop message in the contract yet.
 All four views are built; Phase 2 adaptive grading (AI_Software_Novelty.md Idea B) is not started.
-Checked in headless Edge at 1500 px only; the page JS has no automated tests, and
-clicking a station / the camera fly-to were not exercised.
+Page JS is checked by `development/drive_master_pages.py` (real headless Edge against a demo master;
+not part of pytest): load errors, station select, view buttons, belt/hold-all, window switches. Not
+covered: clicking a station inside the 3D canvas, hover tooltips.
 
 Status: built and unit-tested on the dev laptop (79 tests), page rendered against seeded
 data; **never connected to a real broker**. The page is unauthenticated; the commands

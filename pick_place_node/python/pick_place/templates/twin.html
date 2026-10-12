@@ -103,6 +103,14 @@
       <div class="panel" id="job-panel">
         <h2>Current job <span class="tag muted" id="job-tag"></span></h2>
         <div id="job-body" class="muted">No station connected.</div>
+        <div id="runner-ctl" style="display:none; margin-top:0.5rem">
+          <div class="btn-row">
+            <button id="act-home">Home all</button>
+            <button id="act-recover">Clear alarm + re-home</button>
+            <button id="act-ack">Acknowledge</button>
+          </div>
+          <div id="act-msg" class="warn"></div>
+        </div>
       </div>
       <div class="panel" id="stacks-panel">
         <h2>Stacks <span class="tag muted" id="stacks-tag"></span></h2>
@@ -648,6 +656,26 @@
       }
       rows.push(kv('Placed / failed', jobInfo.completed + ' / ' + jobInfo.failed));
       if (jobInfo.last_error) rows.push(el('div', 'warn', 'Last refusal: ' + jobInfo.last_error));
+      // Real-gantry state (only present with --backend sim|serial).
+      if (jobInfo.phase !== undefined) {
+        rows.push(kv('Machine', jobInfo.fsm + (jobInfo.homed ? ', homed' : ', NOT homed'),
+          jobInfo.homed ? 'ok' : 'warn'));
+        rows.push(kv('Runner', jobInfo.phase));
+        if (jobInfo.heartbeat_age_s !== null && jobInfo.heartbeat_age_s !== undefined) {
+          rows.push(kv('MCU heartbeat', jobInfo.heartbeat_age_s.toFixed(1) + ' s ago'));
+        }
+        const dev = jobInfo.deviation_mm || {};
+        const worst = Object.keys(dev).reduce((m, k) => Math.max(m, Math.abs(dev[k])), 0);
+        if (Object.keys(dev).length) {
+          rows.push(kv('Encoder deviation', Object.keys(dev).map((k) => k + ' ' + dev[k].toFixed(2)).join('  ') + ' mm',
+            worst > 0.5 ? 'warn' : ''));
+        }
+        if (!jobInfo.connected) rows.push(el('div', 'warn', 'Gantry link is DOWN.'));
+        if (jobInfo.link_error) rows.push(el('div', 'warn', 'Link: ' + jobInfo.link_error));
+        if (jobInfo.alarm) rows.push(el('div', 'warn', 'ALARM: ' + jobInfo.alarm + ' - position no longer trusted'));
+        if (jobInfo.fault) rows.push(el('div', 'warn', 'Held: ' + jobInfo.fault));
+      }
+      document.getElementById('runner-ctl').style.display = jobInfo.phase !== undefined ? 'block' : 'none';
       fill(body, rows);
     }
 
@@ -687,6 +715,8 @@
       tag.textContent = q.depth + ' waiting';
       if (feedInfo.source === 'demo') {
         status.textContent = 'Demo feed - synthetic tiles, no Pi.';
+      } else if (feedInfo.source === 'local') {
+        status.textContent = 'Local queue - no Pi attached (run with --station-host HOST).';
       } else if (feedInfo.last_message_ts) {
         const age = Math.max(0, Math.round(Date.now() / 1000 - feedInfo.last_message_ts));
         status.textContent = 'Pi station connected - last tile ' + age + ' s ago.';
@@ -723,6 +753,23 @@
       return res.json();
     }
 
+    function setupRunnerButtons() {
+      const msg = document.getElementById('act-msg');
+      const map = { 'act-home': '/api/home', 'act-recover': '/api/recover', 'act-ack': '/api/acknowledge' };
+      Object.keys(map).forEach((id) => {
+        document.getElementById(id).addEventListener('click', async () => {
+          try {
+            const res = await fetch(map[id], { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            const data = await res.json();
+            msg.textContent = res.ok ? '' : (data.error || ('HTTP ' + res.status));
+            pollInfo();
+          } catch (err) {
+            msg.textContent = 'Failed: ' + err.message;
+          }
+        });
+      });
+    }
+
     async function pollInfo() {
       try {
         const [l, j, f] = await Promise.all([getJson('/api/layout'), getJson('/api/job'), getJson('/api/feed')]);
@@ -743,6 +790,7 @@
       setupGantry(cfg.workspace, cfg);
       setupCameras();
       setupControls();
+      setupRunnerButtons();
       onResize();
       animate();
       pollStatus();

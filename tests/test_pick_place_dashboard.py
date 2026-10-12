@@ -144,3 +144,47 @@ def test_page_has_the_new_panels_and_jobs_mode():
     for needle in ('id="job-panel"', 'id="stacks-panel"', 'id="queue-panel"', 'id="setup-panel"',
                    'data-mode="jobs"', "/api/layout", "/api/job", "Conveyor end"):
         assert needle in html, needle
+
+
+# ---- runner actions: home / recover / acknowledge ----------------------------------
+
+
+def test_runner_actions_are_501_on_the_mock_driver():
+    client, _, _ = _rig()
+    for path in ("/api/home", "/api/recover", "/api/acknowledge"):
+        assert client.post(path, json={}).status_code == 501
+
+
+def test_runner_actions_drive_a_real_runner_over_the_simulated_mcu():
+    from pick_place.coordinate_model import CoordinateModel
+    from pick_place.fake_mcu import LoopbackLink, SimulatedMcu
+    from pick_place.gantry_backend import SerialGantryBackend, create_job_driver
+    from pick_place.gantry_session import GantrySession
+    from pick_place.mock_state import load_config
+    from pick_place.sequencer import Feeds
+    from pick_place.tile_feed import FeedClient
+
+    cfg = load_config()
+    mcu = SimulatedMcu(speed_mm_s=5000, honor_feed=False)
+    backend = SerialGantryBackend(GantrySession(LoopbackLink(mcu)))
+    feed = FeedClient(None)
+    model = CoordinateModel.from_config(cfg)
+    runner = create_job_driver(backend, feed.queue, model, Feeds.from_config(cfg), cfg)
+    app = create_app(SharedState(), cfg["workspace"], 0.1, backend=backend, model=model, driver=runner, feed=feed)
+    client = app.test_client()
+
+    for _ in range(20):
+        mcu.tick(0.05)
+        runner.tick()
+    assert client.post("/api/home", json={}).status_code == 200
+    for _ in range(40):
+        mcu.tick(0.05)
+        runner.tick()
+    job = client.get("/api/job").get_json()["job"]
+    assert job["homed"] is True and job["phase"] == "idle" and job["alarm"] is None
+
+    assert client.post("/api/home", json={}).status_code == 200  # idle + homed: allowed again
+    mcu.inject_alarm("ESTOP")
+    runner.tick()
+    assert client.post("/api/home", json={}).status_code == 409  # alarm latched: refused
+    assert client.get("/api/job").get_json()["job"]["alarm"] == "ESTOP"

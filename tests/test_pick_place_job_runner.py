@@ -198,6 +198,36 @@ def test_idle_ping_is_sent_and_a_dead_link_is_noticed():
     assert r.runner.status()["phase"] == "fault" and "silent" in r.runner.status()["fault"]
 
 
+# ---- our own pause is not the MCU's silence -------------------------------------------------------
+
+
+def test_a_runner_stall_does_not_blame_the_mcu():
+    """A suspend / long pause between ticks: the MCU's replies are still queued. The
+    runner must not read 100 s of its own absence as 100 s of MCU silence."""
+    r = Rig().ready()
+    r.add("T1", "bin_2")
+    r.run(0.04)
+    assert r.runner.status()["active"] is not None
+    r.t += 100.0          # the clock jumps; the MCU thread has not ticked yet
+    r.runner.tick()
+    s = r.runner.status()
+    assert s["failed"] == 0 and s["phase"] != "fault", s
+    r.run(5.0)
+    assert r.runner.status()["completed"] == 1 and r.runner.stalls == 1
+
+
+def test_a_stall_does_not_excuse_a_genuinely_silent_mcu():
+    r = Rig().ready()
+    r.add("T1", "bin_2")
+    r.run(0.04)
+    r.mcu.write = lambda line: r.mcu.received.append(line)  # now deaf
+    r.t += 100.0
+    r.runner.tick()  # rebased, not yet faulted
+    assert r.runner.status()["failed"] == 0
+    r.run(5.0)
+    assert r.runner.status()["phase"] == "fault" and r.runner.status()["failed"] == 1
+
+
 # ---- refusals / pause -------------------------------------------------------------------------
 
 

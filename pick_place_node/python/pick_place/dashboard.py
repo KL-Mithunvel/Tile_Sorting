@@ -80,6 +80,28 @@ def create_app(state: SharedState, workspace: dict, poll_interval_s: float,
             return jsonify({"error": "'on' must be true or false"}), 400
         return _command(lambda: backend.set_vacuum(body["on"]))
 
+    def _runner_action(name):
+        """Home / recover / acknowledge need a real job runner (not the mock driver)."""
+        fn = getattr(driver, name, None)
+        if fn is None:
+            return jsonify({"error": f"{name} is only available with --backend sim or serial"}), 501
+        if not fn():
+            return jsonify({"error": f"{name} refused in the current state (busy, or an alarm "
+                                     "is still latched)"}), 409
+        return jsonify(driver.status())
+
+    @app.route("/api/home", methods=["POST"])
+    def api_home():
+        return _runner_action("request_home")
+
+    @app.route("/api/recover", methods=["POST"])
+    def api_recover():
+        return _runner_action("recover")
+
+    @app.route("/api/acknowledge", methods=["POST"])
+    def api_acknowledge():
+        return _runner_action("acknowledge")
+
     @app.route("/api/mode", methods=["POST"])
     def api_mode():
         body = request.get_json(silent=True) or {}

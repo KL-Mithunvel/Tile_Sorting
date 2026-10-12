@@ -18,8 +18,7 @@ import time
 
 from pick_place.coordinate_model import CoordinateModel
 from pick_place.dashboard import create_app
-from pick_place.gantry_backend import create_backend
-from pick_place.mock_job_driver import MockJobDriver
+from pick_place.gantry_backend import create_backend, create_job_driver
 from pick_place.mock_state import load_config
 from pick_place.sequencer import Feeds
 from pick_place.tile_feed import FeedClient
@@ -58,11 +57,17 @@ def main(argv=None) -> None:
                              "mock gantry then picks each tile from the conveyor end and places it on "
                              "the stack the Pi names.")
     parser.add_argument("--station-port", type=int, default=1883)
+    parser.add_argument("--backend", choices=("mock", "sim", "serial"), default=None,
+                        help="mock = pure simulation (default, config.yaml `backend`); sim = the real line "
+                             "protocol against a simulated MCU; serial = the real UNO Q MCU over "
+                             "gantry.serial.port in config.yaml.")
     parser.add_argument("--demo", action="store_true",
                         help="No Pi: feed the queue with synthetic tiles so the stacks fill on screen.")
     parser.add_argument("--demo-interval", type=float, default=4.0, metavar="SECONDS")
     args = parser.parse_args(argv)
     config = load_config()
+    if args.backend:
+        config["backend"] = args.backend
 
     if args.demo and args.station_host:
         parser.error("--demo and --station-host are alternatives (synthetic tiles vs the real Pi)")
@@ -86,9 +91,15 @@ def main(argv=None) -> None:
         feed = FeedClient(None)  # a queue with no broker behind it
         feed_source = "demo"
 
+    if feed is None and config.get("backend", "mock") != "mock":
+        # A real (or simulated-real) gantry always has a runner so it can be homed and
+        # watched, even with no Pi attached yet.
+        feed = FeedClient(None)
+        feed_source = "local"
+
     driver = None
     if feed is not None:
-        driver = MockJobDriver(simulator, feed.queue, model, Feeds.from_config(config))
+        driver = create_job_driver(simulator, feed.queue, model, Feeds.from_config(config), config)
         simulator.set_mode("jobs")  # jog / vacuum / Auto in the page pauses the jobs
 
     worker = TwinWorker(simulator, state, tick_hz=dash_cfg["tick_hz"], driver=driver)

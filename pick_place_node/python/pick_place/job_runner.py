@@ -19,7 +19,10 @@ Safety rules this module owns (the MCU enforces its own as well):
   - An `alarm` (limit, e-stop, LOST_STEPS, SKEW_Y, link timeout) aborts the job and
     sends nothing further. `recover()` = CLEARALARM + HOME ALL, explicit.
   - A tile is counted onto a stack only after the release's `ok`.
-  - Silence is a fault: a command with no answer in time stops the machine.
+  - Silence is a fault: a command with no answer in time stops the machine. But
+    only silence the runner actually observed: if the runner itself was not ticking
+    (suspend, a long stall) the deadlines are rebased instead of blaming the MCU for
+    time it never listened.
   - When the runner is disabled (jog / manual) an in-flight command finishes, no
     new one starts, and on resume the gantry first rises to safe Z and then
     re-issues the interrupted step, so a manual move can't make it drag a tile.
@@ -51,6 +54,7 @@ class RunnerConfig:
     vacuum_timeout_s: float = 5.0    # `ok` for VAC ON (sent only after the grip is confirmed)
     motion_timeout_s: float = 60.0   # `done` for a motion that was accepted
     ping_interval_s: float = 1.0     # idle PING so the MCU's link watchdog stays happy
+    stall_s: float = 1.0             # a gap between ticks longer than this is OUR pause
     pick_retries: int = 1
 
     @classmethod
@@ -92,6 +96,8 @@ class JobRunner:
         self._completed = self._failed = 0
         self._last_ping = float("-inf")
         self._ping_seq: Optional[int] = None
+        self._last_step_ts: Optional[float] = None
+        self.stalls = 0
         self._link_error: Optional[str] = None
 
     # ---- operator actions ---------------------------------------------------
@@ -148,6 +154,9 @@ class JobRunner:
 
     def _step(self) -> None:
         now = self._clock()
+        if self._last_step_ts is not None and now - self._last_step_ts > self._cfg.stall_s:
+            self._rebase(now - self._last_step_ts)
+        self._last_step_ts = now
         recovering = self._active is not None and self._active.kind == SERVICE and self._active.name == "recover"
         if self._s.alarm is not None and not recovering:
             if self._active is not None or self._phase != FAULT:
@@ -175,6 +184,15 @@ class JobRunner:
         if self._ping_seq is None and now - self._last_ping >= self._cfg.ping_interval_s:
             self._last_ping = now
             self._ping_seq = self._s.send(protocol.ping())
+
+    def _rebase(self, gap_s: float) -> None:
+        """The runner was not running for `gap_s`: whatever the MCU did in that time is
+        still queued for the next pump, so give every wait the time it never had."""
+        self.stalls += 1
+        log.warning("gantry runner was not ticking for %.1f s; rebasing deadlines", gap_s)
+        if self._active is not None:
+            self._active.deadline += gap_s
+        self._ping_seq = None
 
     # ---- running a command list ---------------------------------------------------
 

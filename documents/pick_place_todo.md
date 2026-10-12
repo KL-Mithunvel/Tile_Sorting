@@ -181,28 +181,28 @@ the sketch, `Bridge.call("fn", args)` from Python (example on the board at
 
 ## Phase 1 — Linux side, against real firmware over USB serial
 
-### 1.1 `pick_place/protocol.py` (pure)  **[SW/Claude]**
+### 1.1 `pick_place/protocol.py` (pure)  **[SW/Claude]**  — done 2026-10-12
 
-- [ ] Encode each command type → exact wire line.
-- [ ] Parse each response/telemetry line → typed event (`Ok`, `Err`, `Done`, `Pos`, `State`, `Alarm`, `Heartbeat`, `Log`).
-- [ ] `tests/test_pick_place_protocol.py`: round-trip every command; parse every response variant; malformed lines → a `Log`/`Unknown` event, never a crash.
+- [x] Encode each command type → exact wire line.
+- [x] Parse each response/telemetry line → typed event (`Ok`, `Err`, `Done`, `Pos`, `State`, `Alarm`, `Heartbeat`, `Log`).
+- [x] `tests/test_pick_place_protocol.py`: round-trip every command; parse every response variant; malformed lines → a `Log`/`Unknown` event, never a crash.
 
 ### 1.2 `pick_place/coordinate_model.py` + `pick_place/sequencer.py` (pure)  **[SW/Claude]**
 
-- [ ] `coordinate_model.py`: named-location table + stack state (`place_height(stack)`, `record_placed(stack)`), from `config.yaml`.
-- [ ] `sequencer.py`: `plan_pick_place(source, dest, model) -> list[Command]` — safe-Z first, XY over source, descend, `VAC ON`, lift, XY over dest, descend to current stack height, `VAC OFF`, retract.
-- [ ] `tests/test_pick_place_coordinate_model.py`: stack height increments by tile thickness each place; caps at `max_height`.
-- [ ] `tests/test_pick_place_sequencer.py`: correct command list for each destination; retry-branch shape on a simulated `VACUUM_TIMEOUT`; never emits a move outside the envelope.
+- [x] `coordinate_model.py` *(done 2026-10-12)*: named-location table + stack state (`place_height(stack)`, `record_placed(stack)`), from `config.yaml`.
+- [x] `sequencer.py` *(done 2026-10-12)*: `plan_pick_place(source, dest, model) -> list[Command]` — safe-Z first, XY over source, descend, `VAC ON`, lift, XY over dest, descend to current stack height, `VAC OFF`, retract.
+- [x] `tests/test_pick_place_coordinate_model.py`: stack height increments by tile thickness each place; caps at `max_height`.
+- [x] `tests/test_pick_place_sequencer.py`: correct command list for each destination; retry-branch shape on a simulated `VACUUM_TIMEOUT`; never emits a move outside the envelope.
 
 ### 1.3 `pick_place/gantry_backend.py` — `SerialGantryBackend` (HW wrapper)  **[SW/Claude]**
 
-- [ ] pyserial wrapper: write a line, read lines on a reader thread, publish parsed events on a queue. `GantryBackend` ABC so `bridge_backend.py` can slot in later.
-- [ ] Smoke test against the real firmware: connect, `PING` → `ok`, `GETSTATE` → `state ...`.
+- [x] pyserial wrapper: write a line, read lines on a reader thread (`serial_link.py`), session + `SerialGantryBackend` on top. *(done 2026-10-12, fake-port tests only)*
+- [ ] Smoke test against the real firmware: connect, `PING` → `ok`, `GETSTATE` → `state ...`. *(needs the firmware; `python -m pick_place.twin_prototype --backend serial`)*
 
 ### 1.4 `pick_place/job_runner.py`  **[SW/Claude]**
 
-- [ ] Drive a `sequencer` plan against a `GantryBackend`: send one command, await its `done`/`err`, advance; on `err VACUUM_TIMEOUT` retry the pick once, else park at safe Z and report failure.
-- [ ] `tests/test_pick_place_job_runner.py` against an in-memory fake backend: happy path; pick fails once then succeeds; pick fails twice → failure result + safe park; `alarm` mid-job → abort + surface.
+- [x] *(done 2026-10-12, against `GantrySession`)* Drive a `sequencer` plan: send one command, await its `done`/`err`, advance; on `err VACUUM_TIMEOUT` retry the pick once, else park at safe Z and report failure.
+- [x] `tests/test_pick_place_job_runner.py` against `SimulatedMcu`: happy path; pick fails once then succeeds; pick fails twice → failure result + safe park; `alarm` mid-job → abort + surface.
 
 ### 1.5 `worker.py` + `config.yaml` integration  **[SW/Claude]**
 

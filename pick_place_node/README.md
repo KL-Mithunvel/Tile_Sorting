@@ -22,13 +22,26 @@ about App Lab not yet being verified on real hardware.
 | `tile_feed.py` | Receives the Pi's finals (`destination`, optional `source`), FIFO, de-dup, ack |
 | `mock_state.py`, `worker.py`, `dashboard.py`, `twin_prototype.py` | Digital-twin HMI on a mock gantry |
 | `mock_job_driver.py` | Mock stand-in for the job runner: takes queued tiles, plans them with the real sequencer, drives the mock gantry, updates real stack counts |
+| `gantry_session.py` | One conversation with the MCU: numbered commands, outcomes, latched alarms, position/state |
+| `job_runner.py` | Runs queued tiles on the real (or simulated) gantry: retry a vacuum miss, park safely, abort on alarm, silence = fault, explicit home / recover / acknowledge |
+| `serial_link.py` | pyserial transport + reader thread (never run on the board) |
+| `fake_mcu.py` | `SimulatedMcu`: the protocol's executable spec; the firmware must behave the same |
+| `gantry_backend.py` | `mock` / `sim` / `serial` backends for the twin; `create_job_driver` |
 
 **Run the twin with tiles flowing** (from `pick_place_node/python/`): 
 
 ```bash
 python -m pick_place.twin_prototype --demo                    # synthetic tiles, no Pi
 python -m pick_place.twin_prototype --station-host <PI_IP>    # the Pi's real finals
+python -m pick_place.twin_prototype --backend sim --demo      # the REAL protocol + job runner
+                                                              #   against a simulated MCU
+python -m pick_place.twin_prototype --backend serial          # the real UNO Q (gantry.serial in
+                                                              #   config.yaml; never run yet)
 ```
+
+With `--backend sim|serial` nothing moves until you press **Home all** in the page: homing
+is always explicit. After an alarm use **Clear alarm + re-home**; after a held fault (a
+tile that may be in the cup) remove the tile, then **Acknowledge**.
 
 The page (port 5050) shows the conveyor end (pickup), the four stacks with live
 counts, the current job (tile, grade, from -> to, step n/9, command, gripped or not),
@@ -38,9 +51,9 @@ pauses the job where it is. Motion is simulated; the plan, stack heights and cou
 the real ones.
 
 **Not built:** the MCU firmware (`sketch/sketch.ino` is an empty stub — step generation,
-homing, limits, e-stop, encoders, the line parser), `job_runner.py`, a serial backend
-(`gantry_backend.py` is only the seam; its `serial` branch raises), and the sequencer
-consumer of `FinalQueue`. `python/main.py` is still an App Lab stub.
+homing, limits, e-stop, encoders, the line parser). `SerialGantryLink` has never touched
+the board. `python/main.py` is still an App Lab stub. Everything above is tested against
+`SimulatedMcu`, not hardware.
 
 Layout of the line: the **conveyor** delivers each tile to one fixed pickup point
 (`locations.pickup`); the gantry places it on one of **four separate stacks**

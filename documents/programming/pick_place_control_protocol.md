@@ -147,7 +147,7 @@ Format: `<seq> <VERB> [args...]`, `seq` a monotonically increasing integer.
 | `<seq> HOME ALL` / `HOME X` / `HOME Y` / `HOME Z` | Run the homing cycle. |
 | `<seq> MOVE X<mm> Y<mm> Z<mm> F<mm_per_min>` | Absolute linear move. Any axis omitted holds. Rejected if not homed or target outside envelope. |
 | `<seq> JOG <axis><±mm> F<mm_per_min>` | Relative single-axis move (jog button). |
-| `<seq> VAC ON` / `VAC OFF` | Switch the vacuum cup; `VAC ON` waits for the confirm sensor. |
+| `<seq> VAC ON` / `VAC OFF` | Switch the vacuum cup. **`VAC ON` is answered only once the confirm sensor has seen the grip:** its `ok` *is* the confirmation and `err <seq> VACUUM_TIMEOUT` is the miss (there is no separate "pump started" `ok`). `VAC OFF` answers `ok` immediately. |
 | `<seq> STOP` | Controlled decel to a stop and hold. Does **not** clear position or require re-home. |
 | `<seq> GETPOS` | Request an immediate `pos` line. |
 | `<seq> GETSTATE` | Request an immediate `state` line. |
@@ -160,7 +160,7 @@ Format: `<seq> <VERB> [args...]`, `seq` a monotonically increasing integer.
 | Line | Meaning |
 |---|---|
 | `ok <seq>` | Command accepted and started. |
-| `err <seq> <REASON>` | Command rejected or failed. Reasons: `BAD_CMD`, `NOT_HOMED`, `OUT_OF_BOUNDS`, `BUSY`, `VACUUM_TIMEOUT`, `ALARM_ACTIVE`. |
+| `err <seq> <REASON>` | Command rejected or failed. Reasons: `BAD_CMD`, `NOT_HOMED`, `OUT_OF_BOUNDS`, `BUSY`, `VACUUM_TIMEOUT`, `ALARM_ACTIVE`, `STOPPED` (a motion cancelled by `STOP` or an alarm: it gets this *instead of* `done`). |
 | `done <seq> X<mm> Y<mm> Z<mm>` | A motion command (`MOVE`/`JOG`/`HOME`) finished; final position given. |
 | `pos X<mm> Y<mm> Z<mm>` | Position report. ~10–20 Hz while moving, on request otherwise. |
 | `state <FSM> VAC=<0/1> HOMED=<0/1>` | Machine-state report. On change and on request. |
@@ -232,6 +232,22 @@ Rules for the firmware (not written yet):
 
 Linux side: `protocol.Pos.deviation()` returns measured − commanded per motor for the HMI.
 
+### 5.7 Executable spec: `fake_mcu.py` (added 2026-10-12)
+
+`pick_place/fake_mcu.py` (`SimulatedMcu`) implements §5.2–§5.6 at line level and is what
+the job runner is tested against. **The firmware must behave the same way.** The
+behaviours the tests pin down:
+
+- every command gets an immediate `ok <seq>` / `err <seq> <REASON>`; HOME/MOVE/JOG get a later `done`
+- one motion at a time (`BUSY`); `NOT_HOMED` before homing; `OUT_OF_BOUNDS` against `SETENV`
+- a latched alarm refuses everything except `PING`, `STOP`, `GETPOS`, `GETSTATE`,
+  `CLEARALARM` (and `VAC OFF`) with `ALARM_ACTIVE`; `CLEARALARM` clears it but leaves `HOMED=0`
+- an alarm cancels the motion in flight with `err <seq> STOPPED`, then emits `alarm <reason>`
+- `state ALARM` while latched; the Linux side treats any other FSM state as "latch gone"
+- `done` carries the final X/Y/Z (the Linux side shows it even if no further `pos` was sent)
+- closed loop: |encoder − commanded| > `LOST` gives `alarm LOST_STEPS_<axis>`;
+  |A − Y| > `SKEW` gives `alarm SKEW_Y`
+
 ---
 
 ## 6. Python module plan
@@ -244,10 +260,13 @@ synthetic-input-testable. Under `pick_place_node/python/pick_place/`:
 | `protocol.py` | pure | Encode commands → lines; parse lines → typed events (`Ok`, `Err`, `Done`, `Pos`, `State`, `Alarm`, `Heartbeat`, `Log`). No I/O. | `tests/test_pick_place_protocol.py`, synthetic strings |
 | `sequencer.py` | pure | `plan_pick_place(source, dest, coord_model, stacks) -> list[Command]`. Includes safe-Z ordering, stack-height math, retry-branch shape. No I/O. | `tests/test_pick_place_sequencer.py`, synthetic locations |
 | `coordinate_model.py` | pure | Named-location table + stack state (`place_height(stack)`, `record_placed(stack)`), loaded from `config.yaml`. | `tests/test_pick_place_coordinate_model.py` |
-| `gantry_backend.py` | HW wrapper | `GantryBackend` ABC + `SerialGantryBackend` (pyserial: write line, read lines, surface parsed events on a queue). Mirrors `camera/capture.py`. | smoke test only |
+| `gantry_session.py` | pure | One conversation with the MCU: numbered commands out, parsed events in, per-command outcome, latched alarm, last position/state. Sole reader of the link, so the HMI and the runner never steal each other's replies. | `tests/test_pick_place_gantry_link.py` |
+| `serial_link.py` | HW wrapper | `SerialGantryLink`: pyserial + reader thread, `LinkError` on any failure. Never run on the board. | fake-port tests only |
+| `fake_mcu.py` | pure | `SimulatedMcu` + `LoopbackLink`: the protocol's executable spec (§5.7). | used by the runner tests |
+| `gantry_backend.py` | HW wrapper | `GantryBackend` (the twin's seam) + `SerialGantryBackend` over a session; `create_backend` = `mock` / `sim` / `serial`; `create_job_driver`. | `tests/test_pick_place_gantry_link.py` |
 | `bridge_backend.py` | HW wrapper | `BridgeGantryBackend` — same interface, App Bricks bridge transport. Added in Phase 2. | smoke test only |
 | `worker.py` (extend) | HW wrapper | `GantryWorker` gains a real backend path alongside `MockGantrySimulator`, selected by `config.yaml`. Publishes into the existing `SharedState`. | not unit-tested |
-| `job_runner.py` | pure-ish | Drives a `sequencer` plan against a `GantryBackend`: send, await `done`/`err`, advance, handle retry/park. Logic testable against a fake in-memory backend. | `tests/test_pick_place_job_runner.py` with a fake backend |
+| `job_runner.py` | pure-ish | Drives queued tiles against a `GantrySession`: send, await `ok`/`done`/`err`, advance; retry a vacuum miss once, park only with nothing in the cup, abort on alarm, silence = fault, resume via safe Z. Explicit `request_home()` / `recover()` / `acknowledge()`. | `tests/test_pick_place_job_runner.py` against `SimulatedMcu` |
 
 `main.py` (App Lab entry point) stays a stub until Phase 2 task 2.2.
 

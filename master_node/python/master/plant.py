@@ -82,6 +82,11 @@ def _stations(snap: dict) -> list[dict]:
     return out
 
 
+def stations_from_snapshot(snap: dict) -> list[dict]:
+    """Per-station level + detail, as the 3D view and the health history use it."""
+    return _stations(snap)
+
+
 def build_plant(snap: dict, now: float) -> dict:
     station = snap.get("station") or {}
     silent = not station or _silent(snap.get("station_age_s"))

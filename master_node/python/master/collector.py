@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS alarms (
     message TEXT,
     tile_id TEXT
 );
+CREATE TABLE IF NOT EXISTS health_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    station TEXT NOT NULL,
+    level TEXT NOT NULL,
+    detail TEXT
+);
 """
 
 _LEAF_TO_COLUMN = {"camera/result": "camera_json", "acoustic/result": "acoustic_json", "final": "final_json"}
@@ -67,6 +74,7 @@ class MasterCollector:
         self.nano_status: Optional[dict] = None
         self.nano_status_ts: Optional[float] = None
         self.alarms: deque = deque(maxlen=100)
+        self._last_level: dict[str, str] = {}
         self.counters = {"messages": 0, "bad_messages": 0}
 
     # ---- input -------------------------------------------------------------
@@ -195,6 +203,51 @@ class MasterCollector:
             q, args = q + " WHERE ts >= ?", (since_ts,)
         with self._lock:
             rows = self._db.execute(q + " ORDER BY ts", args).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- health history ----------------------------------------------------
+
+    def tick(self, now: Optional[float] = None, broker_connected: Optional[bool] = None) -> None:
+        """Log a row whenever a station's LEVEL changes (not its detail text,
+        which changes every second). Needs calling regularly - a station that
+        goes silent sends no message that would otherwise record it.
+
+        `broker_connected` is this master's own link to the broker; when given
+        it is logged as station "master" so a gap in the record can be told
+        apart from "the line was fine" - while the master cannot hear the broker
+        every other station reads offline and means nothing."""
+        from master.plant import stations_from_snapshot
+
+        now = self._clock() if now is None else now
+        snap = self.snapshot(now=now, recent=0)
+        levels = {s["id"]: (s["level"], s["detail"]) for s in stations_from_snapshot(snap)}
+        if broker_connected is not None:
+            levels["master"] = ("ok", "connected to the broker") if broker_connected else (
+                "fail", "not connected to the broker")
+        with self._lock:
+            for station, (level, detail) in levels.items():
+                if self._last_level.get(station) != level:
+                    self._last_level[station] = level
+                    self._db.execute(
+                        "INSERT INTO health_events (ts, station, level, detail) VALUES (?,?,?,?)",
+                        (now, station, level, detail))
+            self._db.commit()
+
+    def health_events(self, since_ts: Optional[float] = None) -> list[dict]:
+        """Level changes since `since_ts`, plus, per station, the last change
+        BEFORE it (so a timeline knows what the level was when the window opened)."""
+        with self._lock:
+            if since_ts is None:
+                rows = self._db.execute("SELECT ts, station, level, detail FROM health_events ORDER BY ts, id").fetchall()
+            else:
+                rows = self._db.execute(
+                    "SELECT ts, station, level, detail FROM health_events WHERE ts >= ? ORDER BY ts, id", (since_ts,)
+                ).fetchall()
+                prior = self._db.execute(
+                    "SELECT h.ts, h.station, h.level, h.detail FROM health_events h "
+                    "JOIN (SELECT station, MAX(id) AS mid FROM health_events WHERE ts < ? GROUP BY station) m "
+                    "ON h.id = m.mid", (since_ts,)).fetchall()
+                rows = list(prior) + list(rows)
         return [dict(r) for r in rows]
 
     def tally(self) -> dict:

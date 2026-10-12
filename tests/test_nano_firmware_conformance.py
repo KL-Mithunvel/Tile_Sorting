@@ -415,3 +415,35 @@ def test_python_and_c_checksums_are_the_same_function():
     # Cheap guard that tap_protocol.checksum is a plain XOR (what the C++ computes).
     assert checksum("BELT 55") == 0x3F
     assert encode("BELT 55") == b"BELT 55*3F\n"
+
+
+def test_nano_announces_when_the_pi_is_back_after_a_watchdog_trip(nano):
+    enable(nano, belt=70)
+    nano.advance(2300)                              # trip
+    assert nano.pins["belt"] == 0
+    out = nano.rx(encode_ping(1))                   # first valid line afterwards
+    assert [m for m in of(out, "err") if m["code"] == "WDOGRESET"]
+    out = nano.rx(encode_ping(2))                   # only once
+    assert not [m for m in of(out, "err") if m["code"] == "WDOGRESET"]
+    assert nano.pins["belt"] == 0                   # still nothing restarted by itself
+
+
+def test_bridge_resend_restarts_the_belt_after_a_trip_end_to_end(nano):
+    bus = InMemoryBus()
+    ser = FakeSerial()
+    bridge = TapBridge(ser, bus, clock=lambda: 100.0, resend_on_recover=True)
+    bridge._on_belt("station/belt", b'{"percent": 55}')
+    bridge._on_strike("station/strike", b'{"enabled": true}')
+    for data in ser.written:
+        nano.rx(data)
+    ser.written.clear()
+    nano.advance(100)
+    assert nano.pins["belt"] == 55 and nano.pins["strike"] == 1
+    nano.advance(2300)                              # the bridge process died
+    assert nano.pins["belt"] == 0 and nano.pins["strike"] == 0
+    for line in nano.rx(encode_ping(1)):            # it comes back and pings
+        bridge.handle_line(line, 101.0)
+    for data in ser.written:                        # ...and the bridge re-sends
+        nano.rx(data)
+    nano.advance(100)
+    assert nano.pins["belt"] == 55 and nano.pins["strike"] == 1

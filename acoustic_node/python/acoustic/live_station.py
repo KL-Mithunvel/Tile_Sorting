@@ -133,6 +133,7 @@ def main(argv=None) -> None:
                 ser, bus,
                 ping_s=float(nano_cfg.get("ping_s", 0.5)),
                 stale_s=float(nano_cfg.get("stale_s", 3.0)),
+                resend_on_recover=bool(nano_cfg.get("resend_on_recover", False)),
             )
             bridge.start()
             print(f"Nano bridge on {nano_cfg['port']} @ {nano_cfg.get('baud', 115200)}.")

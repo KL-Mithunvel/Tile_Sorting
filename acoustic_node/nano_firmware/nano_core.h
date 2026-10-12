@@ -147,6 +147,7 @@ class Core {
       link_alive_ = false;
       belt_cmd_ = 0;            // and it stays 0 until a fresh BELT
       strike_enabled_ = false;  // and inhibited until a fresh STRIKE 1
+      tripped_ = true;
       sendErr("WATCHDOG", "no valid line from the Pi, belt stopped");
     }
 
@@ -325,6 +326,13 @@ class Core {
   void markValid() {
     last_valid_ = h_.nowMs();
     link_alive_ = true;
+    if (tripped_) {
+      // The Pi is back but nothing restarts by itself. The WATCHDOG error above
+      // was probably never delivered (the Pi was gone), so say it again now: it
+      // is what lets the bridge re-send the last BELT / STRIKE if it is set to.
+      tripped_ = false;
+      sendErr("WDOGRESET", "Pi is back; belt and striker need a fresh command");
+    }
   }
 
   // ---- ToF ------------------------------------------------------------------------
@@ -451,6 +459,7 @@ class Core {
   uint8_t belt_cmd_ = 0;
   uint8_t belt_applied_ = 0;
   bool strike_enabled_ = false;
+  bool tripped_ = false;  // the watchdog stopped things and no valid line has arrived since
 
   Tof striker_, end_;
   uint32_t next_hb_ = 0;

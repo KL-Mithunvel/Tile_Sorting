@@ -364,12 +364,11 @@ Still open / not yet decided:
 * Mechanical lift/latch hardware itself — the wiring doc's mechanism diagram is a
   conceptual placeholder pending real CAD.
 
-This changes the tapping actuator described in §8.4 (Actuators), and touches every other
-place in this charter that assumes a solenoid directly striking the tile (§17 Safety,
-§19 Prototype Build Plan, §20 BOM, §25 Conclusion). Those sections have not been rewritten
-yet — treat "solenoid hammer" elsewhere in this document as the background/alternative
-mechanism until the ball-drop design is finalized and those sections are reconciled (see
-`TODO.md`).
+This changes the tapping actuator described in §8.4 (Actuators). The sections that assumed
+a solenoid directly striking the tile (§16 step 12, §17 Safety, §19 Prototype Build Plan,
+§20 BOM, §24 Prototype Configuration, §25 Conclusion) were reconciled with the ball-drop
+decision on 2026-10-12. The push-pull solenoid text elsewhere (§6.2 "Recommended Tapping
+Mechanism", §7.3, §8.4) is kept as background/alternative rationale.
 
 ### Recommended Tapping Mechanism (background)
 
@@ -1538,7 +1537,7 @@ Recommended storage methods:
 9. Dimension sensors measure tile geometry.
 10. Tile moves to acoustic station.
 11. Conveyor stops or indexes tile into position.
-12. Solenoid hammer taps tile.
+12. Ball-drop striker taps tile (ARM solenoid lifts the ball, LOCK solenoid releases it; §6.2).
 13. Microphone records sound.
 14. Audio is processed.
 15. Camera, acoustic, and dimensional results are combined.
@@ -1557,7 +1556,7 @@ Recommended storage methods:
 
 * Emergency stop button
 * Guarding around moving parts
-* Guarding around solenoid hammer
+* Guarding around the ball-drop striker and its drop zone (nothing strikes the tile directly; the ball free-falls)
 * No exposed pinch points
 * Safe conveyor access
 * Lockout procedure for maintenance
@@ -1567,7 +1566,7 @@ Recommended storage methods:
 * Proper grounding
 * Fuses or circuit breakers
 * Isolated power supplies
-* Protected solenoid driver circuit
+* Protected solenoid driver circuits (flyback diode per coil, one MOSFET per ARM/LOCK solenoid)
 * Cable management
 * Enclosure for electronics
 
@@ -1650,7 +1649,7 @@ Mitigation:
 ### Build
 
 * Fixed tile support frame
-* Solenoid tapper mounted above tile
+* Ball-drop striker (ARM lift + LOCK latch, §6.2) mounted above tile
 * USB microphone mounted near tile
 * Camera mounted above tile
 * Basic ToF sensor fixture
@@ -1759,8 +1758,8 @@ Mitigation:
 | Computing         | Raspberry Pi 4/5 or mini PC       | Processing and control        |
 | Camera            | USB camera or Raspberry Pi camera | Visual inspection             |
 | Lighting          | LED light panel or ring light     | Stable image capture          |
-| Acoustic actuator | Push-pull solenoid                | Repeatable tile tapping       |
-| Driver            | MOSFET driver module              | Solenoid switching            |
+| Acoustic actuator | 2x solenoid (ARM + LOCK) + ball   | Repeatable gravity-drop tap   |
+| Driver            | MOSFET driver module x2           | ARM / LOCK solenoid switching |
 | Power             | DC power supply                   | Solenoid and electronics      |
 | Audio             | USB measurement microphone        | Acoustic capture              |
 | Sensors           | ToF sensors                       | Distance/dimensional readings |
@@ -1878,7 +1877,7 @@ For the best balance between cost, reliability, and development speed, the recom
 
 * Raspberry Pi or mini PC
 * USB camera with fixed LED lighting
-* Push-pull solenoid tapper
+* Ball-drop striker (dual-solenoid ARM + LOCK, §6.2; driven by an Arduino Nano)
 * Measurement-type USB microphone
 * ToF sensors for basic dimensional checks
 * Belt conveyor with position sensors
@@ -1906,6 +1905,6 @@ For the best balance between cost, reliability, and development speed, the recom
 
 This project proposes a complete automated tile sorting and packing system using visual, acoustic, and dimensional inspection. The system is especially useful because it does not rely on only one inspection method. The camera detects visible defects, the acoustic module identifies hidden structural problems, and the dimensional module verifies physical accuracy.
 
-A controlled push-pull solenoid hammer provides repeatable impact for acoustic testing. A microphone records the sound, and the system analyzes the frequency response to classify tile quality. A camera detects visible cracks and shape damage, while ToF or laser sensors check the tile dimensions. The final decision engine combines all results and sends the tile to the correct sorting or packing path.
+A controlled ball-drop striker (two solenoids lift and release a ball onto the tile) provides repeatable impact for acoustic testing. A microphone records the sound, and the system analyzes the frequency response to classify tile quality. A camera detects visible cracks and shape damage, while ToF or laser sensors check the tile dimensions. The final decision engine combines all results and sends the tile to the correct sorting or packing path.
 
 The project can be developed step by step, starting from a manual laboratory test bench and progressing toward a full industrial sorting and packing machine. The final system can reduce manual inspection workload, improve sorting consistency, produce useful production records, and support automatic packing after grading.

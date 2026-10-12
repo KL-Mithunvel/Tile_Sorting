@@ -143,6 +143,11 @@ station:
     required: false
     stale_s: 3.0        # no valid line from the Nano for this long = link down
     ping_s: 0.5         # keep-alive to the Nano; ITS watchdog stops the belt without it
+    # After a watchdog trip the Nano needs a fresh BELT + STRIKE 1 (nothing restarts by
+    # itself). true = re-send the last ones this bridge was told to send once the Nano
+    # reports the Pi is back. Off by default: it can restart a belt someone stopped on
+    # purpose. Otherwise run system.sh start (or publish station/belt + station/strike).
+    resend_on_recover: false
   # Allow the master to send station/cmd (vote, hold_all, clear_alarms).
   commands_enabled: true
 

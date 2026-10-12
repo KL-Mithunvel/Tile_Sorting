@@ -35,7 +35,7 @@ exists so a byte flipped by motor noise on a long USB run can never turn `BELT 0
 | `HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok>` | every 500 ms | alive; current belt %, ToF sensors responding (0/1) |
 | `TAP <seq> <tile_present> <tof_mm> <uptime_ms>` | the instant the LOCK solenoid opens | one strike. `seq`: 16-bit counter, wraps. `tile_present`: 0/1, the striker-station ToF reading *at the strike* |
 | `PONG <n>` | after `PING <n>` | optional echo |
-| `ERR <code> <text…>` | on a fault | e.g. `ERR TOF1 timeout`; becomes an alarm |
+| `ERR <code> <text…>` | on a fault | e.g. `ERR TOF1 timeout`; becomes an alarm. Codes sent: `WATCHDOG` (belt stopped, Pi silent), `WDOGRESET` (first valid line after a trip: belt and striker need a fresh command), `TOF1` / `TOF3` (sensor not answering), `ESTOP`, `BADLINE` (rate limited) |
 
 ## Pi → Nano
 

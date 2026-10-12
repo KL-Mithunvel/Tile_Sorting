@@ -34,6 +34,10 @@ PYTHONPATH=/some/empty/dir NANO_HOST_CXX="python -m ziglang c++" python -m pytes
   keep the link up but the belt and striker stay off until a fresh `BELT` / `STRIKE 1`
   arrives. (A bare `systemctl restart tile-acoustic` therefore needs `system.sh start`
   or a `station/belt` + `station/strike` afterwards.) A corrupt stream does not feed it.
+  On the first valid line after a trip the Nano says `ERR WDOGRESET` (once), because the
+  `ERR WATCHDOG` sent at the trip was probably never delivered. With
+  `station.nano.resend_on_recover: true` the bridge answers that by re-sending the last
+  `STRIKE`/`BELT` it was told to send (off by default: it can restart a stopped belt).
 - **Checksums:** a line with a missing or wrong XOR checksum is discarded; out-of-range
   (`BELT 101`) or unknown commands are rejected, not clamped. `ERR BADLINE` is rate
   limited (one per 5 s) so motor noise cannot flood the Pi's alarms.
@@ -65,7 +69,7 @@ PYTHONPATH=/some/empty/dir NANO_HOST_CXX="python -m ziglang c++" python -m pytes
 - Compile for AVR (`arduino-cli compile --fqbn arduino:avr:nano`) and check flash/RAM
   (two VL53L1X objects on 2 KB RAM; `i2c_bus_plan.md` item).
 - **Pins:** the striker pins are carried over from `acoustic_node/sketch/sketch.ino`;
-  `PIN_BELT_PWM` (D9) and `PIN_TOF_END_XSHUT` (D8) are **new** and not in
+  `PIN_BELT_PWM` (D9) and `PIN_TOF_END_XSHUT` (D12) are **new** and not in
   `acoustic_station_wiring.md` yet.
 - The Pololu `VL53L1X` calls (`init`, `setAddress`, `startContinuous`, `read(false)`,
   `timeoutOccurred`, `ranging_data.range_status`) are from the library's documented

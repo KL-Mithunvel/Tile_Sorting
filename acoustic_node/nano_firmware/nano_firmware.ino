@@ -35,7 +35,7 @@
 
 // ---- pins (see the header comment: two are new and unconfirmed) -----------------
 const uint8_t PIN_TOF_STRIKER_XSHUT = 7;   // ToF 1 (striker station), from sketch.ino
-const uint8_t PIN_TOF_END_XSHUT     = 8;   // ToF 3 (belt end)         NEW, UNCONFIRMED
+const uint8_t PIN_TOF_END_XSHUT     = 12;  // ToF 3 (belt end)         NEW, UNCONFIRMED (D8 stays reserved for the arm limit switch)
 const uint8_t PIN_SOLENOID_ARM      = 5;   // from sketch.ino
 const uint8_t PIN_SOLENOID_LOCK     = 6;   // from sketch.ino
 const uint8_t PIN_ESTOP             = 2;   // normally-closed loop, INPUT_PULLUP; LOW = tripped

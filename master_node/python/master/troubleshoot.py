@@ -93,6 +93,16 @@ _RULES: dict[str, tuple] = {
          ["USB lead and port; the wrong port in config; another program holding the serial port."]),
     ),
     "gantry": (
+        (r"queue is full", "The gantry feed is paused and tiles are being dropped",
+         "The Pi's queue for the UNO Q filled while the feed was paused, so the oldest decided tiles are being "
+         "thrown away - they will never be sorted.",
+         ["Resume the feed now (Plant 3D > Resume feed), or Start line.",
+          "Then find the tiles marked `dropped` in the Pi's tile table and sort them by hand."]),
+        (r"feed paused", "The gantry feed is paused",
+         "The Pi is holding decided tiles back from the gantry on purpose (a line stop, or Pause feed). The gantry "
+         "finishes what it has and idles; nothing is lost while the queue has room.",
+         ["Resume the feed (Plant 3D > Resume feed) or Start line when you want sorting to continue.",
+          "If a long pause is planned, note the queue depth: it drops the oldest tiles when full."]),
         (r"needs a person|alarm|LOST_STEPS|SKEW|ESTOP|LIMIT|link down",
          "The gantry has stopped on a fault",
          "It reported an alarm or a held fault and will not move until a person clears it. Tiles queue behind it.",

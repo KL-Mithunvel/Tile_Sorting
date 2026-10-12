@@ -84,6 +84,9 @@ def _stations(snap: dict) -> list[dict]:
     station = snap.get("station")
     silent = station is None or _silent(snap.get("station_age_s"))
     health = (station or {}).get("health") or {}
+    settings = (station or {}).get("settings") or {}
+    feed_paused = (not silent) and settings.get("feed") == "paused"
+    held = (station or {}).get("outbox_depth", 0)
     out = []
     for sid, label, key in STATIONS:
         direct = _gantry_direct(snap) if sid == "gantry" else None
@@ -99,6 +102,11 @@ def _stations(snap: dict) -> list[dict]:
             h = health.get(key)
             level = h.get("level", "offline") if isinstance(h, dict) else "offline"
             detail = h.get("detail", "") if isinstance(h, dict) else "not reported"
+        if sid == "gantry" and feed_paused and level in ("ok", "warn"):
+            # The gantry's own status says nothing about the Pi holding tiles back from it.
+            level = "warn"
+            if "feed paused" not in detail:
+                detail = f"feed paused, {held} held back - {detail}"
         if level not in LEVELS:
             level = "warn"
         out.append({"id": sid, "label": label, "level": level, "detail": detail, "u": STATION_U.get(sid)})
@@ -144,6 +152,8 @@ def build_plant(snap: dict, now: float) -> dict:
             "belt_pct": belt,
             "hold_all": bool(settings.get("hold_all")),
             "stopped": settings.get("line") == "stopped",
+            "feed_paused": settings.get("feed") == "paused",
+            "held_back": station.get("outbox_depth", 0),
             "vote_enabled": bool(settings.get("vote_enabled")),
             "awaiting": station.get("awaiting_count", 0),
         },

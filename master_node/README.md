@@ -35,8 +35,7 @@ contract (including a camera fault every ~50 s) and obeys the commands. Its data
 touches `data/master/master.db`. Everything it shows is synthetic.
 
 **Honest limits.** Tile positions are *derived* (age along the belt, held at the next
-station until it has reported), not measured. "Start/Stop belt" only sends a belt
-percent to the Nano; there is no whole-line start/stop message in the contract yet.
+station until it has reported), not measured. (see "Line control" below).
 All four views are built; Phase 2 adaptive grading (AI_Software_Novelty.md Idea B) is not started.
 Page JS is checked by `development/drive_master_pages.py` (real headless Edge against a demo master;
 not part of pytest): load errors, station select, view buttons, belt/hold-all, window switches. Not
@@ -115,3 +114,18 @@ or logged; choosing `anthropic` sends the summary to api.anthropic.com when you 
 laptop but has no model pulled; the Claude path has never been called) - the HTTP layer is
 tested with a fake transport only. The thresholds are reasoned, not tuned on real line data.
 The prompt has not been evaluated for faithfulness. Phase 2 adaptive grading is untouched.
+
+## Line control: Start / Stop line and the gantry feed (added 2026-10-12)
+
+- **Stop line** = one `station/cmd {"cmd":"line","state":"stop"}`; the Pi does it: hold-all on, belt 0, striker
+  inhibited, **gantry feed paused**, remembering what it overrode. **Start line** restores the belt speed, the
+  striker and hold-all, and resumes the feed; with no known belt speed it refuses rather than guess. A **soft
+  stop over the network, not an e-stop** (the e-stop is wired separately).
+- **Pause feed / Resume feed** (`/api/command/feed`) stops the Pi handing NEW tiles to the gantry. A tile already
+  in flight completes; the gantry finishes what it has and idles with an empty cup. Held tiles are delivered in
+  order on resume. If the pause outlasts the Pi's outbox (`unoq.max_outbox`) the oldest tiles are dropped: the
+  gantry station warns, then fails, before that happens. While paused the final is stored on the Pi but not on
+  the bus, so this master sees those tiles only after the feed resumes.
+- **Gantry hard pause / resume** (`/api/command/gantry`) is different: it freezes the machine *mid-job* after the
+  move in flight, so a tile may stay held on the cup. It asks for confirmation; prefer Pause feed.
+- Not verified: any of this against the real UNO Q, Nano or belt (demo + unit tests only).

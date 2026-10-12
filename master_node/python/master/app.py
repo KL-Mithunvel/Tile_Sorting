@@ -247,6 +247,18 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
             payload["belt_percent"] = pct
         return _send("station/cmd", payload)
 
+    @app.route("/api/command/feed", methods=["POST"])
+    def cmd_feed():
+        """Stop / resume handing NEW tiles to the gantry. Not a gantry pause: the
+        machine finishes what it is on and idles with an empty cup."""
+        denied = _guard()
+        if denied:
+            return denied
+        state = _body().get("state")
+        if state not in ("pause", "resume"):
+            return jsonify(ok=False, error='state must be "pause" or "resume"'), 400
+        return _send("station/cmd", {"cmd": "feed", "state": state})
+
     @app.route("/api/command/belt", methods=["POST"])
     def cmd_belt():
         denied = _guard()

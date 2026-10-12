@@ -35,6 +35,8 @@ class DemoLine(threading.Thread):
         self.belt_pct = 60.0
         self.line_stopped = False
         self._saved: dict = {}
+        self.feed_paused = False
+        self._held: list[tuple] = []      # (tile_id, final payload) not yet delivered to the "gantry"
         self.tally: dict[str, int] = {}
         self._n = 0
         self._awaiting: list[dict] = []
@@ -72,6 +74,8 @@ class DemoLine(threading.Thread):
                 pass  # the master's own record is what it shows; nothing to reset here
             elif name == "line":
                 self._line(cmd.get("state"), cmd.get("belt_percent"))
+            elif name == "feed" and cmd.get("state") in ("pause", "resume"):
+                self._set_feed(cmd.get("state") == "pause")
 
     def _line(self, state, pct) -> None:
         """Same semantics as the real coordinator's set_line (lock already held)."""
@@ -80,6 +84,7 @@ class DemoLine(threading.Thread):
                 self._saved = {"hold_all": self.hold_all, "belt": self.belt_pct if self.belt_pct > 0 else None}
                 self.line_stopped = True
             self.hold_all, self.belt_pct, self.strike_enabled = True, 0.0, False
+            self._set_feed(True)
         elif state == "start":
             pct = pct if pct is not None else self._saved.get("belt")
             if pct is None or isinstance(pct, bool) or not 0 < pct <= 100:
@@ -87,6 +92,22 @@ class DemoLine(threading.Thread):
             self.hold_all = bool(self._saved.get("hold_all", False))
             self.line_stopped, self.belt_pct, self.strike_enabled = False, float(pct), True
             self._saved = {}
+            self._set_feed(False)
+
+    def _set_feed(self, paused: bool) -> None:
+        self.feed_paused = paused
+        if not paused:
+            held, self._held = self._held, []
+            for tid, payload in held:
+                self._deliver(tid, payload)
+
+    def _deliver(self, tid: str, payload: dict) -> None:
+        """The final reaches the bus (and is acknowledged) only when the feed runs."""
+        if self.feed_paused:
+            self._held.append((tid, payload))
+            return
+        self._bus.publish(f"tile/{tid}/final", payload)
+        self._bus.publish(f"tile/{tid}/ack", {"status": "ok"})
 
     def _on_belt(self, topic: str, payload: bytes) -> None:
         pct = self._json(payload).get("percent")
@@ -158,11 +179,10 @@ class DemoLine(threading.Thread):
         if self.hold_all:
             final, reasons = "Hold", ["hold-all is on"]
         self.tally[final] = self.tally.get(final, 0) + 1
-        self._bus.publish(f"tile/{tid}/final", {
+        self._deliver(tid, {
             "tile_id": tid, "station": "decision", "final_grade": final, "destination": BINS.get(final),
             "camera_grade": cam, "acoustic_counted": self.vote_enabled and self.strike_enabled,
             "timed_out": False, "reasons": reasons, "ts": now})
-        self._bus.publish(f"tile/{tid}/ack", {"status": "ok"})
 
     def _beat(self, now: float, camera_faulty: bool) -> None:
         health = {
@@ -170,7 +190,8 @@ class DemoLine(threading.Thread):
                        if camera_faulty else {"level": "ok", "detail": f"{self._n} tiles"}),
             "mic": {"level": "ok", "detail": "synthetic microphone"},
             "nano": {"level": "ok", "detail": f"belt {self.belt_pct:.0f} %"},
-            "unoq": {"level": "ok", "detail": "demo acknowledgements"},
+            "unoq": ({"level": "warn", "detail": f"feed paused by the master, {len(self._held)} held back"}
+                     if self.feed_paused else {"level": "ok", "detail": "demo acknowledgements"}),
         }
         if camera_faulty:
             state, detail = "fault", "camera: demo fault"
@@ -184,8 +205,9 @@ class DemoLine(threading.Thread):
             state, detail = "waiting", "waiting for a tile"
         self._bus.publish("station/status", {
             "now": now, "state": state, "state_detail": detail, "health": health,
-            "awaiting_count": len(self._awaiting),
+            "awaiting_count": len(self._awaiting), "outbox_depth": len(self._held),
             "settings": {"vote_enabled": self.vote_enabled, "hold_all": self.hold_all,
                          "line": "stopped" if self.line_stopped else "running",
+                         "feed": "paused" if self.feed_paused else "running",
                          "strike_enabled": self.strike_enabled},
             "tally": dict(self.tally), "counters": {}}, qos=0, retain=True)

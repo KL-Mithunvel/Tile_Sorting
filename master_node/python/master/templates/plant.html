@@ -75,6 +75,9 @@
   <div class="muted" style="font-size:12px;margin-bottom:4px">Soft stop over the network: belt to 0, striker inhibited, tiles held. <b>Not an emergency stop.</b></div>
   <div class="row"><input id="belt" type="range" min="0" max="100" value="60" style="flex:1;padding:0"><span id="beltv">60 %</span>
     <button id="beltSet">Set belt</button></div>
+  <div class="row"><button id="feedPause">Pause feed</button><button id="feedResume">Resume feed</button></div>
+  <div class="muted" style="font-size:12px;margin-bottom:4px">Feed: stop handing NEW tiles to the gantry; it finishes what it has and idles.</div>
+  <div class="row"><button id="gPause">Gantry hard pause</button><button id="gResume">Gantry resume</button></div>
   <div class="row"><button id="holdOn">Hold all ON</button><button id="holdOff">OFF</button></div>
   <div class="row"><button id="voteOn">Sound vote ON</button><button id="voteOff">OFF</button></div>
   <div class="row"><button id="strikeOn">Allow striker</button><button id="strikeOff">Inhibit</button></div>
@@ -489,7 +492,8 @@ async function poll() {
   bn.style.display = silent ? 'block' : 'none';
   bn.textContent = 'The Pi station is not reporting. The line decides on its own; check the Pi.';
   beltPct = typeof ln.belt_pct === 'number' ? ln.belt_pct : 0;
-  $('belttxt').textContent = 'Belt ' + (typeof ln.belt_pct === 'number' ? ln.belt_pct.toFixed(0) + ' %' : '—') + ' · awaiting tap ' + ln.awaiting;
+  $('belttxt').textContent = 'Belt ' + (typeof ln.belt_pct === 'number' ? ln.belt_pct.toFixed(0) + ' %' : '—') + ' · awaiting tap ' + ln.awaiting
+    + (ln.feed_paused ? ' · GANTRY FEED PAUSED (' + ln.held_back + ' held back)' : '');
   applyLevels(p.stations); renderStations(p.stations); renderSelected(); syncTiles(p.tiles);
   for (const [g, id] of Object.entries(gkey)) $(id).textContent = p.tally[g] || 0;
   $('alarm').textContent = p.alarms.length ? p.alarms[0].message : 'no alarms';
@@ -508,6 +512,10 @@ $('belt').oninput = () => { $('beltv').textContent = $('belt').value + ' %'; };
 $('beltSet').onclick = () => cmd('belt', { percent:Number($('belt').value) });
 $('start').onclick = () => cmd('line', { state:'start' }, plant && plant.line.stopped ? null : 'The line is already running. Send Start anyway?');
 $('stop').onclick = () => cmd('line', { state:'stop' }, 'Stop the whole line? Belt to 0, striker inhibited, every tile held. This is a soft stop over the network - NOT an emergency stop.');
+$('feedPause').onclick = () => cmd('feed', { state:'pause' });
+$('feedResume').onclick = () => cmd('feed', { state:'resume' });
+$('gPause').onclick = () => cmd('gantry', { cmd:'pause' }, 'Hard-pause the gantry? It finishes the move it is in and then FREEZES mid-job - a tile may stay held on the cup. Use Pause feed to drain it gracefully instead.');
+$('gResume').onclick = () => cmd('gantry', { cmd:'resume' });
 $('holdOn').onclick = () => cmd('hold_all', { enabled:true }, 'Hold EVERY tile for a person?');
 $('holdOff').onclick = () => cmd('hold_all', { enabled:false });
 $('voteOn').onclick = () => cmd('vote', { enabled:true });

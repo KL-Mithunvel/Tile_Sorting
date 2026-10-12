@@ -82,6 +82,8 @@ a per-station health timeline with uptime, recent level changes and recent alarm
 
 ## AI insights view (added 2026-10-12)
 
+> **Parked 2026-10-12:** built and tested, then deliberately set aside; to be revisited. The to-do list for coming back to it is in `TODO.md` ("PARKED ... AI insights"). The other three views do not depend on it, and with `insights.provider: none` (the default) nothing is ever sent to a model.
+
 `/insights` (`GET /api/insights?window=`, `GET /api/insights/provider`,
 `POST /api/insights/explain`). Two layers, kept apart on purpose:
 

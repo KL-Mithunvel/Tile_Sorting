@@ -179,6 +179,32 @@ def main():
         ws.pump(1.5)
         check("plant: no errors after controls", not errors(), "; ".join(errors()))
 
+        # ---------------- gantry / tile sync (sampled over a real run) ----------------
+        ws.js("document.querySelector('#views button[data-v=gantry]').click()")
+        worst, carried_samples, phases, cycles = 0.0, 0, set(), set()
+        for _ in range(170):                                   # ~34 s: enough for several demo tiles
+            ws.pump(0.2)
+            r = ws.js("""(() => { const m = window.__master; if (!m) return null;
+              const G = m.GANTRY, g = m.gantry, out = {st: m.seq.st, carried: null, placed: 0};
+              for (const [id, o] of m.tiles) { if (o.phase === 'carried') {
+                  out.carried = Math.hypot(o.mesh.position.x - (G.cx + g.x + G.colX), o.mesh.position.z - g.z,
+                                           o.mesh.position.y - (g.cup - 0.26)); out.id = id; }
+                if (o.phase === 'placed') out.placed++; }
+              return out; })()""")
+            if not r:
+                continue
+            phases.add(r["st"])
+            if r["carried"] is not None:
+                carried_samples += 1
+                worst = max(worst, r["carried"])
+            if r.get("id"):
+                cycles.add(r["id"])
+        check("gantry: sequencer ran through the full pick-and-place cycle",
+              {"toPick", "lower1", "raise1", "toBin", "lower2", "raise2"} <= phases, sorted(phases))
+        check("gantry: a tile was carried and placed", len(cycles) >= 1 and carried_samples > 3, f"{len(cycles)} tiles, {carried_samples} samples")
+        check("gantry: a carried tile never strays from the cup (max offset < 0.05)", worst < 0.05, f"worst {worst:.3f}")
+        check("gantry: no errors during the run", not errors(), "; ".join(errors()))
+
         # ---------------- Analysis ----------------
         load("/analysis")
         check("analysis: no page errors", not errors(), "; ".join(errors()))

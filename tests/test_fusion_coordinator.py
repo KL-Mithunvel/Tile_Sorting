@@ -343,7 +343,10 @@ def test_line_stop_holds_everything_zeroes_the_belt_and_inhibits_the_striker(rig
     # a tile already in flight is held for a person, never sorted automatically
     camera(bus, "T1", "Grade A")
     c.on_tap(GOOD_TAP)
-    assert finals(bus)[0]["final_grade"] == "Hold"
+    assert store.get("T1")["final_grade"] == "Hold"
+    assert finals(bus) == []                      # decided, but not handed to the gantry while stopped
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert [f["final_grade"] for f in finals(bus)] == ["Hold"]   # delivered, as Hold, once the line runs
 
 
 def test_line_start_restores_the_speed_and_the_hold_setting_it_overrode(rig):
@@ -400,3 +403,69 @@ def test_bad_line_commands_are_rejected_and_change_nothing(rig):
         bus.publish("station/cmd", bad)
     assert c.line_stopped is False and bus.messages("station/belt") == []
     assert len([a for a in c.snapshot()["alarms"] if a["kind"] == "bad_message"]) == 4
+
+
+# ---- gantry feed gate -------------------------------------------------------
+
+def test_paused_feed_holds_finals_back_then_delivers_them_in_order(rig):
+    clock, bus, store, c = rig
+    camera(bus, "T1", "Grade A", seq=1)
+    camera(bus, "T2", "Grade B", seq=2)
+    bus.publish("station/cmd", {"cmd": "feed", "state": "pause"})
+    assert c.feed_paused is True and c.snapshot()["settings"]["feed"] == "paused"
+    c.on_tap(GOOD_TAP)
+    c.on_tap(GOOD_TAP)
+    assert finals(bus) == []                                    # nothing handed to the UNO Q
+    assert store.get("T1")["final_grade"] == "Grade A"          # but both are decided and stored
+    assert c.snapshot()["outbox_depth"] == 2
+    bus.publish("station/cmd", {"cmd": "feed", "state": "resume"})
+    assert [f["tile_id"] for f in finals(bus)] == ["T1"]        # stop-and-wait: next after T1's ack
+    bus.publish("tile/T1/ack", {"status": "ok"})
+    assert [f["tile_id"] for f in finals(bus)] == ["T1", "T2"]
+
+
+def test_an_item_already_in_flight_still_completes_while_paused(rig):
+    clock, bus, store, c = rig
+    camera(bus, "T1")
+    camera(bus, "T2", seq=2)
+    c.on_tap(GOOD_TAP)                                          # T1 sent, awaiting its ack
+    bus.publish("station/cmd", {"cmd": "feed", "state": "pause"})
+    c.on_tap(GOOD_TAP)                                          # T2 decided while paused
+    bus.publish("tile/T1/ack", {"status": "ok"})                # T1's ack still arrives and is honoured
+    assert store.get("T1")["delivery"] == "acked"
+    assert [f["tile_id"] for f in finals(bus)] == ["T1"]        # T2 is held back
+
+
+def test_feed_pause_is_visible_in_health_and_gets_loud_before_it_drops_tiles(rig):
+    clock, bus, store, c = rig
+    bus.publish("station/cmd", {"cmd": "feed", "state": "pause"})
+    h = c.snapshot()["health"]["unoq"]
+    assert h["level"] == WARN and "paused" in h["detail"]
+    for i in range(CFG["unoq"]["max_outbox"]):
+        camera(bus, f"Q{i}", seq=i + 1)
+        c.on_tap(GOOD_TAP)
+    h = c.snapshot()["health"]["unoq"]
+    assert h["level"] == FAIL and "dropped" in h["detail"]
+
+
+def test_line_stop_and_start_move_the_feed_and_it_can_also_be_set_alone(rig):
+    clock, bus, store, c = rig
+    _nano(bus, 50)
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    assert c.feed_paused is True
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert c.feed_paused is False and c.snapshot()["settings"]["feed"] == "running"
+    # the feed on its own does not touch the belt or the striker
+    n_belt, n_strike = len(bus.messages("station/belt")), len(bus.messages("station/strike"))
+    bus.publish("station/cmd", {"cmd": "feed", "state": "pause"})
+    assert len(bus.messages("station/belt")) == n_belt and len(bus.messages("station/strike")) == n_strike
+    assert c.line_stopped is False
+    bus.publish("station/cmd", {"cmd": "feed", "state": "wat"})
+    assert any(a["kind"] == "bad_message" for a in c.snapshot()["alarms"])
+
+
+def test_a_refused_line_start_leaves_the_feed_paused(rig):
+    clock, bus, store, c = rig                                  # no known belt speed
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert c.line_stopped is True and c.feed_paused is True

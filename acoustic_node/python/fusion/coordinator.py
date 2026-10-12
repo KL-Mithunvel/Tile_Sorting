@@ -122,6 +122,9 @@ class StationCoordinator:
         # Whole-line soft stop (see set_line). `_line_saved` is what stop overrode.
         self._line_stopped = False
         self._line_saved: dict = {}
+        # Feed gate to the UNO Q: while paused no NEW final is released from the
+        # outbox. An unacknowledged one in flight still completes and is retried.
+        self._feed_paused = False
         self._nano_status_ts: Optional[float] = None
         # Strike events (station/tap) waiting to be paired with their clip.
         self._tap_events: deque = deque(maxlen=16)
@@ -180,6 +183,26 @@ class StationCoordinator:
     def line_stopped(self) -> bool:
         return self._line_stopped
 
+    @property
+    def feed_paused(self) -> bool:
+        return self._feed_paused
+
+    def set_feed_paused(self, paused: bool, source: str = "operator") -> None:
+        """Stop (or resume) handing NEW finals to the gantry.
+
+        The gantry is not frozen: it finishes the tile it is on and drains the
+        ones it has already accepted, then idles with nothing in the cup. Held
+        finals wait in the outbox here and are delivered, in order, on resume.
+        A pause that lasts long enough to fill the outbox drops the oldest and
+        raises `outbox_overflow` - the health row says so before that happens."""
+        with self._lock:
+            if bool(paused) == self._feed_paused:
+                return
+            self._feed_paused = bool(paused)
+            self._event(f"gantry feed {'PAUSED' if paused else 'RESUMED'} ({source})")
+            if not paused:
+                self._pump(self._clock())
+
     def set_line(self, running: bool, belt_percent: Optional[float] = None, source: str = "operator") -> bool:
         """Stop or start the whole line from one place.
 
@@ -203,8 +226,9 @@ class StationCoordinator:
                         "belt_pct": pct if isinstance(pct, (int, float)) and pct > 0 else None,
                     }
                     self._line_stopped = True
-                    self._event(f"LINE STOPPED ({source}): hold-all on, belt 0, striker inhibited")
+                    self._event(f"LINE STOPPED ({source}): hold-all on, belt 0, striker inhibited, gantry feed paused")
                 self._hold_all = True
+                self._feed_paused = True
                 self._bus.publish(TOPIC_BELT, {"percent": 0}, qos=1)
                 self._bus.publish(TOPIC_STRIKE, {"enabled": False}, qos=1)
                 return True
@@ -219,10 +243,12 @@ class StationCoordinator:
             self._hold_all = bool(self._line_saved.get("hold_all", False))
             self._line_stopped = False
             self._line_saved = {}
-            self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed")
+            self._feed_paused = False
+            self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed, gantry feed resumed")
             # Striker first, belt last: nothing moves until the line can use it.
             self._bus.publish(TOPIC_STRIKE, {"enabled": True}, qos=1)
             self._bus.publish(TOPIC_BELT, {"percent": pct}, qos=1)
+            self._pump(self._clock())      # release whatever was held back, now that the line runs
             return True
 
     def clear_alarms(self) -> None:
@@ -406,7 +432,7 @@ class StationCoordinator:
     def _pump(self, now: float) -> None:
         while True:
             if self._inflight is None:
-                if not self._outbox:
+                if not self._outbox or self._feed_paused:
                     return
                 self._inflight = self._outbox.popleft()
             item = self._inflight
@@ -496,7 +522,7 @@ class StationCoordinator:
                 snap = self._snapshot_locked(now, recent=0)
                 self._bus.publish(
                     TOPIC_STATUS,
-                    {k: snap[k] for k in ("now", "state", "state_detail", "health", "awaiting_count", "settings", "tally", "counters")},
+                    {k: snap[k] for k in ("now", "state", "state_detail", "health", "awaiting_count", "outbox_depth", "settings", "tally", "counters")},
                     qos=0,
                     retain=True,
                 )
@@ -624,6 +650,13 @@ class StationCoordinator:
             self.set_hold_all(bool(cmd.get("enabled")), source="master")
         elif name == "clear_alarms":
             self.clear_alarms()
+        elif name == "feed":
+            state = cmd.get("state")
+            if state not in ("pause", "resume"):
+                with self._lock:
+                    self._alarm("bad_message", "station/cmd feed needs state pause|resume", None)
+            else:
+                self.set_feed_paused(state == "pause", source="master")
         elif name == "line":
             state = cmd.get("state")
             pct = cmd.get("belt_percent")
@@ -724,6 +757,12 @@ class StationCoordinator:
             h["unoq"] = {"level": WARN, "detail": "acknowledgement not required (bench mode)"}
         elif self._link_down:
             h["unoq"] = {"level": FAIL, "detail": "no acknowledgement"}
+        elif self._feed_paused:
+            queued = len(self._outbox)
+            if queued >= self._max_outbox:
+                h["unoq"] = {"level": FAIL, "detail": f"feed paused and the queue is full ({queued}): tiles are being dropped"}
+            else:
+                h["unoq"] = {"level": WARN, "detail": f"feed paused by the master, {queued} held back"}
         elif self._inflight is not None:
             h["unoq"] = {"level": WARN, "detail": f"waiting for ack of {self._inflight['tile_id']}"}
         elif self._last_ack_ts is None:
@@ -772,6 +811,7 @@ class StationCoordinator:
                 "vote_enabled": self._vote_enabled,
                 "hold_all": self._hold_all,
                 "line": "stopped" if self._line_stopped else "running",
+                "feed": "paused" if self._feed_paused else "running",
                 "min_confidence": self._min_conf,
                 "max_wait_s": self.ledger.max_wait_s,
                 "require_ack": self._require_ack,

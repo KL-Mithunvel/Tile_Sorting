@@ -180,20 +180,22 @@
     }
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a1a);
+    scene.background = new THREE.Color(0x0b0e13);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     container.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+    scene.add(new THREE.HemisphereLight(0xbcd4ff, 0x1a1f28, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.9);
     sun.position.set(1, 2, 1.5);
     scene.add(sun);
 
     // Gantry meshes, built once workspace bounds are known (setupGantry()).
     let xMin, xMax, yMin, yMax, zMin, zMax, center, maxDim;
-    let beam, column, cup, cupBody, heldTile;
-    const railColor = 0x666666, beamColor = 0x888888, columnColor = 0xaaaaaa;
+    let beam, column, cup, cupBody, heldTile, carriage;
+    // Same palette as the master's Plant 3D gantry: steel frame, aluminium rails/column, dark trucks.
+    const railColor = 0x9aa7b6, beamColor = 0x4a5666, columnColor = 0x9aa7b6;
+    const steelColor = 0x4a5666, darkColor = 0x2d3643, motorColor = 0x1d242e;
     const vacuumOffColor = 0x999999, vacuumOnColor = 0x5cd65c;
     const CUP_H = 14;
 
@@ -340,28 +342,57 @@
       grid.position.set((xMin + xMax) / 2, zMin, (yMin + yMax) / 2);
       scene.add(grid);
 
-      // Static side rails the gantry beam slides along (Y axis), at travel height.
-      const railMat = new THREE.MeshStandardMaterial({ color: railColor });
-      const railGeom = new THREE.BoxGeometry(10, 10, ySize);
-      const rail1 = new THREE.Mesh(railGeom, railMat);
-      rail1.position.set(xMin, zMax, (yMin + yMax) / 2);
-      scene.add(rail1);
-      const rail2 = new THREE.Mesh(railGeom, railMat);
-      rail2.position.set(xMax, zMax, (yMin + yMax) / 2);
-      scene.add(rail2);
+      // Four legs OUTSIDE the work envelope (so the cup can still reach every corner), two
+      // aluminium rails on them along Y, and a box-section beam on two end trucks that slides
+      // along the rails. The carriage that wraps the beam moves in X (see stepSmoothing()).
+      const off = 0.08 * Math.max(xSize, ySize);        // legs stand this far outside the envelope
+      const railZ = zMax - 38;                           // rail centre; trucks sit on it, the beam on them
+      const legTop = railZ - 8;
+      const mk = (w, h, d, color, opts) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.6, metalness: 0.2 }, opts || {})));
+      const put = (m, x, y, z) => { m.position.set(x, y, z); scene.add(m); return m; };
+      const legH = legTop - zMin, legX = [xMin, xMax], legY = [yMin - off, yMax + off];
+      for (const lx of legX) for (const ly of legY) {
+        put(mk(18, legH, 18, steelColor), lx, zMin + legH / 2, ly);                    // leg
+        put(mk(46, 4, 46, darkColor), lx, zMin + 2, ly);                              // foot plate
+        const inward = lx === xMin ? 1 : -1, towardY = ly === legY[0] ? 1 : -1;       // corner gussets
+        const gx = mk(52, 6, 6, darkColor);
+        gx.position.set(lx + inward * 24, legTop - 24, ly); gx.rotation.z = -inward * Math.PI / 4; scene.add(gx);
+        const gz = mk(6, 6, 52, darkColor);
+        gz.position.set(lx, legTop - 24, ly + towardY * 24); gz.rotation.x = towardY * Math.PI / 4; scene.add(gz);
+      }
+      for (const ly of legY) put(mk(xSize, 7, 7, steelColor), (xMin + xMax) / 2, zMin + 40, ly);   // stretchers
+      for (const lx of legX) put(mk(7, 7, ySize + 2 * off, steelColor), lx, zMin + 40, (yMin + yMax) / 2);
+      for (const lx of legX) put(mk(16, 16, ySize + 2 * off + 24, railColor, { metalness: 0.5, roughness: 0.4 }),
+        lx, railZ, (yMin + yMax) / 2);                                                 // rails (along Y)
+      for (const ly of legY) put(mk(xSize + 16, 14, 14, steelColor), (xMin + xMax) / 2, railZ, ly);   // end ties
 
-      // X beam (bridge) — slides along Y, carriage slides along it in X.
-      beam = new THREE.Mesh(
-        new THREE.BoxGeometry(xSize, 10, 10),
-        new THREE.MeshStandardMaterial({ color: beamColor }),
-      );
+      // Y beam group: box-section bar + two trucks on the rails + the two Y/A motors.
+      // `beam.position.z` is the gantry Y, exactly as the old single-mesh beam.
+      beam = new THREE.Group();
       beam.position.set((xMin + xMax) / 2, zMax, (yMin + yMax) / 2);
+      const truckH = 16, trussW = 26;
+      const bar = mk(xSize + 40, trussW, 22, beamColor);                               // beam bar
+      bar.position.set(0, 0, 0); beam.add(bar);
+      for (const sx of [-1, 1]) {
+        const truck = mk(40, truckH, 36, darkColor);                                   // truck ON the rail
+        truck.position.set(sx * (xSize / 2), -trussW / 2 - truckH / 2, 0); beam.add(truck);
+        const motor = mk(26, 26, 26, motorColor);                                      // Y / cloned A motor
+        motor.position.set(sx * (xSize / 2), trussW / 2 + 6, 0); beam.add(motor);
+      }
+      const guide = mk(xSize - 20, 5, 4, railColor, { metalness: 0.5, roughness: 0.4 });  // linear guide, front face
+      guide.position.set(0, 0, 12); beam.add(guide);
       scene.add(beam);
+
+      // Carriage: wraps the beam, slides in X; the Z column hangs from it.
+      carriage = mk(44, trussW + 14, 34, darkColor);
+      carriage.position.set(xMin, zMax, (yMin + yMax) / 2);
+      scene.add(carriage);
 
       // Z column — unit-height box, scaled per-frame to track current Z.
       column = new THREE.Mesh(
-        new THREE.BoxGeometry(10, 1, 10),
-        new THREE.MeshStandardMaterial({ color: columnColor }),
+        new THREE.BoxGeometry(12, 1, 12),
+        new THREE.MeshStandardMaterial({ color: columnColor, roughness: 0.4, metalness: 0.5 }),
       );
       scene.add(column);
 
@@ -426,6 +457,7 @@
       const p = shownPose;
       // gantry (x, y, z) -> scene (x, z, y): Three.js is Y-up.
       beam.position.z = p.y;
+      if (carriage) carriage.position.set(p.x, zMax, p.y);
       column.position.set(p.x, (zMax + p.z + CUP_H) / 2, p.y);
       column.scale.y = Math.max(zMax - p.z - CUP_H, 0.001);
       cup.position.set(p.x, p.z, p.y);

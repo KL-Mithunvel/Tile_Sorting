@@ -22,7 +22,7 @@ User=@RUN_USER@
 SupplementaryGroups=audio
 WorkingDirectory=@PYTHON_DIR@
 ; System interpreter, like the camera service: apt packages, not a venv.
-ExecStart=/usr/bin/python3 @PYTHON_DIR@/run_station.py
+ExecStart=/usr/bin/python3 @PYTHON_DIR@/main.py
 Environment=PYTHONUNBUFFERED=1
 
 ; Come back by itself. A station that stays down gives the line no decisions,

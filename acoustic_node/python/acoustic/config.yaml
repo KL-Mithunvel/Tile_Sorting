@@ -18,8 +18,9 @@ trigger:
   #               Dev-machine default: works with just a laptop mic, no ToF/solenoid hardware.
   # "hardware"  - trigger on a real tap event notified via AudioCapture.notify_tap()
   #               (acoustic.hardware_trigger.HardwareTapDetector), driven by
-  #               acoustic_node/python/main.py polling the sketch's tapCount bridge
-  #               variable. Requires the real ToF + dual-solenoid station (see
+  #               a bridge on the Pi (acoustic/tap_bridge.py: the Nano's serial
+  #               TAP lines) calling station/tap -> notify_tap(). Requires the real ToF +
+  #               dual-solenoid station (see
   #               documents/electrical/schematics/acoustic_station_wiring.md).
   # "simulated" - same HardwareTapDetector, but acoustic.live_monitor drives the taps
   #               itself using tap_mechanism below + a fake periodic tile arrival
@@ -123,6 +124,9 @@ station:
 
   health:
     camera_stale_s: 6.0   # camera heartbeat older than this = camera FAILED
+    clock_warn_s: 1.0     # a peer's clock differing from the Pi's by more than this = WARNING
+                          # on the service view (never a fault: nothing is decided from
+                          # cross-node time). Fix by syncing the peer to the Pi (network_plan.md §6).
 
   heartbeat_s: 2.0
 

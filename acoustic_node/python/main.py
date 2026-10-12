@@ -1,51 +1,27 @@
-"""Arduino App Lab entry point for the acoustic node.
+"""Acoustic + decision station service entry point for the Raspberry Pi (systemd).
 
-NOT YET VERIFIED against a real App Lab environment (see acoustic_node/README.md) —
-this follows the shape of Arduino's own examples (app-bricks-examples,
-core-and-foundational/02-led-matrix/03-led-matrix-animation-mcu/python/main.py) but
-has not been run on this project's UNO Q board. The proven, tested entry point for
-this node's logic is still the CLI: `python -m acoustic.live_monitor`, run from this
-python/ directory (see README.md).
+A thin shim over `acoustic.live_station.main()`, exactly like
+camera_node/python/main.py, so the service and the interactive CLI
+(`python -m acoustic.live_station`) cannot drift apart.
 
-Intended wiring, once App Bricks' actual bridge API is confirmed on hardware
-(documents/electrical/schematics/acoustic_station_wiring.md,
-acoustic_node/sketch/sketch.ino): the sketch runs the ToF-triggered arm/lock tap
-sequence and exposes an incrementing `tapCount` bridge variable, incremented the
-instant the ball is released. This file should poll that variable and call
-AudioCapture.notify_tap() each time it changes, with acoustic/config.yaml's
-trigger.mode set to "hardware" so AudioCapture uses HardwareTapDetector instead
-of the RMS trigger. poll_bridge_and_capture() below is written in that shape
-already, so it's ready to test the moment `arduino.app_bricks`' real import
-path/API for reading a sketch bridge variable from Python is confirmed — but
-that import and the `read_tap_count()` call are unverified placeholders, not a
-working integration yet. It is deliberately NOT wired into App.run() below
-until that's confirmed, to avoid silently doing nothing (or crashing on import)
-in the meantime.
+This file used to be the Arduino App Lab stub for the UNO Q (`App.run()` plus an
+unverified `poll_bridge_and_capture()` that read the sketch's `tapCount` bridge
+variable). The acoustic station moved to the shared Pi in the 2026-10-10
+proposal, where the Nano's strike events arrive over serial instead
+(`acoustic/tap_bridge.py`), so that polling code was removed; it is in git
+history if the UNO Q path is ever revived. `app.yaml` and `sketch/` are left as
+they were.
 """
 
-from arduino.app_utils import App
+from __future__ import annotations
 
-from acoustic.capture import AudioCapture, load_config
+import sys
+from pathlib import Path
 
+# systemd starts this by absolute path; `acoustic` and `fusion` live beside it.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-def read_tap_count() -> int:
-    """UNVERIFIED placeholder — replace with the real App Bricks call once
-    confirmed, e.g. something like `from arduino.app_bricks import sketch`
-    then `return sketch.tapCount`. Returns 0 (no taps yet) until then."""
-    return 0
+from acoustic.live_station import main  # noqa: E402
 
-
-def poll_bridge_and_capture(capture: AudioCapture) -> None:
-    """Not yet called from App.run() — see module docstring. Once
-    read_tap_count() is real, wiring this in is just calling it from
-    whatever hook App Lab provides for a per-loop/per-tick callback."""
-    last_tap_count = read_tap_count()
-    while True:
-        tap_count = read_tap_count()
-        if tap_count != last_tap_count:
-            last_tap_count = tap_count
-            capture.notify_tap()
-        App.delay(10)  # unverified helper name/signature
-
-
-App.run()
+if __name__ == "__main__":
+    main()

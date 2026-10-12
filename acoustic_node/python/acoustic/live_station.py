@@ -10,7 +10,7 @@ Usage (from acoustic_node/python/, venv active):
 
 Then open http://<this machine>:5001/ (run view) or /service. On the Pi it is
 started by systemd (acoustic_node/deploy/tile-acoustic.service) through
-acoustic_node/python/run_station.py, and Chromium shows the run view fullscreen.
+acoustic_node/python/main.py, and Chromium shows the run view fullscreen.
 
 Not to be confused with `acoustic.live_monitor`, the older stand-alone
 mic-plot tool, which is unchanged.

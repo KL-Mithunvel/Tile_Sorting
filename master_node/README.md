@@ -37,11 +37,26 @@ touches `data/master/master.db`. Everything it shows is synthetic.
 **Honest limits.** Tile positions are *derived* (age along the belt, held at the next
 station until it has reported), not measured. "Start/Stop belt" only sends a belt
 percent to the Nano; there is no whole-line start/stop message in the contract yet.
-Analysis, Troubleshoot and AI insights tabs are placeholders for the next steps.
+Troubleshoot and AI insights tabs are placeholders for the next steps.
 Checked in headless Edge at 1500 px only; the page JS has no automated tests, and
 clicking a station / the camera fly-to were not exercised.
 
-Status: built and unit-tested on the dev laptop (24 tests), page rendered against seeded
+Status: built and unit-tested on the dev laptop (34 tests), page rendered against seeded
 data; **never connected to a real broker**. The page is unauthenticated; the commands
 change how the line behaves, so they stay disabled unless you ask for them, and the
 network is assumed isolated (`documents/electrical/network_plan.md`).
+
+## Analysis view (added 2026-10-12)
+
+`/analysis` (`GET /api/analysis?window=<seconds>`, window one of 300, 900, 3600,
+21600, 86400): tiles over time by final grade (with a table view), grade mix,
+destinations, throughput, reject / hold / timed-out rates, how often the camera and sound
+grades match (a camera x sound table), camera-to-final-grade time and alarms by kind.
+All numbers come from the master's own SQLite record (`master/analysis.py`, pure, tested).
+
+- Rates over fewer than 20 graded tiles are shown with a "treat as noise" note.
+- Agreement compares the two *sensors*; sound only changes the final grade when its vote is on.
+- The camera-to-final time uses the stations' own timestamps; its 90th percentile is the
+  number to use when choosing `ledger.max_wait_s` (30 s is a placeholder).
+- In `--demo` the sound grade is copied from the camera grade, so 100 % agreement there
+  means nothing. Checked in headless Edge at 1300 px only.

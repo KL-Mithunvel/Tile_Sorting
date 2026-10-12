@@ -1,9 +1,11 @@
 """Production analysis for the master: pure numbers over per-tile rows, the
-collector's raw-row queries."""
+collector's raw-row queries, and the /api/analysis endpoint."""
 
 import json
 
-from master.analysis import BUCKETS, MIN_SAMPLE, build_analysis
+from master.analysis import BUCKETS, MIN_SAMPLE, WINDOWS_S, build_analysis
+from master.app import create_app
+from master.bus import InMemoryBus
 from master.collector import MasterCollector
 
 NOW = 10_000.0
@@ -96,3 +98,16 @@ def test_collector_rows_carry_the_stations_timestamps_and_respect_since():
     assert [r["tile_id"] for r in c.analysis_rows(since_ts=150.0)] == ["T2"]
     assert [a["kind"] for a in c.alarm_rows(since_ts=100.0)] == ["x"]
     assert c.alarm_rows(since_ts=500.0) == []
+
+
+def test_analysis_endpoint_validates_window_and_serves_page():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    app = create_app(col, bus, clock=lambda: NOW)
+    c = app.test_client()
+    ok = c.get("/api/analysis?window=900")
+    assert ok.status_code == 200 and ok.get_json()["window_s"] == 900
+    assert c.get("/api/analysis").get_json()["window_s"] == 3600           # default
+    for bad in ("abc", "7", "-1", "999999999"):
+        assert c.get("/api/analysis?window=" + bad).status_code == 400
+    assert WINDOWS_S and c.get("/analysis").status_code == 200

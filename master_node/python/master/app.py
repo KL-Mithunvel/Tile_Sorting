@@ -15,6 +15,7 @@ from typing import Callable, Optional
 from flask import Flask, Response, jsonify, render_template, request
 
 from master.collector import MasterCollector
+from master.analysis import DEFAULT_WINDOW_S, WINDOWS_S, build_analysis
 from master.plant import build_plant
 
 
@@ -25,6 +26,24 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
     @app.route("/")
     def index():
         return render_template("plant.html")
+
+    @app.route("/analysis")
+    def analysis_page():
+        return render_template("analysis.html", windows=WINDOWS_S, default_window=DEFAULT_WINDOW_S)
+
+    @app.route("/api/analysis")
+    def api_analysis():
+        try:
+            window = int(request.args.get("window", DEFAULT_WINDOW_S))
+        except ValueError:
+            window = -1
+        if window not in WINDOWS_S:
+            return jsonify(ok=False, error=f"window must be one of {list(WINDOWS_S)} seconds"), 400
+        now = clock()
+        since = now - window
+        out = build_analysis(collector.analysis_rows(since), collector.alarm_rows(since), now, window)
+        out["demo"] = demo
+        return jsonify(out)
 
     @app.route("/classic")
     def classic():

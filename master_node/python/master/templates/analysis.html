@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master — Analysis</title>
+<style>
+  :root { --bg:#0b0e13; --panel:#141a23; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3; --accent:#58a6ff;
+    --gA:#2fbf71; --gB:#e3b341; --gC:#f0883e; --gR:#f85149; --gH:#a371f7; --pend:#4a5666; --bar:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:12px 14px 40px; }
+  nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }
+  nav h1 { font-size:16px; margin:0 6px 0 0; }
+  .tab { padding:5px 12px; border-radius:8px; border:1px solid var(--line); color:var(--muted); text-decoration:none; }
+  .tab.on { color:var(--text); border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .tab.soon { opacity:.5; cursor:not-allowed; }
+  .pill { padding:3px 12px; border-radius:999px; border:2px solid #a371f7; color:#a371f7; font-weight:700; text-transform:uppercase; font-size:12px; }
+  .bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  button { font:inherit; padding:5px 12px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); cursor:pointer; }
+  button.on { border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; min-width:0; }
+  .kpi .n { font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .kpi .l { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  .kpi .s { color:var(--muted); font-size:12px; min-height:1.2em; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr)); gap:12px; }
+  h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .legend { display:flex; gap:12px; flex-wrap:wrap; margin:6px 0; font-size:12px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
+  svg { width:100%; height:auto; display:block; }
+  svg text { fill:var(--muted); font-size:12px; }
+  .grid-line { stroke:var(--line); stroke-width:1; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:4px 8px; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; } th { color:var(--muted); font-size:12px; font-weight:600; }
+  td.diag { background:rgba(47,191,113,.14); }
+  .warnnote { color:var(--gB); font-size:12px; }
+  .muted { color:var(--muted); }
+  #tip { position:fixed; pointer-events:none; background:#0e1116; border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px; display:none; z-index:5; white-space:nowrap; }
+  #empty { display:none; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<nav>
+  <h1>Tile line — master</h1>
+  <a class="tab" href="/">Plant 3D</a><span class="tab on">Analysis</span>
+  <span class="tab soon" title="next step">Troubleshoot</span><span class="tab soon" title="next step">AI insights</span>
+  <a class="tab" href="/classic">Classic view</a>
+  <span style="flex:1"></span><span class="pill" id="demo" style="display:none">demo — synthetic line</span>
+</nav>
+
+<div class="bar" id="windows"><span class="muted">Window</span></div>
+<div class="muted" id="empty">No tiles in this window yet.</div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="grid">
+  <section class="card" style="grid-column:1/-1">
+    <h2>Tiles over time, by final grade</h2>
+    <div class="legend" id="legend"></div>
+    <svg id="chart" viewBox="0 0 900 260" role="img" aria-label="Stacked bars: tiles per interval by final grade"></svg>
+    <div style="margin-top:6px"><button id="tbl">Show as table</button></div>
+    <div id="tablewrap" style="display:none;overflow:auto;max-height:260px"></div>
+  </section>
+  <section class="card"><h2>Grade mix (graded tiles)</h2><svg id="mix" viewBox="0 0 420 200"></svg></section>
+  <section class="card"><h2>Where tiles went</h2><svg id="dest" viewBox="0 0 420 200"></svg></section>
+  <section class="card"><h2>Camera vs sound</h2><div id="agree"></div></section>
+  <section class="card"><h2>Camera → final grade time</h2><div id="transit"></div>
+    <h2 style="margin-top:14px">Alarms by kind</h2><svg id="alarms" viewBox="0 0 420 140"></svg></section>
+</div>
+<div id="tip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const GR = ["Grade A","Grade B","Grade C","Reject","Hold"];
+const GC = {"Grade A":"var(--gA)","Grade B":"var(--gB)","Grade C":"var(--gC)","Reject":"var(--gR)","Hold":"var(--gH)","Pending":"var(--pend)"};
+const WINDOWS = {{ windows|tojson }};
+let windowS = {{ default_window }}, data = null, asTable = false;
+
+function el(tag, attrs, text) { const e = document.createElementNS(NS, tag); for (const k in attrs || {}) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const pct = v => v == null ? "—" : (v * 100).toFixed(1) + " %";
+const num = v => v == null ? "—" : String(v);
+const wl = s => s >= 86400 ? "24 h" : s >= 3600 ? (s / 3600) + " h" : (s / 60) + " min";
+const tfmt = ts => new Date(ts * 1000).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+
+function tip(show, x, y, lines) {
+  const t = $("tip"); if (!show) { t.style.display = "none"; return; }
+  t.replaceChildren(...lines.map(l => h("div", null, l)));
+  t.style.display = "block"; t.style.left = Math.min(x + 14, innerWidth - t.offsetWidth - 8) + "px"; t.style.top = (y + 14) + "px";
+}
+
+function windowsBar() {
+  const w = $("windows");
+  for (const s of WINDOWS) {
+    const b = h("button", s === windowS ? "on" : "", wl(s));
+    b.onclick = () => { windowS = s; for (const x of w.querySelectorAll("button")) x.className = ""; b.className = "on"; load(); };
+    w.appendChild(b);
+  }
+}
+
+function kpis(d) {
+  const t = d.totals, k = $("kpis"); k.replaceChildren();
+  const note = t.small_sample ? "fewer than " + d.min_sample + " graded — treat as noise" : "";
+  const items = [
+    ["Tiles", num(t.tiles), t.graded + " graded"],
+    ["Throughput", t.throughput_per_min == null ? "—" : t.throughput_per_min + " /min", "averaged over " + wl(d.window_s)],
+    ["Reject rate", pct(t.reject_rate), note],
+    ["Hold rate", pct(t.hold_rate), note],
+    ["Timed out (no tap)", pct(t.timeout_rate), note],
+    ["Sound in the grade", pct(t.sound_counted_rate), "share of tiles where sound voted"],
+  ];
+  for (const [l, n, s] of items) { const c = h("div", "card kpi"); c.append(h("div", "l", l), h("div", "n", n), h("div", "s", s)); k.appendChild(c); }
+}
+
+function stacked(d) {
+  const svg = $("chart"); svg.replaceChildren();
+  const W = 900, H = 260, L = 40, R = 8, T = 10, B = 28, pw = W - L - R, ph = H - T - B;
+  const S = d.series, n = S.length;
+  const parts = b => {
+    const out = GR.map(g => [g, b[g]]);
+    out.push(["Pending", Math.max(0, b.total - GR.reduce((a, g) => a + b[g], 0))]);
+    return out;
+  };
+  const max = Math.max(1, ...S.map(b => b.total));
+  const nice = (() => { const p = Math.pow(10, Math.floor(Math.log10(max))); for (const m of [1, 2, 5, 10]) if (m * p >= max) return m * p; return max; })();
+  for (let i = 0; i <= 4; i++) {
+    const y = T + ph - (ph * i) / 4;
+    svg.appendChild(el("line", {x1:L, x2:W - R, y1:y, y2:y, class:"grid-line"}));
+    svg.appendChild(el("text", {x:L - 6, y:y + 4, "text-anchor":"end"}, String(Math.round(nice * i / 4 * 10) / 10)));
+  }
+  const bw = pw / n;
+  S.forEach((b, i) => {
+    let y = T + ph;
+    for (const [g, v] of parts(b)) {
+      if (!v) continue;
+      const hh = ph * v / nice;
+      y -= hh;
+      svg.appendChild(el("rect", {x:L + i * bw + 1, y, width:Math.max(1, bw - 2), height:Math.max(1, hh - 1), fill:GC[g], rx:1}));
+    }
+    const hit = el("rect", {x:L + i * bw, y:T, width:bw, height:ph, fill:"transparent"});
+    hit.onmousemove = e => tip(true, e.clientX, e.clientY,
+      [tfmt(b.t) + " – " + tfmt(b.t + d.bucket_s), b.total + " tiles", ...parts(b).filter(p => p[1]).map(p => p[0] + ": " + p[1])]);
+    hit.onmouseleave = () => tip(false);
+    svg.appendChild(hit);
+  });
+  for (const i of [0, Math.floor(n / 2), n - 1]) svg.appendChild(el("text", {x:L + i * bw + bw / 2, y:H - 8, "text-anchor":"middle"}, tfmt(S[i].t)));
+  const lg = $("legend"); lg.replaceChildren();
+  for (const g of [...GR, "Pending"]) { const s = h("span"); const i = h("i"); i.style.background = GC[g]; s.append(i, document.createTextNode(g)); lg.appendChild(s); }
+  const wrap = $("tablewrap"); wrap.replaceChildren();
+  const tb = h("table"); const hr = h("tr");
+  ["From", "Tiles", ...GR].forEach(x => hr.appendChild(h("th", null, x))); tb.appendChild(hr);
+  S.forEach(b => { const r = h("tr"); [tfmt(b.t), b.total, ...GR.map(g => b[g])].forEach(x => r.appendChild(h("td", null, String(x)))); tb.appendChild(r); });
+  wrap.appendChild(tb);
+}
+
+function hbars(svgId, entries, colorFor) {
+  const svg = $(svgId); svg.replaceChildren();
+  const total = entries.reduce((a, e) => a + e[1], 0);
+  if (!entries.length || !total) { svg.setAttribute("viewBox", "0 0 420 30"); svg.appendChild(el("text", {x:0, y:18}, "no data in this window")); return; }
+  const max = Math.max(...entries.map(e => e[1])), rowH = 26, lw = 110;
+  svg.setAttribute("viewBox", "0 0 420 " + (entries.length * rowH + 8));
+  entries.forEach(([k, v], i) => {
+    const y = 4 + i * rowH, w = Math.max(2, (420 - lw - 80) * v / max);
+    svg.appendChild(el("text", {x:0, y:y + 15}, k));
+    svg.appendChild(el("rect", {x:lw, y:y + 3, width:w, height:14, rx:3, fill:colorFor(k)}));
+    svg.appendChild(el("text", {x:lw + w + 6, y:y + 15}, v + "  (" + (100 * v / total).toFixed(0) + " %)"));
+  });
+}
+
+function agreement(d) {
+  const a = d.agreement, box = $("agree"); box.replaceChildren();
+  if (!a.compared) { box.appendChild(h("div", "muted", "No tiles with both a camera and a sound grade in this window.")); return; }
+  box.appendChild(h("div", null, "Matched on " + a.agree + " of " + a.compared + " (" + pct(a.rate) + ")"));
+  if (a.small_sample) box.appendChild(h("div", "warnnote", "Fewer than " + d.min_sample + " compared — too few to trust."));
+  box.appendChild(h("div", "muted", "This compares the two sensors. Sound only affects the final grade when its vote is switched on."));
+  const cols = GR.filter(g => Object.values(a.matrix).some(r => r[g]));
+  const rows = GR.filter(g => a.matrix[g]);
+  const tb = h("table"); const hr = h("tr");
+  hr.appendChild(h("th", null, "camera ↓  sound →")); cols.forEach(c => hr.appendChild(h("th", null, c))); tb.appendChild(hr);
+  rows.forEach(rg => {
+    const r = h("tr"); r.appendChild(h("td", null, rg));
+    cols.forEach(c => r.appendChild(h("td", rg === c ? "diag" : "", String(a.matrix[rg][c] || 0))));
+    tb.appendChild(r);
+  });
+  box.appendChild(tb);
+}
+
+function transit(d) {
+  const t = d.transit_s, box = $("transit"); box.replaceChildren();
+  if (!t.n) { box.appendChild(h("div", "muted", "No tile has both a camera and a final timestamp yet.")); return; }
+  const tb = h("table");
+  [["Tiles measured", t.n], ["Median", t.median + " s"], ["90th percentile", t.p90 + " s"], ["Slowest", t.max + " s"]].forEach(([k, v]) => {
+    const r = h("tr"); r.append(h("td", null, k), h("td", null, String(v))); tb.appendChild(r);
+  });
+  box.appendChild(tb);
+  box.appendChild(h("div", "muted", "Use the 90th percentile when choosing the station's max-wait; the 30 s in config is a placeholder."));
+}
+
+function render(d) {
+  $("demo").style.display = d.demo ? "" : "none";
+  $("empty").style.display = d.totals.tiles ? "none" : "block";
+  kpis(d); stacked(d);
+  hbars("mix", GR.map(g => [g, d.grades[g]]).filter(e => e[1]), k => GC[k]);
+  hbars("dest", Object.entries(d.destinations).sort((a, b) => b[1] - a[1]), () => "var(--bar)");
+  agreement(d); transit(d);
+  hbars("alarms", Object.entries(d.alarms_by_kind).sort((a, b) => b[1] - a[1]), () => "var(--gR)");
+}
+
+async function load() {
+  try { data = await (await fetch("/api/analysis?window=" + windowS, {cache:"no-store"})).json(); }
+  catch (e) { return; }
+  if (data.ok === false) return;
+  render(data);
+}
+$("tbl").onclick = () => {
+  asTable = !asTable;
+  $("tablewrap").style.display = asTable ? "block" : "none";
+  $("chart").style.display = asTable ? "none" : "block";
+  $("tbl").textContent = asTable ? "Show as chart" : "Show as table";
+};
+windowsBar(); load(); setInterval(load, 5000);
+</script>
+</body>
+</html>

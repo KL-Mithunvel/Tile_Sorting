@@ -93,7 +93,7 @@ def _stations(snap: dict) -> list[dict]:
             level, detail = "offline", "no status from the Pi station"
         elif key is None:
             state = station.get("state", "")
-            level = "fail" if state == "fault" else "warn" if state == "hold_all" else "ok"
+            level = "fail" if state == "fault" else "warn" if state in ("hold_all", "line_stopped") else "ok"
             detail = station.get("state_detail") or state
         else:
             h = health.get(key)
@@ -143,6 +143,7 @@ def build_plant(snap: dict, now: float) -> dict:
             "detail": "the Pi station is not reporting" if silent else station.get("state_detail"),
             "belt_pct": belt,
             "hold_all": bool(settings.get("hold_all")),
+            "stopped": settings.get("line") == "stopped",
             "vote_enabled": bool(settings.get("vote_enabled")),
             "awaiting": station.get("awaiting_count", 0),
         },

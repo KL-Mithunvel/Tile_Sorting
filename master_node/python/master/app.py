@@ -228,6 +228,25 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
             return denied
         return _send("station/cmd", {"cmd": "clear_alarms"})
 
+    @app.route("/api/command/line", methods=["POST"])
+    def cmd_line():
+        denied = _guard()
+        if denied:
+            return denied
+        body = _body()
+        state = body.get("state")
+        if state not in ("start", "stop"):
+            return jsonify(ok=False, error='state must be "start" or "stop"'), 400
+        payload = {"cmd": "line", "state": state}
+        if "belt_percent" in body and body["belt_percent"] is not None:
+            pct = body["belt_percent"]
+            if isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 < pct <= 100:
+                return jsonify(ok=False, error="belt_percent must be a number above 0 and up to 100"), 400
+            if state == "stop":
+                return jsonify(ok=False, error="belt_percent only applies to start"), 400
+            payload["belt_percent"] = pct
+        return _send("station/cmd", payload)
+
     @app.route("/api/command/belt", methods=["POST"])
     def cmd_belt():
         denied = _guard()

@@ -71,9 +71,10 @@
   <h2>Selected</h2>
   <div id="sel" class="muted">Click a station in the scene or the list.</div>
   <h2 style="margin-top:14px">Line control</h2>
-  <div class="row"><button id="start" class="go">Start belt</button><button id="stop" class="stop">Stop belt</button></div>
+  <div class="row"><button id="start" class="go">Start line</button><button id="stop" class="stop">Stop line</button></div>
+  <div class="muted" style="font-size:12px;margin-bottom:4px">Soft stop over the network: belt to 0, striker inhibited, tiles held. <b>Not an emergency stop.</b></div>
   <div class="row"><input id="belt" type="range" min="0" max="100" value="60" style="flex:1;padding:0"><span id="beltv">60 %</span>
-    <button id="beltSet">Set</button></div>
+    <button id="beltSet">Set belt</button></div>
   <div class="row"><button id="holdOn">Hold all ON</button><button id="holdOff">OFF</button></div>
   <div class="row"><button id="voteOn">Sound vote ON</button><button id="voteOff">OFF</button></div>
   <div class="row"><button id="strikeOn">Allow striker</button><button id="strikeOff">Inhibit</button></div>
@@ -416,7 +417,7 @@ async function poll() {
   plant = p; controlsOn = p.controls;
   const ln = p.line, silent = ln.state === 'silent';
   const st = $('state'); st.textContent = ln.state || '—';
-  st.className = 'pill ' + (silent ? 'offline' : ln.state === 'fault' ? 'fail' : ln.state === 'hold_all' ? 'warn' : 'ok');
+  st.className = 'pill ' + (silent ? 'offline' : ln.state === 'fault' ? 'fail' : (ln.state === 'hold_all' || ln.state === 'line_stopped') ? 'warn' : 'ok');
   const br = $('broker'); br.textContent = p.broker_connected ? 'broker connected' : 'broker down'; br.className = 'pill ' + (p.broker_connected ? 'ok' : 'fail');
   $('demo').style.display = p.demo ? '' : 'none';
   const bn = $('banner');
@@ -440,8 +441,8 @@ async function cmd(path, body, ask) {
 }
 $('belt').oninput = () => { $('beltv').textContent = $('belt').value + ' %'; };
 $('beltSet').onclick = () => cmd('belt', { percent:Number($('belt').value) });
-$('start').onclick = () => cmd('belt', { percent:Number($('belt').value) || 60 });
-$('stop').onclick = () => cmd('belt', { percent:0 }, 'Stop the belt?');
+$('start').onclick = () => cmd('line', { state:'start' }, plant && plant.line.stopped ? null : 'The line is already running. Send Start anyway?');
+$('stop').onclick = () => cmd('line', { state:'stop' }, 'Stop the whole line? Belt to 0, striker inhibited, every tile held. This is a soft stop over the network - NOT an emergency stop.');
 $('holdOn').onclick = () => cmd('hold_all', { enabled:true }, 'Hold EVERY tile for a person?');
 $('holdOff').onclick = () => cmd('hold_all', { enabled:false });
 $('voteOn').onclick = () => cmd('vote', { enabled:true });

@@ -138,3 +138,59 @@ def test_gantry_station_uses_its_own_status_when_it_is_fresh():
     assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["level"] == "offline"
     snap["gantry"], snap["gantry_age_s"] = {"state": "online", "level": "ok"}, 60.0  # stale: not trusted
     assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["level"] == "offline"
+
+
+# ---- whole-line start / stop --------------------------------------------------
+
+def _client(controls=True):
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    return create_app(col, bus, controls_enabled=controls).test_client(), bus
+
+
+def test_line_command_is_validated_guarded_and_sent_as_one_station_cmd():
+    c, bus = _client()
+    ok = c.post("/api/command/line", json={"state": "stop"})
+    assert ok.status_code == 200
+    assert bus.messages("station/cmd")[-1] == {"cmd": "line", "state": "stop"}
+    c.post("/api/command/line", json={"state": "start", "belt_percent": 40})
+    assert bus.messages("station/cmd")[-1] == {"cmd": "line", "state": "start", "belt_percent": 40}
+    n = len(bus.messages("station/cmd"))
+    for bad in ({}, {"state": "pause"}, {"state": "start", "belt_percent": 0},
+                {"state": "start", "belt_percent": 101}, {"state": "start", "belt_percent": True},
+                {"state": "stop", "belt_percent": 50}):
+        assert c.post("/api/command/line", json=bad).status_code == 400
+    assert len(bus.messages("station/cmd")) == n                       # nothing sent for any of them
+    assert c.post("/api/command/line", data="x").status_code == 415
+    off, _ = _client(controls=False)
+    assert off.post("/api/command/line", json={"state": "stop"}).status_code == 403
+
+
+def test_demo_line_follows_the_same_stop_start_rules_as_the_station():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    line = DemoLine(bus, interval_s=100.0, fault_every_s=1e9, seed=1)
+    line.hold_all, line.belt_pct = True, 45.0
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    assert line.line_stopped and line.belt_pct == 0 and line.hold_all and not line.strike_enabled
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert not line.line_stopped and line.belt_pct == 45.0 and line.strike_enabled
+    assert line.hold_all is True                      # it was on before the stop, so it is on after
+    line.belt_pct = 0.0
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})   # nothing known to restore ...
+    line._saved["belt"] = None
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert line.line_stopped                          # ... so it refuses rather than guessing a speed
+
+
+def test_plant_and_troubleshoot_show_a_stopped_line_as_deliberate_not_a_fault():
+    from master.troubleshoot import diagnose
+    st = status(state="line_stopped")
+    st["state_detail"] = "line stopped (soft stop from the master - not an e-stop)"
+    st["settings"] = {"hold_all": True, "vote_enabled": False, "line": "stopped"}
+    p = build_plant(snap(station=st), now=100.0)
+    assert p["line"]["stopped"] is True and p["line"]["state"] == "line_stopped"
+    pi = {s["id"]: s for s in p["stations"]}["pi"]
+    assert pi["level"] == "warn"
+    (f,) = diagnose(p["stations"], [], [], 100.0)
+    assert "stopped from the master" in f["title"] and "not a fault" in f["meaning"]

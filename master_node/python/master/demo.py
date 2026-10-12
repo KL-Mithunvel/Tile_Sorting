@@ -33,6 +33,8 @@ class DemoLine(threading.Thread):
         self.vote_enabled = False
         self.strike_enabled = True
         self.belt_pct = 60.0
+        self.line_stopped = False
+        self._saved: dict = {}
         self.tally: dict[str, int] = {}
         self._n = 0
         self._awaiting: list[dict] = []
@@ -68,6 +70,23 @@ class DemoLine(threading.Thread):
                 self.vote_enabled = bool(cmd.get("enabled"))
             elif name == "clear_alarms":
                 pass  # the master's own record is what it shows; nothing to reset here
+            elif name == "line":
+                self._line(cmd.get("state"), cmd.get("belt_percent"))
+
+    def _line(self, state, pct) -> None:
+        """Same semantics as the real coordinator's set_line (lock already held)."""
+        if state == "stop":
+            if not self.line_stopped:
+                self._saved = {"hold_all": self.hold_all, "belt": self.belt_pct if self.belt_pct > 0 else None}
+                self.line_stopped = True
+            self.hold_all, self.belt_pct, self.strike_enabled = True, 0.0, False
+        elif state == "start":
+            pct = pct if pct is not None else self._saved.get("belt")
+            if pct is None or isinstance(pct, bool) or not 0 < pct <= 100:
+                return
+            self.hold_all = bool(self._saved.get("hold_all", False))
+            self.line_stopped, self.belt_pct, self.strike_enabled = False, float(pct), True
+            self._saved = {}
 
     def _on_belt(self, topic: str, payload: bytes) -> None:
         pct = self._json(payload).get("percent")
@@ -155,6 +174,8 @@ class DemoLine(threading.Thread):
         }
         if camera_faulty:
             state, detail = "fault", "camera: demo fault"
+        elif self.line_stopped:
+            state, detail = "line_stopped", "line stopped (soft stop from the master - not an e-stop)"
         elif self.hold_all:
             state, detail = "hold_all", "every tile is being held for a person"
         elif self._awaiting:
@@ -165,5 +186,6 @@ class DemoLine(threading.Thread):
             "now": now, "state": state, "state_detail": detail, "health": health,
             "awaiting_count": len(self._awaiting),
             "settings": {"vote_enabled": self.vote_enabled, "hold_all": self.hold_all,
+                         "line": "stopped" if self.line_stopped else "running",
                          "strike_enabled": self.strike_enabled},
             "tally": dict(self.tally), "counters": {}}, qos=0, retain=True)

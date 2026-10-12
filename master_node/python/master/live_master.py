@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -61,6 +63,18 @@ def main(argv=None) -> None:
         collector.attach(bus)
         bus.start()
         where = f"broker {host}:{port}"
+
+    def _watch() -> None:
+        # Station health is logged on a timer so a station going silent is
+        # recorded even when nobody has the Troubleshoot page open.
+        while True:
+            time.sleep(2.0)
+            try:
+                collector.tick(broker_connected=bool(bus.connected))
+            except Exception:  # noqa: BLE001 - the watcher must never take the master down
+                pass
+
+    threading.Thread(target=_watch, daemon=True, name="health-watch").start()
 
     controls = bool(args.controls or args.demo or dash.get("controls_enabled", False))
     app = create_app(collector, bus, controls_enabled=controls, demo=args.demo)

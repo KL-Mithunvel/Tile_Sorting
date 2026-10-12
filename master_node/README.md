@@ -37,11 +37,11 @@ touches `data/master/master.db`. Everything it shows is synthetic.
 **Honest limits.** Tile positions are *derived* (age along the belt, held at the next
 station until it has reported), not measured. "Start/Stop belt" only sends a belt
 percent to the Nano; there is no whole-line start/stop message in the contract yet.
-Troubleshoot and AI insights tabs are placeholders for the next steps.
+The AI insights tab is a placeholder for the next step.
 Checked in headless Edge at 1500 px only; the page JS has no automated tests, and
 clicking a station / the camera fly-to were not exercised.
 
-Status: built and unit-tested on the dev laptop (34 tests), page rendered against seeded
+Status: built and unit-tested on the dev laptop (51 tests), page rendered against seeded
 data; **never connected to a real broker**. The page is unauthenticated; the commands
 change how the line behaves, so they stay disabled unless you ask for them, and the
 network is assumed isolated (`documents/electrical/network_plan.md`).
@@ -60,3 +60,22 @@ All numbers come from the master's own SQLite record (`master/analysis.py`, pure
   number to use when choosing `ledger.max_wait_s` (30 s is a placeholder).
 - In `--demo` the sound grade is copied from the camera grade, so 100 % agreement there
   means nothing. Checked in headless Edge at 1300 px only.
+
+## Troubleshoot view (added 2026-10-12)
+
+`/troubleshoot` (`GET /api/troubleshoot?window=<seconds>`): what needs attention now,
+a per-station health timeline with uptime, recent level changes and recent alarms.
+
+- Each finding says what the station reported, since when, what it means and a
+  cheapest-first list of checks, matched on the detail strings the Pi station really
+  emits. **The checks are suggestions, not verified diagnoses.** An unrecognised detail
+  still produces a finding with generic advice.
+- A silent Pi collapses everything else into one finding (the others read "offline" only
+  as a consequence); a broken master-to-broker link reports only itself.
+- History is a `health_events` table in the master's SQLite record, written only when a
+  station's *level* changes. A background watcher calls `collector.tick()` every 2 s so a
+  station going silent is recorded even with no page open. Time before the master first saw
+  a station is "no record" and is excluded from uptime.
+- The Pi's own "station reports a fault" is hidden when a specific failing station explains it.
+- Recorded history only starts when this master starts; it says nothing about the line
+  while the master was not running.

@@ -16,7 +16,8 @@ from flask import Flask, Response, jsonify, render_template, request
 
 from master.collector import MasterCollector
 from master.analysis import DEFAULT_WINDOW_S, WINDOWS_S, build_analysis
-from master.plant import build_plant
+from master.plant import STATIONS, build_plant, stations_from_snapshot
+from master.troubleshoot import diagnose, timeline
 
 
 def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
@@ -44,6 +45,38 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         out = build_analysis(collector.analysis_rows(since), collector.alarm_rows(since), now, window)
         out["demo"] = demo
         return jsonify(out)
+
+    @app.route("/troubleshoot")
+    def troubleshoot_page():
+        return render_template("troubleshoot.html", windows=WINDOWS_S, default_window=DEFAULT_WINDOW_S)
+
+    @app.route("/api/troubleshoot")
+    def api_troubleshoot():
+        try:
+            window = int(request.args.get("window", DEFAULT_WINDOW_S))
+        except ValueError:
+            window = -1
+        if window not in WINDOWS_S:
+            return jsonify(ok=False, error=f"window must be one of {list(WINDOWS_S)} seconds"), 400
+        now = clock()
+        connected = bool(bus.connected)
+        collector.tick(now, broker_connected=connected)
+        snap = collector.snapshot(now=now, recent=0)
+        stations = stations_from_snapshot(snap)
+        events = collector.health_events(now - window)
+        current = {s["id"]: s["level"] for s in stations}
+        if connected is not None:
+            current["master"] = "ok" if connected else "fail"
+        labels = {sid: label for sid, label, _ in STATIONS}
+        labels["master"] = "This master (broker link)"
+        return jsonify({
+            "now": now, "window_s": window, "demo": demo, "broker_connected": connected,
+            "labels": labels,
+            "findings": diagnose(stations, events, collector.alarm_rows(now - 600), now, master_connected=connected),
+            "timeline": timeline(events, current, now, window),
+            "changes": [e for e in events if e["ts"] >= now - window][-40:][::-1],
+            "alarms": [a for a in snap.get("alarms") or []][:25],
+        })
 
     @app.route("/classic")
     def classic():

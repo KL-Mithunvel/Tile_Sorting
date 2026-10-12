@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master — Troubleshoot</title>
+<style>
+  :root { --bg:#0b0e13; --panel:#141a23; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3; --accent:#58a6ff;
+    --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; --offline:#6b7480; --unknown:#232a35; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:12px 14px 40px; }
+  nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }
+  nav h1 { font-size:16px; margin:0 6px 0 0; }
+  .tab { padding:5px 12px; border-radius:8px; border:1px solid var(--line); color:var(--muted); text-decoration:none; }
+  .tab.on { color:var(--text); border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .tab.soon { opacity:.5; cursor:not-allowed; }
+  .pill { padding:2px 10px; border-radius:999px; border:2px solid var(--line); font-weight:700; text-transform:uppercase; font-size:11px; white-space:nowrap; }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.warn { color:var(--warn); border-color:var(--warn); }
+  .pill.fail { color:#fff; background:var(--fail); border-color:var(--fail); } .pill.offline { color:var(--offline); border-color:var(--offline); }
+  .pill.demo { color:#a371f7; border-color:#a371f7; font-size:12px; padding:3px 12px; }
+  .bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  button { font:inherit; padding:5px 12px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); cursor:pointer; }
+  button.on { border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; min-width:0; margin-bottom:12px; }
+  h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .finding { border-left:6px solid var(--muted); padding:8px 12px; margin:8px 0; background:rgba(255,255,255,.02); border-radius:0 8px 8px 0; }
+  .finding.fail { border-left-color:var(--fail); } .finding.warn { border-left-color:var(--warn); } .finding.offline { border-left-color:var(--offline); }
+  .finding h3 { margin:0 0 2px; font-size:15px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .finding .meta { color:var(--muted); font-size:12px; }
+  .finding ol { margin:6px 0 0 20px; padding:0; } .finding li { margin:2px 0; }
+  .good { color:var(--ok); font-weight:600; }
+  svg { width:100%; height:auto; display:block; } svg text { fill:var(--muted); font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th,td { text-align:left; padding:4px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; font-weight:600; }
+  .legend { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; margin:4px 0 8px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; }
+  .muted { color:var(--muted); }
+  #tip { position:fixed; pointer-events:none; background:#0e1116; border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px; display:none; z-index:5; white-space:nowrap; }
+</style>
+</head>
+<body>
+<nav>
+  <h1>Tile line — master</h1>
+  <a class="tab" href="/">Plant 3D</a><a class="tab" href="/analysis">Analysis</a><span class="tab on">Troubleshoot</span>
+  <span class="tab soon" title="next step">AI insights</span><a class="tab" href="/classic">Classic view</a>
+  <span style="flex:1"></span><span class="pill demo" id="demo" style="display:none">demo — synthetic line</span>
+</nav>
+
+<section class="card">
+  <h2>What needs attention now</h2>
+  <div id="findings" class="muted">Loading…</div>
+  <div class="muted" style="margin-top:8px;font-size:12px">The checks are suggestions in cheapest-first order, written from how the station reports the symptom. They are not verified diagnoses.</div>
+</section>
+
+<div class="bar" id="windows"><span class="muted">History window</span></div>
+<section class="card">
+  <h2>Station timeline</h2>
+  <div class="legend" id="legend"></div>
+  <svg id="tl" viewBox="0 0 900 220" role="img" aria-label="Station health timeline"></svg>
+  <div class="muted" style="font-size:12px;margin-top:4px">Uptime counts only time the master has a record for; a freshly started master has little history and shows "—" rather than 100 %.</div>
+</section>
+
+<div class="card"><h2>Recent changes</h2><div style="overflow:auto;max-height:300px"><table id="changes"></table></div></div>
+<div class="card"><h2>Recent alarms and events</h2><div style="overflow:auto;max-height:300px"><table id="alarms"></table></div></div>
+<div id="tip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const WINDOWS = {{ windows|tojson }};
+let windowS = {{ default_window }};
+const LC = {ok:"var(--ok)", warn:"var(--warn)", fail:"var(--fail)", offline:"var(--offline)", unknown:"var(--unknown)"};
+const LT = {ok:"OK", warn:"warning", fail:"FAULT", offline:"offline", unknown:"no record"};
+function el(tag, attrs, text) { const e = document.createElementNS(NS, tag); for (const k in attrs || {}) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; }
+function h(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+const wl = s => s >= 86400 ? "24 h" : s >= 3600 ? (s / 3600) + " h" : (s / 60) + " min";
+const clock = ts => new Date(ts * 1000).toLocaleTimeString();
+function ago(s) { s = Math.max(0, Math.round(s)); return s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h"; }
+function tip(show, x, y, lines) {
+  const t = $("tip"); if (!show) { t.style.display = "none"; return; }
+  t.replaceChildren(...lines.map(l => h("div", null, l)));
+  t.style.display = "block"; t.style.left = Math.min(x + 14, innerWidth - t.offsetWidth - 8) + "px"; t.style.top = (y + 14) + "px";
+}
+
+function findings(d) {
+  const box = $("findings"); box.replaceChildren(); box.className = "";
+  if (!d.findings.length) { box.appendChild(h("div", "good", "Nothing needs attention: every station is reporting OK and there are no recent alarms.")); return; }
+  const label = f => f.station === "alarm" ? "alarms" : (d.labels[f.station] || f.station);
+  for (const f of d.findings) {
+    const c = h("div", "finding " + f.level);
+    const t = h("h3"); t.append(h("span", "pill " + f.level, LT[f.level] || f.level), document.createTextNode(f.title));
+    c.appendChild(t);
+    const bits = [label(f)];
+    if (f.since != null) bits.push("for " + ago(d.now - f.since));
+    if (f.detail) bits.push("reported: “" + f.detail + "”");
+    c.appendChild(h("div", "meta", bits.join(" · ")));
+    c.appendChild(h("div", null, f.meaning));
+    if (f.checks.length) { c.appendChild(h("div", "meta", "Check, in this order:")); const ol = h("ol"); f.checks.forEach(x => ol.appendChild(h("li", null, x))); c.appendChild(ol); }
+    box.appendChild(c);
+  }
+}
+
+function drawTimeline(d) {
+  const svg = $("tl"); svg.replaceChildren();
+  const t = d.timeline, ids = Object.keys(t.stations);
+  const L = 190, R = 70, rowH = 30, T = 4, W = 900, H = T + ids.length * rowH + 26, pw = W - L - R, span = t.end - t.start;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  ids.forEach((id, i) => {
+    const y = T + i * rowH, s = t.stations[id];
+    svg.appendChild(el("text", {x:0, y:y + 19}, d.labels[id] || id));
+    svg.appendChild(el("rect", {x:L, y:y + 4, width:pw, height:20, rx:3, fill:"var(--unknown)"}));
+    for (const g of s.segments) {
+      const x = L + pw * (g.from - t.start) / span, w = Math.max(1.5, pw * (g.to - g.from) / span);
+      const r = el("rect", {x, y:y + 4, width:w, height:20, fill:LC[g.level] || LC.unknown});
+      r.onmousemove = e => tip(true, e.clientX, e.clientY, [d.labels[id] || id, LT[g.level] || g.level, clock(g.from) + " – " + clock(g.to), "(" + ago(g.to - g.from) + ")"]);
+      r.onmouseleave = () => tip(false);
+      svg.appendChild(r);
+    }
+    svg.appendChild(el("text", {x:W - R + 8, y:y + 19}, s.uptime == null ? "—" : (s.uptime * 100).toFixed(1) + " %"));
+  });
+  const ya = T + ids.length * rowH + 16;
+  svg.appendChild(el("text", {x:L, y:ya}, clock(t.start)));
+  svg.appendChild(el("text", {x:L + pw, y:ya, "text-anchor":"end"}, clock(t.end)));
+  svg.appendChild(el("text", {x:W - R + 8, y:ya}, "uptime"));
+  const lg = $("legend"); lg.replaceChildren();
+  for (const k of ["ok", "warn", "fail", "offline", "unknown"]) { const s = h("span"); const i = h("i"); i.style.background = LC[k]; s.append(i, document.createTextNode(LT[k])); lg.appendChild(s); }
+}
+
+function tables(d) {
+  const c = $("changes"); c.replaceChildren();
+  const hr = h("tr"); ["Time", "Station", "Became", "Detail"].forEach(x => hr.appendChild(h("th", null, x))); c.appendChild(hr);
+  if (!d.changes.length) { const r = h("tr"); const td = h("td", "muted", "No level changes in this window."); td.colSpan = 4; r.appendChild(td); c.appendChild(r); }
+  for (const e of d.changes) {
+    const r = h("tr"); const p = h("span", "pill " + e.level, LT[e.level] || e.level); const td = h("td"); td.appendChild(p);
+    r.append(h("td", null, clock(e.ts)), h("td", null, d.labels[e.station] || e.station), td, h("td", null, e.detail || "")); c.appendChild(r);
+  }
+  const a = $("alarms"); a.replaceChildren();
+  const ah = h("tr"); ["Time", "Kind", "Message"].forEach(x => ah.appendChild(h("th", null, x))); a.appendChild(ah);
+  if (!d.alarms.length) { const r = h("tr"); const td = h("td", "muted", "None."); td.colSpan = 3; r.appendChild(td); a.appendChild(r); }
+  for (const x of d.alarms) { const r = h("tr"); r.append(h("td", null, clock(x.ts)), h("td", null, x.kind || ""), h("td", null, x.message || "")); a.appendChild(r); }
+}
+
+function windowsBar() {
+  const w = $("windows");
+  for (const s of WINDOWS) {
+    const b = h("button", s === windowS ? "on" : "", wl(s));
+    b.onclick = () => { windowS = s; for (const x of w.querySelectorAll("button")) x.className = ""; b.className = "on"; load(); };
+    w.appendChild(b);
+  }
+}
+async function load() {
+  let d;
+  try { d = await (await fetch("/api/troubleshoot?window=" + windowS, {cache:"no-store"})).json(); } catch (e) { return; }
+  if (d.ok === false) return;
+  $("demo").style.display = d.demo ? "" : "none";
+  findings(d); drawTimeline(d); tables(d);
+}
+windowsBar(); load(); setInterval(load, 3000);
+</script>
+</body>
+</html>

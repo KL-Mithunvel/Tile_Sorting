@@ -146,3 +146,40 @@ def test_time_before_first_record_is_unknown_not_counted_as_up():
     assert t["segments"][0]["level"] == "unknown" and t["segments"][-1]["level"] == "ok"
     assert t["known_s"] == 100.0 and t["uptime"] == 1.0
     assert timeline([], {"pi": "ok"}, now=1000.0, window_s=500.0)["stations"]["pi"]["uptime"] is None
+
+
+# ---- endpoint ---------------------------------------------------------------
+
+def test_troubleshoot_endpoint_reports_a_silent_pi_then_a_camera_fault():
+    from master.app import create_app
+    from master.bus import InMemoryBus
+
+    clock = [100.0]
+    bus, col = InMemoryBus(), MasterCollector(clock=lambda: clock[0])
+    col.attach(bus)
+    app = create_app(col, bus, clock=lambda: clock[0])
+    c = app.test_client()
+    d = c.get("/api/troubleshoot?window=900").get_json()
+    assert [f["station"] for f in d["findings"]] == ["pi"]            # nothing heard yet: one finding, not five
+
+    bus.publish("station/status", json.loads(station_msg(camera=("fail", "silent for 9 s"))))
+    d = c.get("/api/troubleshoot?window=900").get_json()
+    assert [f["station"] for f in d["findings"]] == ["camera"]
+    assert d["findings"][0]["checks"] and d["timeline"]["stations"]["camera"]["segments"]
+    assert d["labels"]["camera"] == "Camera station"
+
+    bus.link_up = False
+    d = c.get("/api/troubleshoot").get_json()
+    assert [f["station"] for f in d["findings"]] == ["master"]
+    assert c.get("/api/troubleshoot?window=5").status_code == 400
+    assert c.get("/troubleshoot").status_code == 200
+
+
+def test_pi_fault_is_not_repeated_when_a_station_explains_it():
+    s = healthy()
+    s[0] = st("pi", "fail", "camera: silent for 9 s")
+    s[1] = st("camera", "fail", "silent for 9 s")
+    assert [f["station"] for f in diagnose(s, [], [], NOW)] == ["camera"]
+    # but a Pi fault with no failing station beneath it is still reported
+    s[1] = st("camera", "ok", "3 tiles")
+    assert [f["station"] for f in diagnose(s, [], [], NOW)] == ["pi"]

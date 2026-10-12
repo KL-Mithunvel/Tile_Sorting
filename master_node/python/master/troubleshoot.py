@@ -169,9 +169,14 @@ def diagnose(stations: list[dict], events: list[dict], alarms: list[dict], now: 
     if pi_silent:
         add("pi", "offline", pi["detail"], "health")
     else:
-        for s in stations:
-            if s["level"] in ("fail", "warn", "offline"):
-                add(s["id"], s["level"], s["detail"], "health")
+        bad = [s for s in stations if s["level"] in ("fail", "warn", "offline")]
+        causes = [s for s in bad if s["id"] != "pi"]
+        for s in bad:
+            # The Pi's own "fault" is just the sum of its stations' faults; with a
+            # specific cause on the list it adds nothing.
+            if s["id"] == "pi" and s["level"] == "fail" and any(c["level"] == "fail" for c in causes):
+                continue
+            add(s["id"], s["level"], s["detail"], "health")
 
     counts: dict[str, list] = {}
     for a in alarms:

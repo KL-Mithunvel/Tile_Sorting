@@ -131,7 +131,7 @@ the sketch, `Bridge.call("fn", args)` from Python (example on the board at
 `/var/lib/arduino-app-cli/examples/platform_unoq/unoq-pin-toggle`). The `pinprobe` app
 (`~/ArduinoApps/pinprobe`) is a working reference for a bare pin-driving sketch.
 
-- [ ] **Prove a non-blocking accelerated stepper library builds & runs under Zephyr on the UNO Q.** Try in order: FastAccelStepper → AccelStepper → hand-written timer ISR → Zephyr-native stepper. *(Zephyr, not AVR/mbed — library compatibility is the open risk.)*
+- [ ] **Prove a non-blocking accelerated stepper library builds & runs under Zephyr on the UNO Q.** *(Spike written 2026-10-12, not yet compiled or run: `pick_place_node/bench_tests/stepper_lib_spike/`, deployed with `tools/uno_q/push-stepper-spike.bat`.)* Try in order: FastAccelStepper → AccelStepper → hand-written timer ISR → Zephyr-native stepper. *(Zephyr, not AVR/mbed — library compatibility is the open risk.)*
   - [ ] Library selected & compiles: __________
   - [ ] Test: one motor does a smooth accel → cruise → decel move **while** `loop()` still prints the limit-switch pin state every 100 ms (proves non-blocking).
 - [ ] Decide the **project sketch home**: work in `~/ArduinoApps/<app>/sketch/` on the board vs. keep the source of truth in the repo's `pick_place_node/sketch/` and push. (Mirrors the acoustic node's unresolved App-Lab-vs-repo question.)

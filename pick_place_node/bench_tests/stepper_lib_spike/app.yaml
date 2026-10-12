@@ -1,0 +1,10 @@
+# Reference copy only - NOT pushed to the board.
+#
+# The authoritative app.yaml is the one `arduino-app-cli app new stepper_lib_spike`
+# generates on the board. push-stepper-spike.bat pushes only sketch/sketch.ino,
+# sketch/sketch.yaml and python/main.py, leaving the generated manifest alone.
+# Schema mirrors stepper_smoke_test/app.yaml (verified on the lab board 2026-09-09).
+name: stepper_lib_spike
+icon: 🔧
+ports: []
+bricks: []

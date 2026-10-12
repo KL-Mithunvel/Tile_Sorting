@@ -1,0 +1,15 @@
+# Sketch project file for the stepper-library spike.
+#
+# UNVERIFIED for App Lab / arduino-app-cli: this follows the standard Arduino CLI
+# sketch-project schema (profiles -> libraries). pick_place_node/sketch/sketch.yaml
+# records that the App Lab schema itself has not been checked on a real project.
+# If `app restart` ignores `libraries:` or reports the library missing, install it
+# on the board instead:   arduino-cli lib install "AccelStepper@1.64"
+profiles:
+  default:
+    fqbn: arduino:zephyr:unoq
+    platforms:
+      - platform: arduino:zephyr
+    libraries:
+      - AccelStepper (1.64.0)
+default_profile: default

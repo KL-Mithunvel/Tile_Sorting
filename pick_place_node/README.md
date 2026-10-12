@@ -73,6 +73,13 @@ for the E-stop loop, the 3 limit switches, and the vacuum solenoid (checklist ta
 folder's `README.md`, including a real discrepancy it found in the wiring doc's stated
 LOW/HIGH trigger polarity.
 
+`bench_tests/stepper_lib_spike/` — a standalone `arduino-app-cli` app answering checklist
+task 0.6, the biggest firmware risk: can the Zephyr core generate accelerated STEP pulses
+without blocking `loop()`? Compares AccelStepper (polled) with a `k_timer`-driven
+fixed-point generator and prints one table. Safe by default (drivers held disabled).
+**Written but never compiled or run.** Push with `tools/uno_q/push-stepper-spike.bat`; see
+that folder's `README.md`.
+
 ## HMI / digital twin dashboard (design in progress, 2026-08-11)
 
 Full feature sketch for this node's local HMI (control panel, status panel, live digital

@@ -321,3 +321,82 @@ def test_uno_q_rejection_is_alarmed_but_releases_the_queue(rig):
     assert store.get("T1")["delivery"] == "rejected"
     assert any(a["kind"] == "unoq_rejected" for a in c.snapshot()["alarms"])
     assert [f["tile_id"] for f in finals(bus)] == ["T1", "T2"]  # T2 was released behind it
+
+
+# ---- whole-line soft stop / start ------------------------------------------
+
+def _nano(bus, pct):
+    bus.publish("station/nano/status", {"state": "online", "link": True, "belt_pct": pct, "ts": 1.0})
+
+
+def test_line_stop_holds_everything_zeroes_the_belt_and_inhibits_the_striker(rig):
+    clock, bus, store, c = rig
+    _nano(bus, 60)
+    bus.publish("station/camera/status", {"source_kind": "camera", "source_status": "running", "tile_count": 0})
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    assert c.line_stopped is True
+    assert bus.messages("station/belt")[-1] == {"percent": 0}
+    assert bus.messages("station/strike")[-1] == {"enabled": False}
+    snap = c.snapshot()
+    assert snap["settings"]["line"] == "stopped" and snap["settings"]["hold_all"] is True
+    assert snap["state"] == "line_stopped"
+    # a tile already in flight is held for a person, never sorted automatically
+    camera(bus, "T1", "Grade A")
+    c.on_tap(GOOD_TAP)
+    assert finals(bus)[0]["final_grade"] == "Hold"
+
+
+def test_line_start_restores_the_speed_and_the_hold_setting_it_overrode(rig):
+    clock, bus, store, c = rig
+    _nano(bus, 45)
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert c.line_stopped is False
+    assert bus.messages("station/belt")[-1] == {"percent": 45}
+    assert bus.messages("station/strike")[-1] == {"enabled": True}
+    snap = c.snapshot()
+    assert snap["settings"]["line"] == "running" and snap["settings"]["hold_all"] is False
+    # strike goes first, belt last: nothing moves until the line can use it
+    order = [t for t, *_ in bus.published if t in ("station/belt", "station/strike")][-2:]
+    assert order == ["station/strike", "station/belt"]
+
+
+def test_hold_all_that_was_on_before_the_stop_is_still_on_after_start(rig):
+    clock, bus, store, c = rig
+    _nano(bus, 50)
+    c.set_hold_all(True)
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert c.snapshot()["settings"]["hold_all"] is True
+
+
+def test_start_refuses_to_guess_a_belt_speed(rig):
+    clock, bus, store, c = rig                      # the Nano has never reported a speed
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    before = len(bus.messages("station/belt"))
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert c.line_stopped is True and len(bus.messages("station/belt")) == before
+    assert any(a["kind"] == "line_start" for a in c.snapshot()["alarms"])
+    # ...but an explicit speed from the master is accepted
+    bus.publish("station/cmd", {"cmd": "line", "state": "start", "belt_percent": 35})
+    assert c.line_stopped is False and bus.messages("station/belt")[-1] == {"percent": 35}
+
+
+def test_stop_twice_does_not_overwrite_what_the_first_stop_saved(rig):
+    clock, bus, store, c = rig
+    _nano(bus, 70)
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    _nano(bus, 0)                                   # the belt now reports 0
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert bus.messages("station/belt")[-1] == {"percent": 70}
+
+
+def test_bad_line_commands_are_rejected_and_change_nothing(rig):
+    clock, bus, store, c = rig
+    for bad in ({"cmd": "line"}, {"cmd": "line", "state": "pause"},
+                {"cmd": "line", "state": "start", "belt_percent": 400},
+                {"cmd": "line", "state": "start", "belt_percent": True}):
+        bus.publish("station/cmd", bad)
+    assert c.line_stopped is False and bus.messages("station/belt") == []
+    assert len([a for a in c.snapshot()["alarms"] if a["kind"] == "bad_message"]) == 4

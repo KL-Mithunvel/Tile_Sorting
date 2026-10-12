@@ -46,12 +46,14 @@ from fusion.transport import (
     CAMERA_RESULT_FILTER,
     PLACED_FILTER,
     TOPIC_ALARM,
+    TOPIC_BELT,
     TOPIC_CAMERA_STATUS,
     TOPIC_CMD,
     TOPIC_DIAG_PING,
     TOPIC_GANTRY_STATUS,
     TOPIC_NANO_STATUS,
     TOPIC_STATUS,
+    TOPIC_STRIKE,
     TOPIC_TAP,
     Bus,
     diag_pong_topic,
@@ -117,6 +119,9 @@ class StationCoordinator:
         self._nano_required = bool(nano_cfg.get("required", False))
         self._nano_stale_s = float(nano_cfg.get("stale_s", 3.0))
         self._nano_status: Optional[dict] = None
+        # Whole-line soft stop (see set_line). `_line_saved` is what stop overrode.
+        self._line_stopped = False
+        self._line_saved: dict = {}
         self._nano_status_ts: Optional[float] = None
         # Strike events (station/tap) waiting to be paired with their clip.
         self._tap_events: deque = deque(maxlen=16)
@@ -170,6 +175,55 @@ class StationCoordinator:
         with self._lock:
             self._hold_all = bool(enabled)
             self._event(f"hold-all {'ON' if enabled else 'OFF'} ({source})")
+
+    @property
+    def line_stopped(self) -> bool:
+        return self._line_stopped
+
+    def set_line(self, running: bool, belt_percent: Optional[float] = None, source: str = "operator") -> bool:
+        """Stop or start the whole line from one place.
+
+        STOP: hold-all ON (a tile already in flight is held for a person, never
+        sorted automatically), belt to 0, striker inhibited - and remember what
+        it overrode. START: restore it (belt to `belt_percent`, else the speed
+        it had before the stop; striker allowed; hold-all back to how it was).
+        It refuses to start the belt at a speed it does not know rather than
+        guess one. Returns whether the request was carried out.
+
+        This is a SOFT stop over the network - not an e-stop (that is wired
+        separately) - and it cannot stop the gantry: it only changes what is
+        sent to it (held tiles). Tiles already on the belt are not removed."""
+        with self._lock:
+            if not running:
+                if not self._line_stopped:
+                    nano = self._nano_status or {}
+                    pct = nano.get("belt_pct")
+                    self._line_saved = {
+                        "hold_all": self._hold_all,
+                        "belt_pct": pct if isinstance(pct, (int, float)) and pct > 0 else None,
+                    }
+                    self._line_stopped = True
+                    self._event(f"LINE STOPPED ({source}): hold-all on, belt 0, striker inhibited")
+                self._hold_all = True
+                self._bus.publish(TOPIC_BELT, {"percent": 0}, qos=1)
+                self._bus.publish(TOPIC_STRIKE, {"enabled": False}, qos=1)
+                return True
+            pct = belt_percent if belt_percent is not None else self._line_saved.get("belt_pct")
+            if pct is None or isinstance(pct, bool) or not 0 < pct <= 100:
+                self._alarm(
+                    "line_start",
+                    "line NOT started: no belt speed to restore - set one from the master and start again",
+                    None,
+                )
+                return False
+            self._hold_all = bool(self._line_saved.get("hold_all", False))
+            self._line_stopped = False
+            self._line_saved = {}
+            self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed")
+            # Striker first, belt last: nothing moves until the line can use it.
+            self._bus.publish(TOPIC_STRIKE, {"enabled": True}, qos=1)
+            self._bus.publish(TOPIC_BELT, {"percent": pct}, qos=1)
+            return True
 
     def clear_alarms(self) -> None:
         with self._lock:
@@ -570,6 +624,16 @@ class StationCoordinator:
             self.set_hold_all(bool(cmd.get("enabled")), source="master")
         elif name == "clear_alarms":
             self.clear_alarms()
+        elif name == "line":
+            state = cmd.get("state")
+            pct = cmd.get("belt_percent")
+            if state not in ("start", "stop") or (
+                pct is not None and (isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 < pct <= 100)
+            ):
+                with self._lock:
+                    self._alarm("bad_message", "station/cmd line needs state start|stop and belt_percent in (0,100]", None)
+            else:
+                self.set_line(state == "start", belt_percent=pct, source="master")
         else:
             with self._lock:
                 self._alarm("bad_message", f"unknown station/cmd {name!r}", None)
@@ -677,6 +741,8 @@ class StationCoordinator:
         failing = [k for k, v in health.items() if v["level"] == FAIL]
         if failing:
             state, detail = "fault", ", ".join(f"{k}: {health[k]['detail']}" for k in failing)
+        elif self._line_stopped:
+            state, detail = "line_stopped", "line stopped (soft stop from the master - not an e-stop)"
         elif self._hold_all:
             state, detail = "hold_all", "every tile is being held for a person"
         elif awaiting:
@@ -705,6 +771,7 @@ class StationCoordinator:
             "settings": {
                 "vote_enabled": self._vote_enabled,
                 "hold_all": self._hold_all,
+                "line": "stopped" if self._line_stopped else "running",
                 "min_confidence": self._min_conf,
                 "max_wait_s": self.ledger.max_wait_s,
                 "require_ack": self._require_ack,

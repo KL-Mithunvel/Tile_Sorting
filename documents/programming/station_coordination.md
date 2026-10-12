@@ -73,6 +73,7 @@ service must not restart the other. It is the *operator* screen:
 | Tile under the striker but **no camera result waiting** | missed camera detection: a `UNKNOWN-…` final **Hold** is sent so the UNO Q's ordered queue stays in step; alarm `missed_camera` |
 | Gap in the Nano's strike `seq` | alarm `tap_gap` with the count of lost events |
 | Operator/master `hold_all` | every tile Hold |
+| Whole-line soft **stop** (`line`) | hold-all on + belt 0 + striker inhibited; tiles in flight are Hold. **Start** restores the belt speed it had (or `belt_percent`), allows the striker, puts hold-all back how it was; with no known speed it refuses and raises a `line_start` alarm. Soft stop over the network - **not an e-stop**, and it cannot stop the gantry (only what is sent to it changes); tiles already on the belt stay there. |
 | Broker down / camera silent / mic dead / UNO Q not acking | station state **FAULT**, red health chip, no guessing |
 | UNO Q does not ack | final resent every `ack_timeout_s`; after `retries` the link is DOWN and later finals queue behind it, in order |
 
@@ -96,7 +97,7 @@ All JSON, UTF-8. Topic names extend `Automation_Architecture.md` §12/§13.
 | `station/gantry/cmd` | master → **UNO Q** | 1 / no | `{"id":…, "cmd":"pause"\|"resume"\|"acknowledge"\|"reset_stack"\|"home"\|"recover", "stack":…, "count":…}` — `home` / `recover` move the machine and are refused unless `gantry.station.motion_commands_enabled` |
 | `station/gantry/cmd/result` | **UNO Q** → master | 1 / no | `id, cmd, ok, reason, ts` — one per command, refusals included |
 | `station/status` | station → master | 0 / **retained**, last-will `{"state":"offline"}` | `state, state_detail, health{}, awaiting_count, settings{}, tally{}, counters{}` |
-| `station/cmd` | master → station | — | `{"cmd":"vote","enabled":bool}`, `{"cmd":"hold_all","enabled":bool}`, `{"cmd":"clear_alarms"}` |
+| `station/cmd` | master → station | — | `{"cmd":"vote","enabled":bool}`, `{"cmd":"hold_all","enabled":bool}`, `{"cmd":"clear_alarms"}`, `{"cmd":"line","state":"stop"\|"start","belt_percent":n?}` (whole-line soft stop/start, below) |
 | `machine/alarm` | station → master | 1 / no | `ts, level, kind, message, tile_id` |
 | `station/diag/ping` | `diagnose.sh` / `system.sh` → all | 0 / no | `{"id": ...}` — **never a tile**: answering it cannot create a pick job |
 | `station/diag/pong/<node>` | each running node → asker | 0 / no | `{id, node, ts, ok, detail}`; nodes: `station`, `camera`, `gantry` (UNO Q feed), `nano` (serial bridge — `ok` only if the Nano itself spoke recently), `master` |

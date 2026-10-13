@@ -201,8 +201,20 @@ def main():
         # ---------------- gantry / tile sync (sampled over a real run) ----------------
         ws.js("document.querySelector('#views button[data-v=gantry]').click()")
         worst, carried_samples, phases, cycles = 0.0, 0, set(), set()
+        prev, fastest, belt_samples = {}, 0.0, 0                # belt-speed check: no tile may "zoom"
         for _ in range(170):                                   # ~34 s: enough for several demo tiles
             ws.pump(0.2)
+            tnow = time.time()
+            xs = ws.js("""(() => { const m = window.__master; if (!m) return {};
+              const o = {}; for (const [id, t] of m.tiles) if (t.phase === 'belt' || t.phase === 'waiting') o[id] = t.mesh.position.x;
+              return o; })()""") or {}
+            for tid, x in xs.items():
+                if tid in prev:
+                    dt = tnow - prev[tid][1]
+                    if dt > 0.05:
+                        fastest = max(fastest, abs(x - prev[tid][0]) / dt)
+                        belt_samples += 1
+                prev[tid] = (x, tnow)
             r = ws.js("""(() => { const m = window.__master; if (!m) return null;
               const G = m.GANTRY, g = m.gantry, out = {st: m.seq.st, carried: null, placed: 0};
               for (const [id, o] of m.tiles) { if (o.phase === 'carried') {
@@ -219,9 +231,11 @@ def main():
             if r.get("id"):
                 cycles.add(r["id"])
         check("gantry: sequencer ran through the full pick-and-place cycle",
-              {"toPick", "lower1", "raise1", "toBin", "lower2", "raise2"} <= phases, sorted(phases))
+              {"lower1", "grab", "raise1", "toBin", "lower2", "release", "raise2"} <= phases, sorted(phases))
         check("gantry: a tile was carried and placed", len(cycles) >= 1 and carried_samples > 3, f"{len(cycles)} tiles, {carried_samples} samples")
         check("gantry: a carried tile never strays from the cup (max offset < 0.05)", worst < 0.05, f"worst {worst:.3f}")
+        check("belt: tiles move at belt speed - none zooms (fastest < 3.6 units/s)",
+              belt_samples > 20 and fastest < 3.6, f"fastest {fastest:.2f} u/s over {belt_samples} samples")
         check("gantry: no errors during the run", not errors(), "; ".join(errors()))
 
         # ---------------- Analysis ----------------

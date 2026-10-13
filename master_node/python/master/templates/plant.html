@@ -270,6 +270,7 @@ for (const [k, [x, z]] of Object.entries(BIN_POS)) {
 const tiles = new Map();           // tile_id -> { mesh, target, phase, dest, born }
 const tileGeo = new THREE.BoxGeometry(1.3, 0.12, 1.3);
 const PICK_X = ux(0.95), TILE_Y = BELT_Y + 0.07, TILE_H = 0.12;
+const BELT_MAX_SPEED = 3.0;        // units/s: ~2x the belt's own speed; nothing on the belt may exceed it
 const stacks = {};                 // bin key -> [tile objects], bottom first
 const STACK_MAX = 8, BIN_TOP = 0.5;
 function binFor(dest) { return BIN_POS[dest] ? dest : 'bin_hold'; }
@@ -281,16 +282,18 @@ function syncTiles(list) {
     let o = tiles.get(t.tile_id);
     if (!o) {
       const mesh = new THREE.Mesh(tileGeo, mat(0x8a8f98, { roughness:.8 }));
-      mesh.position.set(BELT_X0 - 0.5, TILE_Y, 0); scene.add(mesh);
-      o = { mesh, target:new THREE.Vector3(BELT_X0 - 0.5, TILE_Y, 0), phase:'belt', dest:null, born:performance.now() };
+      // appear where the tile IS (a page opened mid-run must not fly every tile in from the left)
+      const x0 = Math.min(ux(Math.min(Math.max(t.u, 0), 1)), PICK_X);
+      mesh.position.set(Math.max(x0, BELT_X0 - 0.5), TILE_Y, 0); scene.add(mesh);
+      o = { mesh, target:mesh.position.clone(), phase:'belt', dest:null, born:performance.now() };
       tiles.set(t.tile_id, o);
     }
     if (o.phase === 'placed') continue;
     o.mesh.material.color.setHex(GRADE[t.grade] ?? 0x8a8f98);
     o.dest = t.destination || o.dest;
     if (o.phase === 'belt') {
-      const x = t.stage === 'sorted' ? PICK_X : Math.min(ux(Math.min(t.u, 1)), PICK_X);
-      o.target.set(x, TILE_Y, 0);
+      o.target.set(Math.min(ux(Math.min(Math.max(t.u, 0), 1)), PICK_X), TILE_Y, 0);
+      // it is waiting for the gantry only once it has actually ridden to the end of the belt
       if (t.stage === 'sorted' && Math.abs(o.mesh.position.x - PICK_X) < 0.15) { o.phase = 'waiting'; o.waitSince = performance.now(); }
     }
     if (t.stage === 'acoustic' && !o.struck) { o.struck = true; strikeT = 0.0001; }
@@ -408,7 +411,12 @@ function frame() {
   }
   beltTex.offset.x -= (beltPct / 100) * 0.6 * dt;
 
-  for (const o of tiles.values()) if (o.phase === 'belt' || o.phase === 'waiting') o.mesh.position.lerp(o.target, 1 - Math.exp(-6 * dt));
+  for (const o of tiles.values()) {
+    if (o.phase !== 'belt' && o.phase !== 'waiting') continue;
+    const dx = o.target.x - o.mesh.position.x;
+    const step = Math.min(Math.abs(dx), Math.abs(dx) * (1 - Math.exp(-6 * dt)) + 0.0, BELT_MAX_SPEED * dt);
+    o.mesh.position.x += Math.sign(dx) * step;
+  }
 
   // fault lamps pulse; the camera cone breathes
   for (const o of Object.values(stationObj)) {

@@ -30,6 +30,10 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
     def index():
         return render_template("plant.html")
 
+    @app.route("/favicon.ico")
+    def favicon():
+        return ("", 204)          # no icon; answer quietly instead of a 404 in every page's console
+
     @app.route("/analysis")
     def analysis_page():
         return render_template("analysis.html", windows=WINDOWS_S, default_window=DEFAULT_WINDOW_S)

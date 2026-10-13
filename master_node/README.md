@@ -41,7 +41,7 @@ Page JS is checked by `development/drive_master_pages.py` (real headless Edge ag
 not part of pytest): load errors, station select, view buttons, belt/hold-all, window switches. Not
 covered: clicking a station inside the 3D canvas, hover tooltips.
 
-Status: built and unit-tested on the dev laptop (79 tests), page rendered against seeded
+Status: built and unit-tested on the dev laptop (see the handover doc for counts), page rendered against seeded
 data; **never connected to a real broker**. The page is unauthenticated; the commands
 change how the line behaves, so they stay disabled unless you ask for them, and the
 network is assumed isolated (`documents/electrical/network_plan.md`).
@@ -129,3 +129,24 @@ The prompt has not been evaluated for faithfulness. Phase 2 adaptive grading is 
 - **Gantry hard pause / resume** (`/api/command/gantry`) is different: it freezes the machine *mid-job* after the
   move in flight, so a tile may stay held on the cup. It asks for confirmation; prefer Pause feed.
 - Not verified: any of this against the real UNO Q, Nano or belt (demo + unit tests only).
+
+## Sim-backed demo: `--sim` (added 2026-10-13)
+
+```bash
+python -m master.live_master --sim      # no broker; controls on; in-memory DB
+```
+
+Where `--demo` *pretends* to be the station, `--sim` runs the real thing on the laptop: the real
+`StationCoordinator` (ledger, final grade, outbox/acks, line stop/start, feed gate, health) and the
+real gantry `FeedClient` -> `FinalQueue` -> `JobRunner` -> reporter -> command handler over the
+protocol's `SimulatedMcu`, on an in-memory bus. Only the camera, the Nano and the microphone are
+stand-ins (`master/sim_line.py`). The pill reads "sim - real station logic, simulated machine".
+
+- It imports the station's packages (adds them to `sys.path` itself) **only when `--sim` is given**;
+  nothing else in `master/` does, so a normal master still runs on any PC.
+- Default: the simulated MCU moves at a fixed 400 mm/s so the demo looks alive.
+  `SimLine(real_feeds=True)` honours the configured feed words instead - at today's placeholder
+  config one tile then takes ~22 s, i.e. the gantry is the bottleneck of the line.
+- Still simulated: no firmware, no real timing, no vacuum, no broker.
+
+Everything done and still to do is in `documents/programming/master_gui_handover.md`.

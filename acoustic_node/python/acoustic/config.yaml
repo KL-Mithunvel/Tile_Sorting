@@ -118,7 +118,8 @@ station:
     # sticky alert, and publishes tile/<id>/needs_person for the master.
     hold_to_gantry: false
     # While a Hold tile is on its way to the pickup the feed is paused, so the gantry cannot
-    # take it by mistake. A person takes it off the belt and presses Resume feed. false = keep
+    # take it by mistake. A person takes it off the belt and presses Resume feed (starting the
+    # line does NOT confirm it - only Resume feed does). false = keep
     # feeding (only safe if something else keeps Hold tiles away from the pickup point).
     hold_pauses_feed: true
 

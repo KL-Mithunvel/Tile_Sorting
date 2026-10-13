@@ -253,9 +253,15 @@ class StationCoordinator:
             self._hold_all = bool(self._line_saved.get("hold_all", False))
             self._line_stopped = False
             self._line_saved = {}
-            self._feed_paused = False
-            self._confirm_needs_person(source)
-            self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed, gantry feed resumed")
+            if self._needs_person:
+                # Starting the line is NOT the confirmation that hold tiles are off the belt: if it
+                # were, pressing Start with one still at the pickup would let the gantry pick it into
+                # the next tile's bin. The feed stays paused until an explicit Resume feed.
+                self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed; gantry feed stays "
+                            f"PAUSED - {len(self._needs_person)} hold tile(s) still need a person")
+            else:
+                self._feed_paused = False
+                self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed, gantry feed resumed")
             # Striker first, belt last: nothing moves until the line can use it.
             self._bus.publish(TOPIC_STRIKE, {"enabled": True}, qos=1)
             self._bus.publish(TOPIC_BELT, {"percent": pct}, qos=1)

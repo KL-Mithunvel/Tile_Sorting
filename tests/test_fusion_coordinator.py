@@ -510,7 +510,27 @@ def test_resuming_the_feed_is_the_confirmation_and_clears_the_alert(rig):
     assert [f["tile_id"] for f in finals(bus)] == ["T2"]         # now delivered
 
 
-def test_line_start_also_confirms_and_the_old_behaviour_is_a_config_choice():
+def test_starting_the_line_does_not_confirm_hold_tiles_are_gone(rig):
+    """Pressing Start with a hold tile still at the pickup must NOT let the gantry run: the feed
+    stays paused until an explicit Resume feed."""
+    clock, bus, store, c = rig
+    _nano(bus, 50)
+    c.set_hold_all(True)
+    camera(bus, "H1")
+    c.on_tap(GOOD_TAP)
+    c.set_hold_all(False)
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert c.line_stopped is False and c.feed_paused is True and c.snapshot()["needs_person"] == 1
+    assert bus.messages("station/belt")[-1] == {"percent": 50}            # the belt does run
+    camera(bus, "T2", "Grade B", seq=2)
+    c.on_tap(GOOD_TAP)
+    assert finals(bus) == []                                              # but nothing is handed to the gantry
+    bus.publish("station/cmd", {"cmd": "feed", "state": "resume"})
+    assert c.feed_paused is False and [f["tile_id"] for f in finals(bus)] == ["T2"]
+
+
+def test_the_old_behaviour_is_a_config_choice():
     clock, bus, store = Clock(), InMemoryBus(), TileStore(":memory:")
     cfg = {**CFG, "final": {**CFG["final"], "hold_to_gantry": True}}
     c = StationCoordinator(cfg, bus, store, clock=clock)

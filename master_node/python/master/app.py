@@ -23,7 +23,8 @@ from master.troubleshoot import diagnose, timeline
 
 
 def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
-               demo: bool = False, clock: Callable[[], float] = time.time, llm=None) -> Flask:
+               demo: bool = False, clock: Callable[[], float] = time.time, llm=None,
+               demo_label: str = "demo — synthetic line") -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
@@ -50,6 +51,7 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         since = now - window
         out = build_analysis(collector.analysis_rows(since), collector.alarm_rows(since), now, window)
         out["demo"] = demo
+        out["demo_label"] = demo_label
         return jsonify(out)
 
     @app.route("/troubleshoot")
@@ -76,7 +78,7 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         labels = {sid: label for sid, label, _ in STATIONS}
         labels["master"] = "This master (broker link)"
         return jsonify({
-            "now": now, "window_s": window, "demo": demo, "broker_connected": connected,
+            "now": now, "window_s": window, "demo": demo, "demo_label": demo_label, "broker_connected": connected,
             "labels": labels,
             "findings": diagnose(stations, events, collector.alarm_rows(now - 600), now, master_connected=connected),
             "timeline": timeline(events, current, now, window),
@@ -118,6 +120,7 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
             return jsonify(ok=False, error=f"window must be one of {list(WINDOWS_S)} seconds"), 400
         now, ins, findings = _insights_now(window)
         ins["demo"] = demo
+        ins["demo_label"] = demo_label
         ins["findings"] = [{k: f.get(k) for k in ("station", "level", "title", "detail")} for f in findings]
         ins["provider"] = None if llm is None else {
             "name": llm.name, "model": getattr(llm, "model", None), "destination": llm.destination,
@@ -166,6 +169,7 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         plant["controls"] = controls_enabled
         plant["broker_connected"] = bool(bus.connected)
         plant["demo"] = demo
+        plant["demo_label"] = demo_label
         return jsonify(plant)
 
     @app.route("/api/overview")

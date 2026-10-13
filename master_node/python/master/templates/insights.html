@@ -70,6 +70,7 @@ function numbers(ev) {
 }
 function render(d) {
   $("demo").style.display = d.demo ? "" : "none";
+  if (d.demo_label) $("demo").textContent = d.demo_label;
   const n = $("notice"); n.replaceChildren();
   if (!d.enough_data) n.appendChild(h("div", "note",
     "Not enough tiles in this window to compare (" + d.baseline_tiles + " before, " + d.recent_tiles + " recent). Nothing is flagged on thin data."));

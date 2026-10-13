@@ -38,9 +38,14 @@ def main(argv=None) -> None:
     p.add_argument("--controls", action="store_true", help="enable the command buttons for this run")
     p.add_argument("--demo", action="store_true",
                    help="no broker: drive the pages from a synthetic line (implies --controls)")
+    p.add_argument("--sim", action="store_true",
+                   help="no broker: run the REAL station coordinator + gantry runner on a simulated machine "
+                        "(implies --controls; see master/sim_line.py)")
     p.add_argument("--ai", choices=("none", "ollama", "anthropic"), default=None,
                    help="language model that explains anomalies (default: config.yaml insights.provider)")
     args = p.parse_args(argv)
+    if args.sim and args.demo:
+        p.error("--sim and --demo are alternatives; pick one")
 
     cfg = load_config()
     broker = cfg["broker"]
@@ -50,7 +55,7 @@ def main(argv=None) -> None:
     dash = cfg["dashboard"]
 
     # A demo run must never write synthetic tiles into the real record.
-    collector = MasterCollector(":memory:" if args.demo else (db if db.is_absolute() else REPO_ROOT / db))
+    collector = MasterCollector(":memory:" if (args.demo or args.sim) else (db if db.is_absolute() else REPO_ROOT / db))
     demo_line = None
     if args.demo:
         from master.bus import InMemoryBus
@@ -61,6 +66,15 @@ def main(argv=None) -> None:
         demo_line = DemoLine(bus)
         demo_line.start()
         where = "DEMO (synthetic line, no broker)"
+    elif args.sim:
+        from master.bus import StreamingInMemoryBus
+        from master.sim_line import SimLine
+
+        bus = StreamingInMemoryBus()
+        collector.attach(bus)
+        demo_line = SimLine(bus)
+        demo_line.start()
+        where = "SIM (real station + gantry logic, simulated machine, no broker)"
     else:
         bus = MqttBus(host, port, client_id=broker.get("client_id", "tile-master"))
         collector.attach(bus)
@@ -79,12 +93,13 @@ def main(argv=None) -> None:
 
     threading.Thread(target=_watch, daemon=True, name="health-watch").start()
 
-    controls = bool(args.controls or args.demo or dash.get("controls_enabled", False))
+    controls = bool(args.controls or args.demo or args.sim or dash.get("controls_enabled", False))
     ai_cfg = dict(cfg.get("insights") or {})
     if args.ai:
         ai_cfg["provider"] = args.ai
     llm = build_provider(ai_cfg)
-    app = create_app(collector, bus, controls_enabled=controls, demo=args.demo, llm=llm)
+    app = create_app(collector, bus, controls_enabled=controls, demo=args.demo or args.sim, llm=llm,
+                     demo_label="sim - real station logic, simulated machine" if args.sim else "demo — synthetic line")
     print(f"Master at http://{dash['host']}:{dash['port']}/  {where}  controls {'ON' if controls else 'off'}  "
           f"AI explainer {llm.name + ' (' + str(getattr(llm, 'model', '')) + ')' if llm else 'off'}")
     try:

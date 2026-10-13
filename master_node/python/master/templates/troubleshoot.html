@@ -154,6 +154,7 @@ async function load() {
   try { d = await (await fetch("/api/troubleshoot?window=" + windowS, {cache:"no-store"})).json(); } catch (e) { return; }
   if (d.ok === false) return;
   $("demo").style.display = d.demo ? "" : "none";
+  if (d.demo_label) $("demo").textContent = d.demo_label;
   findings(d); drawTimeline(d); tables(d);
 }
 windowsBar(); load(); setInterval(load, 3000);

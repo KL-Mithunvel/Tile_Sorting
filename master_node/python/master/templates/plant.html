@@ -111,7 +111,7 @@ const GRADE = { "Grade A":0x2fbf71, "Grade B":0xe3b341, "Grade C":0xf0883e, "Rej
 const BELT_X0 = -10, BELT_X1 = 10, BELT_Y = 0.65;
 const ux = u => BELT_X0 + (BELT_X1 - BELT_X0) * u;
 // destination -> where the tile ends up (4 stacks beyond the belt end + a hold tray)
-const BIN_POS = { bin_1:[12.2,-3.9], bin_2:[12.2,-1.3], bin_3:[12.2,1.3], bin_reject:[12.2,3.9], bin_hold:[9,-4.6] };
+const BIN_POS = { bin_1:[12.2,-3.9], bin_2:[12.2,-1.3], bin_3:[12.2,1.3], bin_reject:[12.2,3.9], bin_4:[12.2,3.9], bin_hold:[9,-4.6] };   // bin_4 = the station's name for Reject
 
 // ---------- renderer / scene ----------
 const canvas = $('scene');
@@ -496,6 +496,7 @@ async function poll() {
   st.className = 'pill ' + (silent ? 'offline' : ln.state === 'fault' ? 'fail' : (ln.state === 'hold_all' || ln.state === 'line_stopped') ? 'warn' : 'ok');
   const br = $('broker'); br.textContent = p.broker_connected ? 'broker connected' : 'broker down'; br.className = 'pill ' + (p.broker_connected ? 'ok' : 'fail');
   $('demo').style.display = p.demo ? '' : 'none';
+  if (p.demo_label) $('demo').textContent = p.demo_label;
   const bn = $('banner');
   bn.style.display = silent ? 'block' : 'none';
   bn.textContent = 'The Pi station is not reporting. The line decides on its own; check the Pi.';

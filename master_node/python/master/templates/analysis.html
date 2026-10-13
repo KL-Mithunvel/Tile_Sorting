@@ -200,6 +200,7 @@ function transit(d) {
 
 function render(d) {
   $("demo").style.display = d.demo ? "" : "none";
+  if (d.demo_label) $("demo").textContent = d.demo_label;
   $("empty").style.display = d.totals.tiles ? "none" : "block";
   kpis(d); stacked(d);
   hbars("mix", GR.map(g => [g, d.grades[g]]).filter(e => e[1]), k => GC[k]);

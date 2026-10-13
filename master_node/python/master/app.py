@@ -168,6 +168,20 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         plant = build_plant(collector.snapshot(now=now), now)
         plant["controls"] = controls_enabled
         plant["broker_connected"] = bool(bus.connected)
+        # This PC and the person at it, so the 3D view can show them. They are not part of the
+        # line's health (Troubleshoot never sees them): the PC's level is its own broker link, the
+        # operator's is whether they may command anything.
+        link = "connected to the broker" if bus.connected else "NOT connected to the broker"
+        mode = demo_label if demo else "live"
+        plant["stations"] = list(plant["stations"]) + [
+            {"id": "master", "label": "Master PC (this GUI)", "u": None,
+             "level": "ok" if bus.connected else "fail",
+             "detail": f"{link}; controls {'ON' if controls_enabled else 'read-only'}; {mode}"},
+            {"id": "user", "label": "Operator (you)", "u": None,
+             "level": "ok" if controls_enabled else "offline",
+             "detail": ("you can command the line from this page" if controls_enabled
+                        else "view only - start the master with --controls to command the line")},
+        ]
         plant["demo"] = demo
         plant["demo_label"] = demo_label
         return jsonify(plant)

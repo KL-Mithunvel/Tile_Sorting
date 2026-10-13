@@ -45,7 +45,7 @@ Check `netstat -ano | grep :8000` before a run.
 
 | URL | What it is | Key files |
 |---|---|---|
-| `/` | **Plant 3D** — Three.js line: belt, camera / acoustic / Pi / conveyor stations with live health lights, a four-legged Cartesian XYZ gantry (X rails, box-section Y beam on trucks, carriage, Z column + cup), four bin stacks + hold tray; orbit / WASD fly / view buttons; click a station for detail; line control panel | `templates/plant.html`, `plant.py` |
+| `/` | **Plant 3D** — Three.js line: belt, camera / acoustic / Pi / conveyor stations with live health lights, a four-legged Cartesian XYZ gantry (X rails, box-section Y beam on trucks, carriage, Z column + cup), four bin stacks + hold tray; orbit / WASD fly / view buttons; click a station for detail; line control panel; **the master PC (desk, tower, monitor showing a live miniature of line state / tally / mode / controls) and the operator avatar, joined to the Pi rack by a link that goes red if the master loses the broker** (both are clickable pseudo-stations in `/api/plant` only - Troubleshoot never sees them) | `templates/plant.html`, `plant.py` |
 | `/analysis` | throughput, reject/hold/timeout rates, grade mix over time (chart + table), destinations, camera-vs-sound agreement, camera→final time, alarms by kind | `templates/analysis.html`, `analysis.py` |
 | `/troubleshoot` | what needs attention now (meaning, since when, cheapest-first checks), per-station health timeline with uptime, recent changes and alarms | `templates/troubleshoot.html`, `troubleshoot.py`, `health_events` table |
 | `/insights` | **(parked)** rule-based anomaly detection + an optional language-model explanation | `insights.py`, `llm.py`, `templates/insights.html` |

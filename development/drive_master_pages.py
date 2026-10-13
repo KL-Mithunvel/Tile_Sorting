@@ -148,7 +148,15 @@ def main():
         # ---------------- Plant 3D ----------------
         load("/")
         check("plant: no page errors", not errors(), "; ".join(errors()))
-        check("plant: 5 stations listed", ws.js("document.querySelectorAll('#stations .st').length") == 5)
+        check("plant: 5 line stations + the master PC + the operator are listed",
+              ws.js("document.querySelectorAll('#stations .st').length") == 7)
+        names = ws.js("[...document.querySelectorAll('#stations .st b')].map(e => e.textContent).join('|')")
+        check("plant: master PC and operator appear as stations", "Master PC" in (names or "") and "Operator" in (names or ""), names)
+        ws.js("[...document.querySelectorAll('#stations .st')].find(e => e.textContent.includes('Operator')).click()")
+        ws.pump(0.6)
+        sel = ws.js("document.getElementById('sel').textContent")
+        check("plant: clicking the operator says whether they can command the line",
+              "command the line" in (sel or "") or "view only" in (sel or ""), sel)
         ws.js("document.querySelectorAll('#stations .st')[1].click()")
         ws.pump(0.5)
         sel = ws.js("document.getElementById('sel').textContent")

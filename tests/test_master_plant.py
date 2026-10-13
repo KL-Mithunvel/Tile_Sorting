@@ -266,3 +266,29 @@ def test_troubleshoot_explains_a_paused_feed_and_a_full_queue_differently():
              "detail": "feed paused and the queue is full (5): tiles are being dropped"}]
     (f,) = diagnose(full, [], [], 100.0)
     assert "tiles are being dropped" in f["title"] and f["level"] == "fail"
+
+
+# ---- the master PC and the operator in the 3D scene ---------------------------
+
+def test_plant_endpoint_lists_the_master_pc_and_the_operator_with_their_own_status():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    on = create_app(col, bus, controls_enabled=True, demo=True, demo_label="demo", clock=lambda: 100.0).test_client()
+    st = {s["id"]: s for s in on.get("/api/plant").get_json()["stations"]}
+    assert {"pi", "camera", "acoustic", "conveyor", "gantry", "master", "user"} <= set(st)
+    assert st["master"]["level"] == "ok" and "connected to the broker" in st["master"]["detail"]
+    assert "controls ON" in st["master"]["detail"] and st["user"]["level"] == "ok"
+    off = create_app(col, bus, controls_enabled=False, clock=lambda: 100.0).test_client()
+    st = {s["id"]: s for s in off.get("/api/plant").get_json()["stations"]}
+    assert st["user"]["level"] == "offline" and "view only" in st["user"]["detail"]
+    assert "read-only" in st["master"]["detail"]
+    bus.link_up = False
+    st = {s["id"]: s for s in off.get("/api/plant").get_json()["stations"]}
+    assert st["master"]["level"] == "fail" and "NOT connected" in st["master"]["detail"]
+
+
+def test_the_master_and_operator_are_not_part_of_the_lines_health_picture():
+    """They are drawn, but Troubleshoot must never report them as line stations."""
+    from master.plant import stations_from_snapshot
+    ids = {s["id"] for s in stations_from_snapshot(snap(station=status()))}
+    assert "master" not in ids and "user" not in ids

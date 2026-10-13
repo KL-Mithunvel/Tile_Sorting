@@ -37,7 +37,7 @@ GOOD_TAP = {"valid": True, "grade": None, "confidence": None, "peak_frequency_hz
 class Line:
     """Pi coordinator + gantry (queue, runner, simulated MCU) sharing one clock."""
 
-    def __init__(self):
+    def __init__(self, station_cfg=None):
         self.t = 1000.0
         self.cfg = load_config()
         ws = self.cfg["workspace"]
@@ -51,10 +51,12 @@ class Line:
         self.feed = FeedClient(self.bus, queue=FinalQueue(), clock=self._now)
         self.queue = self.feed.queue
         self.enabled = True
+        self.done_events = []            # (tile_id, ok, reason) exactly as the reporter would receive them
         self.runner = JobRunner(self.session, self.queue, self.model, Feeds.from_config(self.cfg), self.cfg,
-                                clock=self._now, enabled=lambda: self.enabled)
+                                clock=self._now, enabled=lambda: self.enabled,
+                                on_job_done=lambda *a: self.done_events.append(a))
         self.store = TileStore(":memory:")
-        self.pi = StationCoordinator(STATION_CFG, self.bus, self.store, clock=self._now)
+        self.pi = StationCoordinator(station_cfg or STATION_CFG, self.bus, self.store, clock=self._now)
         self.pi.start()
         self.feed.start()
         self.pi.set_health("mic", OK, "listening")
@@ -179,3 +181,40 @@ def test_feed_pause_during_a_full_gantry_queue_loses_nothing(line):
     assert s["completed"] == 7 and s["failed"] == 0 and line.placed() == 7, s
     assert sorted(line.model.counts().items()) == [("bin_1", 4), ("bin_2", 3), ("bin_3", 0), ("bin_4", 0)]
     assert line.queue.snapshot()["counters"].get("duplicate", 0) == 0
+
+
+def test_KNOWN_GAP_a_hold_tile_is_acked_then_fails_because_manual_is_not_a_gantry_location():
+    """Characterization, not a statement of what SHOULD happen. The station config sends Hold to
+    destination "manual" (documented as "put in the manual bin, not skip"), but the gantry has no
+    location of that name. Observed with the real components: the gantry ACKs it, then refuses the
+    job at planning time - no motion, `placed: failed`, one alarm per tile - so the tile is never
+    taken off the belt. Flip this test when the intended behaviour is decided (see
+    documents/programming/master_gui_handover.md, section 4)."""
+    import copy
+
+    cfg = copy.deepcopy(STATION_CFG)
+    cfg["final"]["bins"]["Hold"] = "manual"          # what acoustic/config.yaml really says
+    line = Line(cfg).ready()
+    placed, alarms = [], []
+    import json
+    line.bus.subscribe("tile/+/placed", lambda t, p: placed.append(json.loads(p)))
+    line.bus.subscribe("machine/alarm", lambda t, p: alarms.append(json.loads(p)))
+    # no GantryReporter in this rig, so look at the runner itself:
+    line.pi.set_hold_all(True)
+    tid = line.decide("Grade A")
+    line.pi.set_hold_all(False)
+    after = line.decide("Grade B")                   # a normal tile right behind it still gets sorted
+    moves_before = line.moves()
+    line.run(30)
+
+    assert line.store.get(tid)["final_grade"] == "Hold" and line.store.get(tid)["destination"] == "manual"
+    assert line.store.get(tid)["delivery"] == "acked"           # the UNO Q said ok ...
+    s = line.runner.status()
+    assert s["failed"] == 1 and s["completed"] == 1, s          # ... then refused the job
+    refused = [e for e in line.done_events if e[0] == tid]
+    assert len(refused) == 1 and refused[0][1] is False, line.done_events
+    assert "unknown destination 'manual'" in refused[0][2] and "bin_1" in refused[0][2], refused
+    assert line.model.counts()["bin_2"] == 1                    # the tile behind it was sorted
+    assert s["fault"] is None and s["active"] is None           # not a machine fault: it just carries on
+    assert line.store.get(after)["final_grade"] == "Grade B"
+    assert line.moves() > moves_before                          # (moves belong to the second tile only)

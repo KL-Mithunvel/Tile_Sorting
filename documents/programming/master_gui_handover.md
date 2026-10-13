@@ -1,4 +1,4 @@
-# Master GUI — handover (written 2026-10-12/13)
+# Master GUI — handover (written 2026-10-12/13; Hold-tile finding added 2026-10-13)
 
 One page to pick the master GUI work up from: what exists, how to run it, what is and is
 not verified, what we learned, and what is next. The per-feature detail lives in
@@ -84,6 +84,7 @@ dropped**. Documented in `station_coordination.md`.
 - 877 tests pass; master-related: node 21, plant 17, analysis 10, troubleshoot 17, insights 15, llm 8, sim 3, feed-drain 4, coordinator 35.
 - 35 checks in real headless Edge (`development/drive_master_pages.py`): no page errors; station select; view buttons; Stop/Start line and belt restore; Pause/Resume feed; hold-all; window switches; table toggle; the gantry sequencer runs the full pick-and-place cycle and a carried tile never strays > 0.05 from the cup; **no tile on the belt moves faster than 3.6 units/s** (the old behaviour measured 44).
 - The feed gate, end to end on the real components (`test_feed_pause_gantry_drain.py`): a paused feed lets the gantry drain what it accepted and idle, held tiles are delivered in order and sorted exactly once on resume. Mutation-checked.
+- The Hold-tile gap (finding 6) is pinned by `test_KNOWN_GAP_a_hold_tile_is_acked_then_fails...` in the same file: a *characterization* test that records current behaviour, it does not endorse it - flip it when the behaviour is decided.
 
 **Not verified:**
 - Any of it against a real MQTT broker, the Pi, the UNO Q, the Nano, a belt, a camera or the real firmware. The "gantry" is the protocol's simulated MCU.
@@ -101,15 +102,20 @@ dropped**. Documented in `station_coordination.md`.
 3. **Final = delivery.** While the feed is paused a final is stored on the Pi but is *not on the bus*, so the master sees those tiles only after resume. Consequence of the contract, logged rather than redesigned.
 4. **A long pause drops tiles.** The outbox (`unoq.max_outbox`, 50 in config) drops the oldest when full and raises `outbox_overflow`; the gantry station warns, then fails, first.
 5. **A hard gantry pause is a different, worse thing than the feed gate:** it freezes mid-carry with the tile on the cup (proved in `test_a_hard_pause_mid_carry...`). That is why Stop line uses the feed gate.
-6. **A Hold tile's destination is `manual`**, which is not a gantry location. What the real runner does with it was *not* examined today (the sim test only allows it as a destination).
+6. **A Hold tile is acked and then FAILS at the gantry (observed 2026-10-13, `--sim`, real config).** The station sends Hold to destination `manual` (documented as "put in the manual bin, not skip", `station_coordination.md`), but the gantry has no location of that name. On the real components the UNO Q **acks it `ok`**, then the job runner refuses it at planning time (`unknown destination 'manual'; known: ['bin_1', 'bin_2', 'bin_3', 'bin_4']`), sends **no motion**, reports `placed: failed` and raises one `gantry_pick_failed` alarm **per tile** (12 Hold tiles -> 12 alarms). It is not latched as a fault and the delivery row stays `acked`, so **nothing marks the tile as needing a person**. *Inference, not observed:* the tile is never taken off the belt, so on a real belt it would run off the end or jam. Needs a decision (section 5, item 1).
 7. **The belt's real "camera → final" time** (the number `ledger.max_wait_s` should be set from) is unmeasured; the Analysis page computes it once real data exists.
+8. **A full stack fails every further pick for that bin (observed).** `bin_1` holds 10 tiles (`stacks.*.max_height`); after that each Grade A tile fails with `stack 'bin_1' is full (10 tiles)` and raises an alarm. Nothing empties a stack in the sim - on the real machine an operator must empty it and send `station/gantry/cmd reset_stack`. There is no "nearly full" warning, only the failures. (The 3D page caps its drawn stack at 8; cosmetic only.)
+9. **Alarm flood.** Both failures above raise one `machine/alarm` per tile; at a tile every few seconds that is dozens a minute. Troubleshoot groups by kind, but the Pi's alarm list and any operator display will scroll. Consider edge-triggered / rate-limited alarms for repeated identical failures.
+10. **Test artifact, not a finding:** stopping `SimLine` publishes the gantry's offline last-will, so a collector read *after* `stop()` shows the gantry `level: fail` with empty fields. Read status before stopping.
 
 ---
 
 ## 5. To do — next session, in rough order
 
 **Do first (small, unblocking)**
-1. **Hold → `manual`:** run a Hold tile through `--sim` and see what the gantry runner does with an unknown destination (reject? fault?). Decide the intended behaviour and test it.
+1. **Hold -> `manual` (observed, needs a decision):** the gantry acks a Hold tile and then fails it (finding 6). Choose one, implement it and flip the known-gap test: (a) give the gantry a physical hold tray - add a `manual` / `bin_hold` location to `pick_place_node/python/pick_place/config.yaml` so Hold tiles are placed (and state how many it holds); (b) the Pi does not send Hold finals to the gantry at all and raises ONE alarm "tile X needs a person"; or (c) the gantry acks Hold as "manual - not picked" and the Pi marks the tile `needs_person` instead of `acked`. Either way a Hold tile must end up *visibly* needing a person, not as a quiet `pick_failed`.
+1b. **Stack-full handling (finding 8):** a nearly-full warning (e.g. at 80 %), a full stack as ONE sticky alarm rather than one per tile, and stack fill shown in the master (the gantry already reports `stacks` in its status).
+1c. **Rate-limit identical gantry alarms (finding 9).**
 2. **Whole-line stop should also tell the 3D/Analysis views it is stopped** (the pill and state exist; check the Analysis "throughput" note for a deliberately stopped line so it is not read as a fault).
 3. **Click-select inside the 3D canvas** in the browser driver (project a station to a pixel and click it).
 4. **Move or name `hair_res.json`** (loose at the repo root; generator unknown) and decide the fate of `AGENTS.md` (a stale Codex copy of CLAUDE.md).
@@ -146,6 +152,8 @@ dropped**. Documented in `station_coordination.md`.
 | `b11a505` | Tile zoom fix |
 | `25a03c6` | `--sim` demo |
 | `8aca02e` `e3fdb01` `d2c52c0` `e1f0b9f` | Owner's pre-existing work committed on request: corner shape checks, Pi scripts, AGENTS.md, hair_res.json |
+| `657f665` | This document, TODO / CLAUDE.md / README pointers |
+| (this revision) | Hold-tile finding, known-gap test, doc update |
 
 Other commits in that range (`6075980`, `a5ba38e`, `1089931`, `fd39ef4`, `fcf2a3f`) were made
 by a parallel session (gantry station link, Nano firmware core, logbook) and are not part of

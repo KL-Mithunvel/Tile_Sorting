@@ -1,10 +1,42 @@
-# Master GUI — handover (written 2026-10-12/13; Hold-tile finding added 2026-10-13)
+# Master GUI — handover (written 2026-10-12/13; last revised end of 2026-10-13)
 
 One page to pick the master GUI work up from: what exists, how to run it, what is and is
 not verified, what we learned, and what is next. The per-feature detail lives in
 `master_node/README.md`; the message contract in `station_coordination.md`.
 
-**One-line status:** the master (`master_node/`) has four views, a line/feed/gantry control
+## Start here tomorrow
+
+**Where things stand (end of 2026-10-13).** Everything below is committed and **pushed to `origin/main`**
+(`64de570`, a fast-forward; 895 tests pass, 82 skipped; the real-browser driver passes 39/39 against both
+`--demo` and `--sim`). Nothing is uncommitted. The checkout is on `main`; the branch `gantry-station-link`
+still exists locally and is fully merged into `main` (its copy on GitHub is behind and was not pushed). This
+handover commit itself is one commit ahead of `origin/main` until it is pushed.
+
+**Done today, in one breath:** master GUI with four views; Stop/Start line; Pause/Resume feed; gantry hard pause;
+4-leg Cartesian XYZ gantry that picks and carries each tile; a master PC + operator in the 3D scene;
+`--demo` and `--sim` (real coordinator + real gantry runner on a simulated machine); Hold tiles kept off the
+gantry (they pause the feed until a person presses Resume feed); one alarm per cause at the gantry;
+the pick-and-place twin restyled; the owner's corner-shape checks committed.
+
+**First three things to do** (details in section 5):
+1. **The Pi's own kiosk screen has no hold-tile prompt** - only the master shows "N HOLD TILE(S) NEED A PERSON".
+   On the real line the person is standing at the Pi, not at the laptop. Add it to `acoustic/templates/station.html`.
+2. **Nearly-full stack warning** - a full stack still fails every further pick for that bin (one alarm now, but no
+   early warning and nothing in the UI).
+3. **Decide what the belt does with tiles queued behind a hold tile** at the pickup (blocked on the pickup/stopper
+   design - ask before building).
+
+**Questions waiting for the owner:** (a) "core xyz" - standard Cartesian (built) or CoreXY? (b) should a *line stop*
+make every tile in flight a Hold (it does today) or should in-flight tiles be allowed to finish? (c) `max_outbox`
+behaviour on a very long stop (drops the oldest today). (d) what to do with `AGENTS.md` (stale Codex copy of
+CLAUDE.md) and `hair_res.json` (loose root file, generator unknown).
+
+**Read before changing the gantry/Hold logic:** finding 6 below - the gantry picks whatever is at ONE fixed pickup
+point, so any tile it is not told about is mis-sorted into the next bin. Several design rules follow from that.
+
+---
+
+**One-line status:** the master (`master_node/`) has four views (Plant 3D now includes the master PC and the operator), a line/feed/gantry control
 panel and two no-hardware demo modes. Everything is laptop-only: **nothing has met a real
 broker, the Pi, the UNO Q, the Nano, a belt or a camera.** AI insights is built but **parked**.
 
@@ -113,6 +145,8 @@ dropped**. Documented in `station_coordination.md`.
 ## 5. To do — next session, in rough order
 
 **Do first (small, unblocking)**
+0. **Hold-tile prompt on the Pi's kiosk** (`acoustic_node/python/acoustic/templates/station.html`, `dashboard.py`): show the `needs_person` count and a Resume-feed button there (it is already a control on the Pi's service view). `needs_person` and `needs_person_tiles` are already in the coordinator snapshot.
+0b. **Resume feed should say what it is confirming.** The button is the same one used to resume after a plain pause; when hold tiles are pending it should read "Hold tiles taken off the belt - resume" (master and kiosk).
 1. ~~Hold -> `manual`~~ **Done 2026-10-13** (finding 6): Hold stays off the gantry; a Hold pauses the feed; Resume feed confirms. *Follow-ups:* (a) decide what the belt does with tiles queued behind a hold tile at the pickup; (b) decide whether a Hold during a *line stop* should really each need a person (it does today: in-flight tiles become Hold); (c) show hold tiles and the Resume-feed prompt on the Pi's own kiosk screen, not only the master; (d) the master's Analysis counts a Hold's destination as `manual` - fine, but it reads as a bin.
 1b. **Stack-full handling (finding 8):** a nearly-full warning (e.g. at 80 %), a full stack as ONE sticky alarm rather than one per tile, and stack fill shown in the master (the gantry already reports `stacks` in its status).
 1c. ~~Rate-limit identical gantry alarms (finding 9)~~ **Done 2026-10-13** (one alarm per cause).
@@ -156,8 +190,28 @@ dropped**. Documented in `station_coordination.md`.
 | `5e86064` | Hold-tile finding + known-gap test |
 | `139c1b4` `caeb380` | Master PC + operator in the 3D scene; driver hardening |
 | `aa1b3d8` `a847f34` | Hold stays off the gantry + feed pause; one gantry alarm per cause |
-| (this revision) | Master shows hold tiles waiting for a person; Start line does not confirm them; docs |
+| `f0b5481` | Start line does not confirm hold tiles are off the belt (Pi) |
+| `70175b7` | Master shows hold tiles waiting for a person; docs |
+| `64de570` | Merge of `origin/main` (PR #1) - pushed to `main` |
+| (this revision) | End-of-day handover |
 
 Other commits in that range (`6075980`, `a5ba38e`, `1089931`, `fd39ef4`, `fcf2a3f`) were made
 by a parallel session (gantry station link, Nano firmware core, logbook) and are not part of
 this document.
+
+---
+
+## 7. Git state and a caution (2026-10-13)
+
+- `origin/main` = `64de570` = local `HEAD`; the push was a fast-forward, no force.
+- All of this work was committed on `gantry-station-link`; the checkout was later moved to `main` (reflog: `checkout:
+  moving from gantry-station-link to main`, then a rebase onto `origin/main` that was a no-op). The remote copy of
+  `gantry-station-link` was not updated; to tidy, `git push origin gantry-station-link` (fast-forward) or delete it.
+- **A published commit was amended.** `8fc590a` (the browser driver's wait-out-the-fault change) was already in PR #1
+  when it was amended locally into `caeb380`; the merge needed one conflict resolution in
+  `development/drive_master_pages.py` (kept the superset). Don't amend commits that have been pushed.
+- A parallel Claude session also committed to this repo during these two days (gantry station link, Nano firmware
+  core, logbook). Those commits (`6075980`, `a5ba38e`, `1089931`, `fd39ef4`, `fcf2a3f`) are in the history and are
+  not described here; `git log --oneline 4a6ab40^..HEAD` shows the interleaving.
+- Nothing has been run against real hardware. Every statement above about the gantry, the Pi and the line is about
+  the laptop, the in-memory bus and the simulated machine.

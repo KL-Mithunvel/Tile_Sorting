@@ -14,7 +14,7 @@ eventually be opened as an app in Arduino App Lab the same way as Arduino's own
 |---|---|
 | `app.yaml` | App Lab metadata (name, description, icon) |
 | `sketch/` | MCU-side code — ToF-triggered dual-solenoid (ARM+LOCK) tap sequencer. Real state-machine logic now (see `sketch/sketch.ino`), but **unverified against real App Lab/hardware** — see What's real vs. stub below. |
-| `python/` | Linux-side code. `python/acoustic/` is the working, tested signal-processing/capture package, now including hardware-tap support (`hardware_trigger.py`, `tap_sequencer.py`); `python/main.py` is the App Lab entry point. |
+| `python/` | Linux-side code. `python/acoustic/` is the working, tested signal-processing/capture package, now including hardware-tap support (`hardware_trigger.py`, `tap_sequencer.py`); `python/main.py` is the Raspberry Pi systemd entry point (a shim over `acoustic.live_station.main()`). |
 
 ## What's real vs. stub here
 
@@ -32,10 +32,10 @@ eventually be opened as an app in Arduino App Lab the same way as Arduino's own
   `documents/electrical/schematics/acoustic_station_wiring.md`; ball mass/drop height and
   the reload/reset mechanism between tiles are still open (`TODO.md`,
   `documents/requirements/requirements.md` FR-21).
-- `python/main.py` has a real `poll_bridge_and_capture()` function shaped to drive
-  `AudioCapture.notify_tap()` from the sketch's `tapCount`, but it is deliberately **not**
-  wired into `App.run()` yet — `read_tap_count()` is a placeholder until App Bricks'
-  actual bridge-read API is confirmed on hardware.
+- `python/main.py` is the Pi's systemd entry point (a shim over `acoustic.live_station.main()`,
+  the same as `camera_node/python/main.py`). The old App Lab stub and its unverified
+  `poll_bridge_and_capture()` / `tapCount` bridge polling were removed 2026-10-12; strike
+  events now arrive from the Nano over serial (`acoustic/tap_bridge.py`).
 
 ## Running it today (dev laptop, no App Lab, no board)
 
@@ -58,8 +58,7 @@ Tests still run from the repo root as before: `python -m pytest tests/ -v`.
 
 ## Open item
 
-Whether/how `python/main.py`'s App Lab entry point (`arduino.app_utils.App.run()`)
-should actually drive `acoustic/capture.py` has not been figured out yet — `main.py` now
-has a `poll_bridge_and_capture()` function shaped for this, but it isn't called from
-`App.run()` and `read_tap_count()` is a placeholder. Needs a real App Lab session on the
-board to work out.
+The UNO Q App Lab path for this node (`app.yaml` + `sketch/sketch.ino`) is no longer driven
+from Python. If the acoustic station ever goes back onto the UNO Q, the `tapCount`
+bridge-read has to be re-added (git history has the old stub); `sketch.ino` itself is
+unverified on hardware either way.

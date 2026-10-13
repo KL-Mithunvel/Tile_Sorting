@@ -54,6 +54,31 @@ fi
 sudo systemctl enable --now mosquitto
 sudo systemctl restart mosquitto
 
+# Time. The control LAN is isolated (no internet NTP), so nodes would drift
+# apart. The Pi is the always-on hub (it already hosts the broker), so it serves
+# time to the LAN; the UNO Q and the master PC sync to it (see
+# documents/electrical/network_plan.md §6). `local stratum 10` makes it hand out
+# its own clock when it has no upstream source, `makestep` lets it correct a
+# large error at start-up instead of slewing for hours, and fake-hwclock restores
+# the last-known time after a power cut so logs do not restart from 1970 (a Pi 5
+# with an RTC battery keeps real time; this is the fallback).
+# Installing chrony replaces systemd-timesyncd.
+LAN_CIDR="${LAN_CIDR:-192.168.1.0/24}"
+echo "==> Time server (chrony) for $LAN_CIDR"
+sudo apt install -y chrony fake-hwclock || echo "WARNING: chrony/fake-hwclock install failed; clocks will drift"
+TIMECONF=/etc/chrony/conf.d/tile-station.conf
+if [ -d /etc/chrony/conf.d ] && [ ! -f "$TIMECONF" ]; then
+    sudo tee "$TIMECONF" > /dev/null <<TIMEEOF
+# Written by acoustic_node/deploy/install_pi.sh. Isolated LAN: serve our own clock.
+allow $LAN_CIDR
+local stratum 10
+makestep 1.0 3
+rtcsync
+TIMEEOF
+    sudo systemctl enable chrony >/dev/null 2>&1 || true
+    sudo systemctl restart chrony || echo "WARNING: chrony did not restart; check: systemctl status chrony"
+fi
+
 echo
 echo "==> Verifying imports with the system interpreter"
 /usr/bin/python3 - <<'PYCHECK'

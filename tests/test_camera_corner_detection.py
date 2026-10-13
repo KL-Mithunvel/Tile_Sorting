@@ -84,3 +84,51 @@ def test_tile_size_inches_omitted_leaves_conversions_none():
 
     assert result.missing_area_sq_inches is None
     assert result.missing_depth_inches is None
+
+
+# --- shape checks added 2026-10-12 (aspect ratio, notch depth) -------------
+
+SHAPE_CHECKS = dict(max_aspect_ratio=1.15, max_notch_depth_fraction=0.08)
+
+
+def test_square_tile_passes_the_shape_checks():
+    contour = contour_from_points([(0, 0), (100, 0), (100, 100), (0, 100)])
+
+    result = detect_broken_corner(contour, min_fill_ratio=MIN_FILL_RATIO, **SHAPE_CHECKS)
+
+    assert not result.corner_broken
+    assert result.aspect_ratio == pytest.approx(1.0, abs=0.02)
+    assert result.notch_depth_fraction < 0.02
+
+
+def test_non_square_outline_is_flagged_only_when_the_aspect_check_is_on():
+    # A 150x100 piece (a tile with a third snapped off): fill is perfect.
+    contour = contour_from_points([(0, 0), (150, 0), (150, 100), (0, 100)])
+
+    off = detect_broken_corner(contour, min_fill_ratio=MIN_FILL_RATIO)
+    on = detect_broken_corner(contour, min_fill_ratio=MIN_FILL_RATIO, max_aspect_ratio=1.15)
+
+    assert not off.corner_broken
+    assert on.corner_broken
+    assert on.aspect_ratio == pytest.approx(1.5, abs=0.02)
+
+
+def test_shallow_bite_missed_by_fill_is_caught_by_notch_depth():
+    # 100x100 with a 30-wide, 12-deep rectangular bite out of the bottom edge:
+    # only 3.6% of the area is gone, so fill alone passes it.
+    contour = contour_from_points(
+        [(0, 0), (100, 0), (100, 100), (65, 100), (65, 88), (35, 88), (35, 100), (0, 100)]
+    )
+
+    off = detect_broken_corner(contour, min_fill_ratio=MIN_FILL_RATIO)
+    on = detect_broken_corner(contour, min_fill_ratio=MIN_FILL_RATIO, max_notch_depth_fraction=0.08)
+
+    assert off.fill_ratio > MIN_FILL_RATIO and not off.corner_broken
+    assert on.corner_broken
+    assert on.notch_depth_fraction == pytest.approx(0.12, abs=0.02)
+
+
+def test_shape_checks_default_off_so_old_callers_are_unchanged():
+    contour = contour_from_points([(0, 0), (150, 0), (150, 100), (0, 100)])
+
+    assert not detect_broken_corner(contour, min_fill_ratio=MIN_FILL_RATIO).corner_broken

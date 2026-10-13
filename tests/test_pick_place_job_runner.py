@@ -272,3 +272,30 @@ def test_acknowledge_clears_a_fault_once_no_alarm():
     assert r.runner.status()["phase"] == "fault"
     assert r.runner.acknowledge() is True
     assert r.runner.status()["phase"] == "idle"
+
+
+# ---- the link watchdog: the runner must keep talking during a motion ----------------
+
+
+def test_runner_pings_through_a_long_motion_so_the_mcu_watchdog_stays_quiet():
+    r = Rig(link_timeout_s=0.4)
+    r.ready()
+    r.mcu.speed = 40.0  # each leg takes seconds: far longer than the 0.4 s watchdog
+    r.add("T1", "bin_2")
+    r.run(150.0)
+    assert r.session.alarm is None, r.session.alarm
+    assert r.done_events and r.done_events[0][:2] == ("T1", True)
+
+
+def test_the_watchdog_does_fire_for_a_master_that_stops_talking():
+    r = Rig(link_timeout_s=0.4)
+    r.ready()
+    from pick_place.protocol import move
+
+    r.mcu.speed = 50.0  # a 10 s move
+    r.session.send(move(x=500.0))
+    for _ in range(100):  # 1 s of nothing but the MCU's own clock
+        r.t += 0.01
+        r.mcu.tick(0.01)
+    r.session.pump()
+    assert r.session.alarm is not None and r.session.alarm.reason == "LINK_TIMEOUT"

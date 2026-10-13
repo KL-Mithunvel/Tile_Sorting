@@ -60,6 +60,10 @@ class CornerResult:
     missing_extent_fraction: float  # missing_depth_px / tile's own side length - scale-independent
     missing_area_sq_inches: Optional[float] = None
     missing_depth_inches: Optional[float] = None
+    # Two shape checks added 2026-10-12 (see detect_broken_corner). Defaults keep
+    # every existing constructor call valid.
+    aspect_ratio: float = 1.0  # long side / short side of the tile's own rectangle
+    notch_depth_fraction: float = 0.0  # deepest dent in the outline / tile side
 
 
 def _missing_region_max_depth(contour: np.ndarray, rect) -> float:
@@ -85,16 +89,44 @@ def _missing_region_max_depth(contour: np.ndarray, rect) -> float:
     return float(dist.max())
 
 
+def _max_notch_depth(contour: np.ndarray) -> float:
+    """Deepest dent in the outline, in px: the largest convexity defect (distance
+    from the convex hull to the contour). A rectangle with a bite out of it has a
+    deep defect even when little AREA is missing (fill_ratio stays high), which is
+    the case the fill and gap-depth checks both miss. 0.0 if the outline is convex
+    or OpenCV cannot compute it (a self-intersecting contour)."""
+    if len(contour) < 4:
+        return 0.0
+    try:
+        hull = cv2.convexHull(contour, returnPoints=False)
+        defects = cv2.convexityDefects(contour, hull)
+    except cv2.error:
+        return 0.0
+    if defects is None:
+        return 0.0
+    return float(defects.reshape(-1, 4)[:, 3].max()) / 256.0
+
+
 def detect_broken_corner(
     contour: np.ndarray,
     min_fill_ratio: float,
     max_missing_extent_fraction: float = 1.0,
     tile_size_inches: Optional[float] = None,
+    max_aspect_ratio: Optional[float] = None,
+    max_notch_depth_fraction: Optional[float] = None,
 ) -> CornerResult:
     """max_missing_extent_fraction defaults to 1.0 (never triggers, since the
     deepest possible gap can't exceed the tile's own side length) so existing
     fill_ratio-only callers are unaffected; config.yaml sets a real value for
-    production."""
+    production.
+
+    Two further checks, off when None (added 2026-10-12 from 88 hand-labelled
+    tiles, development/README.md): `max_aspect_ratio` flags a tile whose outline
+    is not square (a tile with a corner or edge snapped off is no longer 1:1;
+    intact tiles measured <= 1.11, a snapped one 1.47) and
+    `max_notch_depth_fraction` flags a bite taken out of the outline (a chip that
+    removes little area, e.g. fill 0.94, but is 10% of the side deep). The aspect
+    check assumes a SQUARE tile - leave it None for a rectangular product."""
     contour_area = cv2.contourArea(contour)
     rect = cv2.minAreaRect(contour)
     (_, _), (rect_w, rect_h), _ = rect
@@ -110,7 +142,16 @@ def detect_broken_corner(
     tile_side_px = max(rect_w, rect_h)
     missing_extent_fraction = (missing_depth_px / tile_side_px) if tile_side_px > 0 else 0.0
 
-    corner_broken = fill_ratio < min_fill_ratio or missing_extent_fraction > max_missing_extent_fraction
+    short_side_px = min(rect_w, rect_h)
+    aspect_ratio = (tile_side_px / short_side_px) if short_side_px > 0 else 1.0
+    notch_depth_fraction = (_max_notch_depth(contour) / tile_side_px) if tile_side_px > 0 else 0.0
+
+    corner_broken = (
+        fill_ratio < min_fill_ratio
+        or missing_extent_fraction > max_missing_extent_fraction
+        or (max_aspect_ratio is not None and aspect_ratio > max_aspect_ratio)
+        or (max_notch_depth_fraction is not None and notch_depth_fraction > max_notch_depth_fraction)
+    )
 
     missing_area_sq_inches = None
     missing_depth_inches = None
@@ -131,4 +172,6 @@ def detect_broken_corner(
         missing_extent_fraction=missing_extent_fraction,
         missing_area_sq_inches=missing_area_sq_inches,
         missing_depth_inches=missing_depth_inches,
+        aspect_ratio=aspect_ratio,
+        notch_depth_fraction=notch_depth_fraction,
     )

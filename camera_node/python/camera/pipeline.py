@@ -164,6 +164,8 @@ def process_tile(
     border_margin_px: int = 0,
     max_missing_extent_fraction: float = 1.0,
     tile_size_inches: Optional[float] = None,
+    max_aspect_ratio: Optional[float] = None,
+    max_notch_depth_fraction: Optional[float] = None,
     grading_model: Optional[object] = None,
     trigger: Optional[str] = None,
     tier_map: Optional[dict] = None,
@@ -203,6 +205,8 @@ def process_tile(
         min_fill_ratio=min_fill_ratio,
         max_missing_extent_fraction=max_missing_extent_fraction,
         tile_size_inches=tile_size_inches,
+        max_aspect_ratio=max_aspect_ratio,
+        max_notch_depth_fraction=max_notch_depth_fraction,
     )
     t_corner_done = time.perf_counter()
     grade = grade_tile(crack, corner)
@@ -271,6 +275,8 @@ def tile_record_to_dict(record: TileRecord) -> dict:
         "corner_missing_area_px": round(record.corner.missing_area_px, 1),
         "corner_missing_depth_px": round(record.corner.missing_depth_px, 1),
         "corner_missing_extent_fraction": round(record.corner.missing_extent_fraction, 3),
+        "corner_aspect_ratio": round(record.corner.aspect_ratio, 3),
+        "corner_notch_depth_fraction": round(record.corner.notch_depth_fraction, 3),
         "corner_missing_area_sq_inches": (
             round(record.corner.missing_area_sq_inches, 2)
             if record.corner.missing_area_sq_inches is not None

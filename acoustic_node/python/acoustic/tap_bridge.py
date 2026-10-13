@@ -59,6 +59,7 @@ class TapBridge:
         ping_s: float = 0.5,
         status_s: float = 1.0,
         stale_s: float = 2.0,
+        resend_on_recover: bool = False,
     ):
         self._ser, self._bus, self._clock = serial_port, bus, clock
         self._ping_s, self._status_s, self._stale_s = ping_s, status_s, stale_s
@@ -68,6 +69,12 @@ class TapBridge:
         self._last_ping = 0.0
         self._last_status = 0.0
         self._ping_n = 0
+        # After the Nano's watchdog trips it needs a fresh BELT / STRIKE (nothing
+        # restarts by itself). Re-sending the last ones we were told to send is
+        # opt-in: it can restart a belt somebody stopped on purpose.
+        self._resend = bool(resend_on_recover)
+        self._last_cmd_belt: Optional[int] = None
+        self._last_cmd_strike: Optional[bool] = None
         self._belt_pct: Optional[int] = None
         self._tof = {"tof1_ok": None, "tof3_ok": None}
         self._fw: Optional[str] = None
@@ -99,6 +106,8 @@ class TapBridge:
             elif kind == "err":
                 self.counters["errors_from_nano"] += 1
                 self._alarm("nano_error", f"Nano reports {msg['code']}: {msg['text']}")
+                if msg["code"] == "WDOGRESET" and self._resend:
+                    self._resend_last_commands()
             elif kind == "tap":
                 self._on_tap(msg, now)
         return msg
@@ -151,12 +160,26 @@ class TapBridge:
 
     # ---- commands to the Nano --------------------------------------------
 
+    def _resend_last_commands(self) -> None:
+        # Called with self._lock held (from handle_line). Strike first: a belt
+        # that runs before the striker is allowed only costs a tile its tap.
+        if self._last_cmd_strike is not None:
+            self._write(encode_strike(self._last_cmd_strike))
+        if self._last_cmd_belt is not None:
+            self._write(encode_belt(self._last_cmd_belt))
+        self._alarm(
+            "nano_resumed",
+            f"Nano watchdog recovered; re-sent belt {self._last_cmd_belt} % and strike "
+            f"{'on' if self._last_cmd_strike else 'off'} (resend_on_recover)",
+        )
+
     def _on_belt(self, topic: str, payload: bytes) -> None:
         try:
             pct = float(json.loads(payload)["percent"])
         except (ValueError, KeyError, TypeError):
             self._alarm("bad_message", "unreadable station/belt command")
             return
+        self._last_cmd_belt = max(0, min(100, int(round(pct))))
         self._write(encode_belt(pct))
 
     def _on_strike(self, topic: str, payload: bytes) -> None:
@@ -165,6 +188,7 @@ class TapBridge:
         except (ValueError, KeyError, TypeError):
             self._alarm("bad_message", "unreadable station/strike command")
             return
+        self._last_cmd_strike = enabled
         self._write(encode_strike(enabled))
 
     def _on_diag_ping(self, topic: str, payload: bytes) -> None:

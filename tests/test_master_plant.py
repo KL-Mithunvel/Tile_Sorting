@@ -120,3 +120,175 @@ def test_plant_endpoint_and_pages_render():
     assert c.get("/static/vendor/three/three.module.min.js").status_code == 200
     assert c.get("/static/vendor/three/three.core.min.js").status_code == 200
     json.dumps(j)   # plain data only
+
+
+def test_gantry_station_uses_its_own_status_when_it_is_fresh():
+    from master.plant import stations_from_snapshot
+
+    base = {"station": None, "station_age_s": None}  # the Pi is silent; the gantry is not
+    snap = dict(base, gantry={"state": "online", "level": "ok", "completed": 7, "queue_depth": 2}, gantry_age_s=1.0)
+    g = next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")
+    assert g["level"] == "ok" and "7 placed" in g["detail"]
+    snap["gantry"] = {"state": "online", "level": "fail", "alarm": "LOST_STEPS_X"}
+    g = next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")
+    assert g["level"] == "fail" and "LOST_STEPS_X" in g["detail"]
+    snap["gantry"] = {"state": "online", "level": "warn", "paused": True}
+    assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["detail"] == "paused"
+    snap["gantry"] = {"state": "offline"}
+    assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["level"] == "offline"
+    snap["gantry"], snap["gantry_age_s"] = {"state": "online", "level": "ok"}, 60.0  # stale: not trusted
+    assert next(s for s in stations_from_snapshot(snap) if s["id"] == "gantry")["level"] == "offline"
+
+
+# ---- whole-line start / stop --------------------------------------------------
+
+def _client(controls=True):
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    return create_app(col, bus, controls_enabled=controls).test_client(), bus
+
+
+def test_line_command_is_validated_guarded_and_sent_as_one_station_cmd():
+    c, bus = _client()
+    ok = c.post("/api/command/line", json={"state": "stop"})
+    assert ok.status_code == 200
+    assert bus.messages("station/cmd")[-1] == {"cmd": "line", "state": "stop"}
+    c.post("/api/command/line", json={"state": "start", "belt_percent": 40})
+    assert bus.messages("station/cmd")[-1] == {"cmd": "line", "state": "start", "belt_percent": 40}
+    n = len(bus.messages("station/cmd"))
+    for bad in ({}, {"state": "pause"}, {"state": "start", "belt_percent": 0},
+                {"state": "start", "belt_percent": 101}, {"state": "start", "belt_percent": True},
+                {"state": "stop", "belt_percent": 50}):
+        assert c.post("/api/command/line", json=bad).status_code == 400
+    assert len(bus.messages("station/cmd")) == n                       # nothing sent for any of them
+    assert c.post("/api/command/line", data="x").status_code == 415
+    off, _ = _client(controls=False)
+    assert off.post("/api/command/line", json={"state": "stop"}).status_code == 403
+
+
+def test_demo_line_follows_the_same_stop_start_rules_as_the_station():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    line = DemoLine(bus, interval_s=100.0, fault_every_s=1e9, seed=1)
+    line.hold_all, line.belt_pct = True, 45.0
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    assert line.line_stopped and line.belt_pct == 0 and line.hold_all and not line.strike_enabled
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert not line.line_stopped and line.belt_pct == 45.0 and line.strike_enabled
+    assert line.hold_all is True                      # it was on before the stop, so it is on after
+    line.belt_pct = 0.0
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})   # nothing known to restore ...
+    line._saved["belt"] = None
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert line.line_stopped                          # ... so it refuses rather than guessing a speed
+
+
+def test_plant_and_troubleshoot_show_a_stopped_line_as_deliberate_not_a_fault():
+    from master.troubleshoot import diagnose
+    st = status(state="line_stopped")
+    st["state_detail"] = "line stopped (soft stop from the master - not an e-stop)"
+    st["settings"] = {"hold_all": True, "vote_enabled": False, "line": "stopped"}
+    p = build_plant(snap(station=st), now=100.0)
+    assert p["line"]["stopped"] is True and p["line"]["state"] == "line_stopped"
+    pi = {s["id"]: s for s in p["stations"]}["pi"]
+    assert pi["level"] == "warn"
+    (f,) = diagnose(p["stations"], [], [], 100.0)
+    assert "stopped from the master" in f["title"] and "not a fault" in f["meaning"]
+
+
+# ---- gantry feed gate -----------------------------------------------------------
+
+def test_feed_command_is_validated_guarded_and_one_station_cmd():
+    c, bus = _client()
+    assert c.post("/api/command/feed", json={"state": "pause"}).status_code == 200
+    assert bus.messages("station/cmd")[-1] == {"cmd": "feed", "state": "pause"}
+    c.post("/api/command/feed", json={"state": "resume"})
+    assert bus.messages("station/cmd")[-1] == {"cmd": "feed", "state": "resume"}
+    n = len(bus.messages("station/cmd"))
+    for bad in ({}, {"state": "stop"}, {"state": True}):
+        assert c.post("/api/command/feed", json=bad).status_code == 400
+    assert len(bus.messages("station/cmd")) == n and c.post("/api/command/feed", data="x").status_code == 415
+    off, _ = _client(controls=False)
+    assert off.post("/api/command/feed", json={"state": "pause"}).status_code == 403
+
+
+def test_demo_line_holds_finals_while_the_feed_is_paused_and_delivers_them_on_resume():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    line = DemoLine(bus, interval_s=0.0, transit_s=0.0, fault_every_s=1e9, seed=3)
+    bus.publish("station/cmd", {"cmd": "feed", "state": "pause"})
+    with line._lock:
+        line._step(1000.0)
+        line._step(1000.1)
+    assert bus.messages("tile/+/final") == []                 # decided, but nothing handed to the gantry
+    assert len(line._held) >= 1 and line.tally                 # ...while the line's own count moved on
+    held = len(line._held)
+    bus.publish("station/cmd", {"cmd": "feed", "state": "resume"})
+    assert len(bus.messages("tile/+/final")) == held and line._held == []
+    assert len(bus.messages("tile/+/ack")) == held
+
+
+def test_demo_line_stop_pauses_the_feed_and_start_resumes_it():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    line = DemoLine(bus, fault_every_s=1e9)
+    line.belt_pct = 50.0
+    bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
+    assert line.feed_paused is True
+    bus.publish("station/cmd", {"cmd": "line", "state": "start"})
+    assert line.feed_paused is False
+
+
+def test_plant_shows_a_paused_feed_on_the_line_and_on_the_gantry_even_with_its_own_status():
+    st = status()
+    st["settings"] = {"hold_all": False, "vote_enabled": False, "line": "running", "feed": "paused"}
+    st["outbox_depth"] = 3
+    sn = snap(station=st)
+    sn["gantry"] = {"state": "online", "level": "ok", "completed": 12, "queue_depth": 0, "paused": False,
+                    "homed": True}
+    sn["gantry_age_s"] = 1.0
+    p = build_plant(sn, now=100.0)
+    assert p["line"]["feed_paused"] is True and p["line"]["held_back"] == 3
+    g = {s["id"]: s for s in p["stations"]}["gantry"]
+    assert g["level"] == "warn" and "feed paused, 3 held back" in g["detail"]
+    sn["gantry"]["level"] = "fail"
+    sn["gantry"]["alarm"] = "LOST_STEPS"
+    g = {s["id"]: s for s in build_plant(sn, now=100.0)["stations"]}["gantry"]
+    assert g["level"] == "fail"                                # a real fault is never softened to a warning
+
+
+def test_troubleshoot_explains_a_paused_feed_and_a_full_queue_differently():
+    from master.troubleshoot import diagnose
+    paused = [{"id": "gantry", "label": "g", "level": "warn", "detail": "feed paused by the master, 2 held back"}]
+    (f,) = diagnose(paused, [], [], 100.0)
+    assert "feed is paused" in f["title"] and "dropped" not in f["title"] and f["checks"]
+    full = [{"id": "gantry", "label": "g", "level": "fail",
+             "detail": "feed paused and the queue is full (5): tiles are being dropped"}]
+    (f,) = diagnose(full, [], [], 100.0)
+    assert "tiles are being dropped" in f["title"] and f["level"] == "fail"
+
+
+# ---- the master PC and the operator in the 3D scene ---------------------------
+
+def test_plant_endpoint_lists_the_master_pc_and_the_operator_with_their_own_status():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    on = create_app(col, bus, controls_enabled=True, demo=True, demo_label="demo", clock=lambda: 100.0).test_client()
+    st = {s["id"]: s for s in on.get("/api/plant").get_json()["stations"]}
+    assert {"pi", "camera", "acoustic", "conveyor", "gantry", "master", "user"} <= set(st)
+    assert st["master"]["level"] == "ok" and "connected to the broker" in st["master"]["detail"]
+    assert "controls ON" in st["master"]["detail"] and st["user"]["level"] == "ok"
+    off = create_app(col, bus, controls_enabled=False, clock=lambda: 100.0).test_client()
+    st = {s["id"]: s for s in off.get("/api/plant").get_json()["stations"]}
+    assert st["user"]["level"] == "offline" and "view only" in st["user"]["detail"]
+    assert "read-only" in st["master"]["detail"]
+    bus.link_up = False
+    st = {s["id"]: s for s in off.get("/api/plant").get_json()["stations"]}
+    assert st["master"]["level"] == "fail" and "NOT connected" in st["master"]["detail"]
+
+
+def test_the_master_and_operator_are_not_part_of_the_lines_health_picture():
+    """They are drawn, but Troubleshoot must never report them as line stations."""
+    from master.plant import stations_from_snapshot
+    ids = {s["id"] for s in stations_from_snapshot(snap(station=status()))}
+    assert "master" not in ids and "user" not in ids

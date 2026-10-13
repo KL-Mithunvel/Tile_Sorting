@@ -67,6 +67,15 @@ echo "=== serial ports (the Nano, by id)"
 ls -l /dev/serial/by-id 2>&1 | sed 's/^/  /' | head -8
 
 echo
+echo "=== time (this Pi serves the LAN; clients should list it in 'chronyc sources' / 'chronyc clients')"
+if command -v chronyc >/dev/null 2>&1; then
+    chronyc tracking 2>&1 | grep -E "Reference ID|Stratum|System time|Leap status" | sed 's/^/  /'
+    chronyc clients 2>/dev/null | head -8 | sed 's/^/  /'
+else
+    echo "  chrony not installed (re-run install_pi.sh) - clocks will drift on the isolated LAN"
+fi
+
+echo
 echo "=== thermal (throttled=0x0 is clean)"
 vcgencmd measure_temp 2>/dev/null | sed 's/^/  /'
 vcgencmd get_throttled 2>/dev/null | sed 's/^/  /'

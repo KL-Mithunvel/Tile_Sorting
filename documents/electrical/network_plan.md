@@ -271,10 +271,27 @@ DNS relay is the likely source, not checked). Result: no usable internet from th
 ## 6. Time without internet
 
 No NTP means clocks drift and tile records from different nodes won't line up.
-**Open — proposal:** the master PC (or the Pi) serves time (chrony/ntpd) to the LAN, and
-nodes sync to it. The Pi has **no battery-backed RTC by default**, so after a power cut it
-boots with a stale clock until it syncs. Until this is settled, treat cross-node
-timestamps as approximate and correlate on `tile_id`, not on time.
+
+**Chosen (2026-10-12, written, never run):** the **Pi serves time** with chrony, because it is
+the always-on hub that already hosts the broker and camera + acoustic share its clock.
+`acoustic_node/deploy/install_pi.sh` installs chrony, writes
+`/etc/chrony/conf.d/tile-station.conf` (`allow 192.168.1.0/24`, `local stratum 10`,
+`makestep`, `rtcsync`) and installs `fake-hwclock`, so the Pi restores its last-known time after
+a power cut (a Pi 5 with an RTC battery keeps real time). `deploy/status.sh` prints
+`chronyc tracking` / `clients`.
+
+Clients (to do on each node; none done yet):
+
+- **UNO Q** (systemd-timesyncd): `/etc/systemd/timesyncd.conf.d/tile.conf` with
+  `[Time]` / `NTP=192.168.1.11`, then `sudo systemctl restart systemd-timesyncd`.
+- **Master PC** (Windows, admin): `w32tm /config /manualpeerlist:192.168.1.11 /syncfromflags:manual /update`
+  then `w32tm /resync`.
+- **Check:** each peer shows in `chronyc clients` on the Pi, and the station's service view
+  `clock` health row reads `ok`. The station warns (never faults) when a peer's heartbeat
+  timestamp differs from the Pi's by more than `station.health.clock_warn_s` (1 s).
+
+Nothing on the line decides from cross-node time (tiles pair by order and tile id), so a
+drifting clock only makes logs harder to compare; correlate on `tile_id`.
 
 ---
 

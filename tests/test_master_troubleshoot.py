@@ -183,3 +183,15 @@ def test_pi_fault_is_not_repeated_when_a_station_explains_it():
     # but a Pi fault with no failing station beneath it is still reported
     s[1] = st("camera", "ok", "3 tiles")
     assert [f["station"] for f in diagnose(s, [], [], NOW)] == ["pi"]
+
+
+def test_gantry_faults_have_specific_advice_not_the_generic_text():
+    from master.troubleshoot import _ALARM_ADVICE, _match
+
+    title, meaning, checks = _match("gantry", "needs a person: LOST_STEPS_X")
+    assert "fault" in title.lower() and checks
+    assert _match("gantry", "paused")[0] == "The gantry is paused"
+    assert _match("gantry", "not homed")[0] == "The gantry has not been homed"
+    assert "not reporting" in _match("gantry", "silent for 30 s")[0]
+    for kind in ("gantry_alarm", "gantry_fault", "gantry_link", "gantry_pick_failed", "not_placed"):
+        assert kind in _ALARM_ADVICE

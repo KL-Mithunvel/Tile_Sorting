@@ -35,13 +35,13 @@ contract (including a camera fault every ~50 s) and obeys the commands. Its data
 touches `data/master/master.db`. Everything it shows is synthetic.
 
 **Honest limits.** Tile positions are *derived* (age along the belt, held at the next
-station until it has reported), not measured. "Start/Stop belt" only sends a belt
-percent to the Nano; there is no whole-line start/stop message in the contract yet.
-The AI insights tab is a placeholder for the next step.
-Checked in headless Edge at 1500 px only; the page JS has no automated tests, and
-clicking a station / the camera fly-to were not exercised.
+station until it has reported), not measured. (see "Line control" below).
+All four views are built; Phase 2 adaptive grading (AI_Software_Novelty.md Idea B) is not started.
+Page JS is checked by `development/drive_master_pages.py` (real headless Edge against a demo master;
+not part of pytest): load errors, station select, view buttons, belt/hold-all, window switches. Not
+covered: clicking a station inside the 3D canvas, hover tooltips.
 
-Status: built and unit-tested on the dev laptop (51 tests), page rendered against seeded
+Status: built and unit-tested on the dev laptop (see the handover doc for counts), page rendered against seeded
 data; **never connected to a real broker**. The page is unauthenticated; the commands
 change how the line behaves, so they stay disabled unless you ask for them, and the
 network is assumed isolated (`documents/electrical/network_plan.md`).
@@ -79,3 +79,74 @@ a per-station health timeline with uptime, recent level changes and recent alarm
 - The Pi's own "station reports a fault" is hidden when a specific failing station explains it.
 - Recorded history only starts when this master starts; it says nothing about the line
   while the master was not running.
+
+## AI insights view (added 2026-10-12)
+
+> **Parked 2026-10-12:** built and tested, then deliberately set aside; to be revisited. The to-do list for coming back to it is in `TODO.md` ("PARKED ... AI insights"). The other three views do not depend on it, and with `insights.provider: none` (the default) nothing is ever sent to a model.
+
+`/insights` (`GET /api/insights?window=`, `GET /api/insights/provider`,
+`POST /api/insights/explain`). Two layers, kept apart on purpose:
+
+1. **Rule-based anomaly detection (`insights.py`, always on, no model).** Compares the
+   recent quarter of the window with the stretch before it and flags what moved by more
+   than chance: reject / hold / no-tap-timeout rate (two-proportion z >= 2.5 *and* >= 10
+   points), camera-vs-sound agreement, camera-to-final time (>= 1.5x and >= 1 s),
+   throughput, and one alarm kind repeating (>= 5). Each carries its numbers. Too little data
+   flags nothing. It shows behaviour *changed*, not why, and is relative to this master's own
+   history - a line that has always been bad reads as normal.
+2. **Language-model explanation (`llm.py`, only when you click Explain).** Writes a short
+   plain-English reading of what layer 1 and the Troubleshoot findings reported. It never
+   decides what is an anomaly and cannot change the line. Only a whitelisted summary is sent
+   (titles, numbers, station names, status text - no tile ids or rows) and the page shows
+   exactly what was sent. Output is labelled AI-generated; a 10 s cool-down stops loops.
+
+```bash
+python -m master.live_master --demo --ai ollama       # local model, works on the isolated LAN
+ollama pull llama3.2:3b                                # once; the page says so if it is missing
+set ANTHROPIC_API_KEY=...                              # then:  --ai anthropic  (needs internet)
+```
+
+`insights.provider` in `config.yaml` is `none` by default. The Claude API key is read only
+from the `ANTHROPIC_API_KEY` environment variable, never from a file, and is never returned
+or logged; choosing `anthropic` sends the summary to api.anthropic.com when you click.
+
+**Not done / not trusted:** no model has been run end to end (Ollama is installed on the dev
+laptop but has no model pulled; the Claude path has never been called) - the HTTP layer is
+tested with a fake transport only. The thresholds are reasoned, not tuned on real line data.
+The prompt has not been evaluated for faithfulness. Phase 2 adaptive grading is untouched.
+
+## Line control: Start / Stop line and the gantry feed (added 2026-10-12)
+
+- **Stop line** = one `station/cmd {"cmd":"line","state":"stop"}`; the Pi does it: hold-all on, belt 0, striker
+  inhibited, **gantry feed paused**, remembering what it overrode. **Start line** restores the belt speed, the
+  striker and hold-all, and resumes the feed; with no known belt speed it refuses rather than guess. A **soft
+  stop over the network, not an e-stop** (the e-stop is wired separately).
+- **Pause feed / Resume feed** (`/api/command/feed`) stops the Pi handing NEW tiles to the gantry. A tile already
+  in flight completes; the gantry finishes what it has and idles with an empty cup. Held tiles are delivered in
+  order on resume. If the pause outlasts the Pi's outbox (`unoq.max_outbox`) the oldest tiles are dropped: the
+  gantry station warns, then fails, before that happens. While paused the final is stored on the Pi but not on
+  the bus, so this master sees those tiles only after the feed resumes.
+- **Gantry hard pause / resume** (`/api/command/gantry`) is different: it freezes the machine *mid-job* after the
+  move in flight, so a tile may stay held on the cup. It asks for confirmation; prefer Pause feed.
+- Not verified: any of this against the real UNO Q, Nano or belt (demo + unit tests only).
+
+## Sim-backed demo: `--sim` (added 2026-10-13)
+
+```bash
+python -m master.live_master --sim      # no broker; controls on; in-memory DB
+```
+
+Where `--demo` *pretends* to be the station, `--sim` runs the real thing on the laptop: the real
+`StationCoordinator` (ledger, final grade, outbox/acks, line stop/start, feed gate, health) and the
+real gantry `FeedClient` -> `FinalQueue` -> `JobRunner` -> reporter -> command handler over the
+protocol's `SimulatedMcu`, on an in-memory bus. Only the camera, the Nano and the microphone are
+stand-ins (`master/sim_line.py`). The pill reads "sim - real station logic, simulated machine".
+
+- It imports the station's packages (adds them to `sys.path` itself) **only when `--sim` is given**;
+  nothing else in `master/` does, so a normal master still runs on any PC.
+- Default: the simulated MCU moves at a fixed 400 mm/s so the demo looks alive.
+  `SimLine(real_feeds=True)` honours the configured feed words instead - at today's placeholder
+  config one tile then takes ~22 s, i.e. the gantry is the bottleneck of the line.
+- Still simulated: no firmware, no real timing, no vacuum, no broker.
+
+Everything done and still to do is in `documents/programming/master_gui_handover.md`.

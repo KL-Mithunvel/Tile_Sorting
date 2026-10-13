@@ -67,6 +67,19 @@ gantry:
   tolerance_mm: {lost_steps: 1.0, skew: 0.5}
   link_timeout_ms: 500
   serial: {port: "/dev/ttyACM0", baud: 115200}   # re-verify on the board
+  # This node on the station bus (pick_place.gantry_station / twin_prototype
+  # --station-host). The Pi runs the broker (station_coordination.md).
+  station:
+    host: "192.168.1.11"
+    port: 1883
+    client_id: "tile-gantry"
+    status_interval_s: 2.0
+    # pause / resume / acknowledge / reset_stack: never move the machine.
+    commands_enabled: true
+    # home / recover MOVE the gantry: off until someone has decided the master may do that.
+    motion_commands_enabled: false
+    # Run one HOME ALL as soon as the config has been pushed. Off: homing is an operator action.
+    home_on_start: false
 
 # Where tiles are TAKEN FROM. The Pi names the source (default `pickup`); the
 # conveyor delivers every tile to this one fixed point. z = cup-tip height when

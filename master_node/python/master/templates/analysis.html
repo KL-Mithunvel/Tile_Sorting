@@ -44,7 +44,7 @@
 <nav>
   <h1>Tile line — master</h1>
   <a class="tab" href="/">Plant 3D</a><span class="tab on">Analysis</span>
-  <a class="tab" href="/troubleshoot">Troubleshoot</a><span class="tab soon" title="next step">AI insights</span>
+  <a class="tab" href="/troubleshoot">Troubleshoot</a><a class="tab" href="/insights">AI insights</a>
   <a class="tab" href="/classic">Classic view</a>
   <span style="flex:1"></span><span class="pill" id="demo" style="display:none">demo — synthetic line</span>
 </nav>
@@ -200,6 +200,7 @@ function transit(d) {
 
 function render(d) {
   $("demo").style.display = d.demo ? "" : "none";
+  if (d.demo_label) $("demo").textContent = d.demo_label;
   $("empty").style.display = d.totals.tiles ? "none" : "block";
   kpis(d); stacked(d);
   hbars("mix", GR.map(g => [g, d.grades[g]]).filter(e => e[1]), k => GC[k]);

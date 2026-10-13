@@ -114,6 +114,34 @@ free for anything added later.
 | USB-A host port | — | — | USB microphone | Linux/Qualcomm side, not a GPIO pin. Captured via `sounddevice` in `acoustic/capture.py`, same as the current dev-laptop mic path. |
 | D8 | *(reserved, unused)* | — | — | Candidate for a future arm-position limit switch, if open-loop `ARM_MS` timing proves unreliable (§7). Not implemented this pass. |
 
+### 3.1 Nano variant (2026-10-12, firmware written, **never wired**)
+
+If the shared-Pi plan is confirmed, this controller is an **Arduino Nano (ATmega328P,
+5 V logic)** instead of the UNO Q, reached over USB serial by the Pi (`documents/programming/
+nano_serial_protocol.md`); the microphone is on the Pi, not on the controller. The firmware
+is `acoustic_node/nano_firmware/` (logic in `nano_core.h`; pins in `nano_firmware.ino`).
+The striker pins are unchanged from the table above; the two marked NEW are **not yet
+confirmed against a wired board**.
+
+| Nano pin | Signal | Direction | Connects to | Notes |
+|---|---|---|---|---|
+| A4 / A5 | I2C SDA / SCL | bidirectional | ToF 1 + ToF 3 (VL53L1X) | Fixed pins. Two sensors on one bus: see XSHUT below. |
+| D7 | `PIN_TOF_STRIKER_XSHUT` | output | ToF 1 XSHUT (striker station) | Held low at boot while ToF 1 is moved to address `0x30`. |
+| D12 | `PIN_TOF_END_XSHUT` | output | ToF 3 XSHUT (belt end) | **NEW.** Released after ToF 1 is re-addressed, so ToF 3 keeps `0x29` (`i2c_bus_plan.md` 3.1). D8 stays reserved for the arm limit switch. |
+| D5 | `PIN_SOLENOID_ARM` | output | ARM solenoid MOSFET gate | Unchanged. |
+| D6 | `PIN_SOLENOID_LOCK` | output | LOCK solenoid MOSFET gate | Unchanged. |
+| D2 | `PIN_ESTOP` | input, `INPUT_PULLUP` | E-stop loop (NC) | LOW = tripped. The Nano's e-stop also cuts power upstream (`Automation_Architecture.md` 5.5). |
+| D4 | `PIN_TAP_LED` | output | Bench LED | Lit for the duration of `RELEASE`. |
+| D13 | `PIN_STATUS_LED` | output | Onboard LED | On = running, off = FAULT. |
+| D9 | `PIN_BELT_PWM` | output (PWM, Timer1, ~490 Hz) | Belt DC-motor driver input | **NEW.** Driver choice and whether 490 Hz suits it are open. |
+| USB | serial 115200 8N1 | — | the Pi | Pin it by `/dev/serial/by-id/...`; the Nano is not on the LAN. |
+
+Behaviour the wiring has to support (all in `acoustic_node/nano_firmware/README.md`):
+**belt fail-safe** (a silent or never-seen ToF 3, or a tile at the belt end, holds the belt
+at 0), **Pi watchdog** (no valid serial line for 2 s stops the belt and inhibits the
+striker), and **latched e-stop FAULT**. ToF 3's mount distance (latency + belt coast) is
+unmeasured; `tof_end_mm` in `nano_core.h` is a provisional 60.
+
 ---
 
 ## 4. Power Architecture
@@ -183,7 +211,10 @@ until recalibrated on real hardware" rule already applied to `rms_threshold`).
   hardware is on the bench (same caveat as every other "unverified" App Lab item in this
   repo — see `acoustic_node/README.md`).
 - **ToF sensor model + library** — VL53L0X assumed above; `sketch.ino`'s
-  `readTofDistanceMm()` is a placeholder pending the actual library API.
+  `readTofDistanceMm()` is a placeholder pending the actual library API. **The owner's
+  parts are VL53L1X** (`i2c_bus_plan.md`); the Nano firmware is written for them (Pololu
+  `VL53L1X` library API, unverified), so treat every "VL53L0X" in this document as
+  VL53L1X.
 - **Mechanical lift/latch design** — the ASCII diagram in §1 is a conceptual placeholder,
   not an engineered mechanism. Needs real CAD (`documents/mech/`) once the ARM/LOCK
   approach is validated on the bench.

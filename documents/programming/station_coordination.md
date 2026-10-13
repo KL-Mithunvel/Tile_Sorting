@@ -73,6 +73,8 @@ service must not restart the other. It is the *operator* screen:
 | Tile under the striker but **no camera result waiting** | missed camera detection: a `UNKNOWN-…` final **Hold** is sent so the UNO Q's ordered queue stays in step; alarm `missed_camera` |
 | Gap in the Nano's strike `seq` | alarm `tap_gap` with the count of lost events |
 | Operator/master `hold_all` | every tile Hold |
+| Whole-line soft **stop** (`line`) | hold-all on + belt 0 + striker inhibited + **gantry feed paused**; tiles in flight are Hold. **Start** restores the belt speed it had (or `belt_percent`), allows the striker, resumes the feed, puts hold-all back how it was; with no known speed it refuses and raises a `line_start` alarm. Soft stop over the network - **not an e-stop**, and it cannot stop the gantry (only what is sent to it changes); tiles already on the belt stay there. |
+| Gantry **feed** gate (`feed`, also part of `line`) | While paused the Pi releases no NEW final to the UNO Q: a tile already in flight still completes (and is retried), the gantry finishes the tile it is on and drains what it has accepted, then idles with an empty cup. Held finals stay in the outbox and go out in order on resume. This is deliberately NOT a gantry `pause` (that freezes it mid-job with a tile on the cup - use `station/gantry/cmd` for that). A pause long enough to fill the outbox (`unoq.max_outbox`) drops the oldest and raises `outbox_overflow`; the `unoq` health row goes WARN, then FAIL when full. While paused the final is stored on the Pi but is not on the bus, so the master sees those tiles only once the feed resumes. |
 | Broker down / camera silent / mic dead / UNO Q not acking | station state **FAULT**, red health chip, no guessing |
 | UNO Q does not ack | final resent every `ack_timeout_s`; after `retries` the link is DOWN and later finals queue behind it, in order |
 
@@ -91,8 +93,12 @@ All JSON, UTF-8. Topic names extend `Automation_Architecture.md` §12/§13.
 | `tile/<id>/acoustic/result` | station → master | 1 / no | `tile_id, station:"acoustic", status:"done"\|"invalid", acoustic_grade, confidence, peak_frequency_hz, decay_t20_s, ts` |
 | `tile/<id>/final` | station → **UNO Q**, master | 1 / no | `tile_id, seq, final_grade, destination, camera_grade, acoustic_grade, acoustic_counted, timed_out, reasons[], attempt, ts` |
 | `tile/<id>/ack` | **UNO Q** → station | 1 / no | any JSON, e.g. `{"status":"ok"}` — the topic is the acknowledgement |
+| `tile/<id>/placed` | **UNO Q** → station, master | 1 / no | `tile_id, station:"gantry", outcome:"placed"\|"failed", grade, source, destination, reason, tile_in_cup, stack_count, attempt, ts` — what happened to the tile after the ack |
+| `station/gantry/status` | **UNO Q** → station, master | 0 / **retained**, last-will `{"state":"offline"}` | `state, level (ok\|warn\|fail), phase, fault, alarm, homed, fsm, vacuum, link, paused, queue_depth, active_tile, completed, failed, stacks{}, backend, ts` |
+| `station/gantry/cmd` | master → **UNO Q** | 1 / no | `{"id":…, "cmd":"pause"\|"resume"\|"acknowledge"\|"reset_stack"\|"home"\|"recover", "stack":…, "count":…}` — `home` / `recover` move the machine and are refused unless `gantry.station.motion_commands_enabled` |
+| `station/gantry/cmd/result` | **UNO Q** → master | 1 / no | `id, cmd, ok, reason, ts` — one per command, refusals included |
 | `station/status` | station → master | 0 / **retained**, last-will `{"state":"offline"}` | `state, state_detail, health{}, awaiting_count, settings{}, tally{}, counters{}` |
-| `station/cmd` | master → station | — | `{"cmd":"vote","enabled":bool}`, `{"cmd":"hold_all","enabled":bool}`, `{"cmd":"clear_alarms"}` |
+| `station/cmd` | master → station | — | `{"cmd":"vote","enabled":bool}`, `{"cmd":"hold_all","enabled":bool}`, `{"cmd":"clear_alarms"}`, `{"cmd":"line","state":"stop"\|"start","belt_percent":n?}` (whole-line soft stop/start, below), `{"cmd":"feed","state":"pause"\|"resume"}` (gantry feed gate, below) |
 | `machine/alarm` | station → master | 1 / no | `ts, level, kind, message, tile_id` |
 | `station/diag/ping` | `diagnose.sh` / `system.sh` → all | 0 / no | `{"id": ...}` — **never a tile**: answering it cannot create a pick job |
 | `station/diag/pong/<node>` | each running node → asker | 0 / no | `{id, node, ts, ok, detail}`; nodes: `station`, `camera`, `gantry` (UNO Q feed), `nano` (serial bridge — `ok` only if the Nano itself spoke recently), `master` |
@@ -106,7 +112,8 @@ from `station.final.bins`.
 bench CLI `python -m pick_place.tile_feed --host 192.168.1.11 [--auto-pick 2]`, and
 `/api/feed` on the twin dashboard via `twin_prototype --station-host`). Tested on the laptop
 against the real coordinator; **never run on the UNO Q**, and the gantry sequencer that will
-consume `FinalQueue.start_next()` / `finish()` does not exist. It must:
+consume `FinalQueue.start_next()` / `finish()` is `pick_place/job_runner.py` (2026-10-12; tested against
+a simulated MCU and against the compiled firmware core, never on the board). It must:
 
 - Subscribe to `tile/+/final` on the **Pi's** broker (`192.168.1.11:1883`).
 - Publish `tile/<id>/ack` once it has *accepted* the tile into its queue.
@@ -118,6 +125,31 @@ consume `FinalQueue.start_next()` / `finish()` does not exist. It must:
   `unoq_rejected` and releases its queue); when its queue is full, **do not ack** (back-pressure — the
   station retries and eventually shows the link as down).
 
+### What the UNO Q reports back (added 2026-10-12)
+
+Built as `pick_place/station_link.py` (`GantryReporter`, `GantryCommands`) and wired by
+`pick_place/gantry_station.py` (`attach_station_link()`; headless service
+`python -m pick_place.gantry_station`, or attached to the twin with `twin_prototype --station-host`).
+
+- **`tile/<id>/placed`** after every job: `placed` (with the stack count after) or `failed`
+  (with `reason` and `tile_in_cup` — a failure with the tile still on the cup needs a person; a
+  missed grip does not). Buffered across a broker outage (qos 1 only; status is not replayed).
+- **`station/gantry/status`** retained + last-will: published on change and every
+  `gantry.station.status_interval_s`; `level` is `fail` on an alarm, a held fault or a dead MCU
+  link, `warn` when paused or not homed.
+- **`machine/alarm`** edges, `kind: gantry_alarm | gantry_fault | gantry_link | gantry_pick_failed`
+  (raised once per event, not once per tick).
+- **Commands**: `pause / resume / acknowledge / reset_stack` never move the machine and are on by
+  default; `home / recover` are off until `motion_commands_enabled: true`. The e-stop is never a
+  message.
+
+What the Pi does with it (`fusion/coordinator.py`): records `placement`, `placement_reason`,
+`tile_in_cup`, `placed_ts` per tile; `health.gantry` (a gantry alarm makes the station state
+`fault`; a missing gantry is a warning unless `station.gantry.required`); and raises `not_placed`
+once if a tile was acknowledged but not reported within `station.unoq.placed_timeout_s` (180 s,
+0 = off). The master shows the gantry from its own retained status and can send the commands
+(`/api/command/gantry`; `home` / `recover` also need `"confirm": true`).
+
 ## 5. Files
 
 | Path | Role |
@@ -125,13 +157,17 @@ consume `FinalQueue.start_next()` / `finish()` does not exist. It must:
 | `acoustic_node/python/fusion/` | pure logic: `grades`, `ledger`, `final_grade`, `store` (SQLite), `transport` (topics, in-memory + MQTT bus), `coordinator` |
 | `acoustic_node/python/acoustic/features.py` | tap measurement + optional rule-based sound grade |
 | `acoustic_node/python/acoustic/station.py` | microphone, threads, health; `dashboard.py` + `templates/` the GUI; `live_station.py` CLI; `demo.py` synthetic peers |
-| `acoustic_node/python/run_station.py` | systemd entry point (the old `main.py` is the UNO Q App Lab stub, untouched) |
+| `acoustic_node/python/main.py` | systemd entry point (a thin shim over `live_station.main()`; replaced the UNO Q App Lab stub 2026-10-12) |
+| `acoustic_node/python/fusion/clock_skew.py` | peer clock disagreement from heartbeat timestamps -> `clock` health entry (warning only) |
 | `acoustic_node/deploy/` | `tile-acoustic.service`, `install_pi.sh` (also installs mosquitto) |
 | `camera_node/python/camera/publisher.py` | camera side of the contract; `config.yaml` `mqtt:` (off by default) |
 | `acoustic_node/python/acoustic/tap_protocol.py`, `tap_bridge.py` | Nano serial link (spec: `nano_serial_protocol.md`) |
 | `acoustic_node/python/fusion/stats.py` | camera->tap transit-time summary (suggested `max_wait_s`) |
 | `acoustic_node/deploy/kiosk/` | Chromium kiosk autostart for the Pi's screen |
 | `pick_place_node/python/pick_place/tile_feed.py` | the UNO Q's ordered, de-duplicating, acknowledging queue of finals |
+| `pick_place_node/python/pick_place/station_link.py` | the UNO Q's reports (`placed`, status, alarms) and remote commands |
+| `pick_place_node/python/pick_place/gantry_station.py` | the headless UNO Q service; `attach_station_link()` wires it all |
+| `tests/test_pick_place_station_link.py`, `test_pick_place_gantry_station.py` | the reporter / commands, and the whole gantry node against the real coordinator |
 | `master_node/` | optional PC observer / collector / commander (:8000) |
 | `development/fake_station_peers.py` | fake camera / striker / UNO Q against a real broker |
 | `tests/test_fusion_*.py`, `test_acoustic_features.py`, `test_acoustic_station.py`, `test_camera_publisher.py`, `test_station_contract.py` | the pure parts and the contract between the two nodes |
@@ -180,7 +216,10 @@ every tile (they go to the manual bin) and the belt is not started; only when th
 the camera, and (unless `--no-unoq`) the UNO Q feed have each *answered a diagnostic ping and
 reported ok* is the hold released and the belt set, in one step. This is start-up
 sequencing, **not clock synchronisation** — cross-node time (no NTP on the isolated LAN) is
-still an open TODO.
+handled separately: the Pi serves time with chrony (`install_pi.sh`) and the service view's
+`clock` health entry warns when a peer's heartbeat timestamp differs from the Pi's by more than
+`station.health.clock_warn_s`. Nothing on the line decides from cross-node time; the warning only
+keeps logs comparable.
 
 ### Diagnostic layers (`diagnose.sh`)
 
@@ -200,6 +239,10 @@ Verified (laptop, 2026-10-11): all pure logic and the coordinator over an in-mem
 the Flask API incl. controls, JSON-only and path checks; the GUI rendered in headless
 Edge against the synthetic demo (`python -m acoustic.live_station --demo`); the MQTT
 client's failure path (unreachable broker: not connected, publish returns False).
+
+**Not verified (gantry, 2026-10-12):** the UNO Q node on a real broker or on the board; paho-mqtt in the
+App Lab container; that the last-will arrives; the real gantry MCU (the firmware core is verified
+only on a PC — see `pick_place_node/sketch/README.md`).
 
 **Not verified:** any connection to a real broker (none was available on the laptop); the
 Pi, `install_pi.sh`, the systemd unit; a real USB microphone through PortAudio on the

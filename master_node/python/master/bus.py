@@ -75,6 +75,20 @@ class InMemoryBus:
         return out
 
 
+class StreamingInMemoryBus(InMemoryBus):
+    """InMemoryBus that delivers and forgets. The stock one appends every message
+    to `published` for assertions, which for a demo that runs for hours is a leak."""
+
+    def publish(self, topic: str, payload, qos: int = 1, retain: bool = False) -> bool:
+        if not self.link_up:
+            return False
+        data = _encode(payload)
+        for f, cb in list(self._subs):
+            if topic_matches(f, topic):
+                cb(topic, data)
+        return True
+
+
 class MqttBus:
     def __init__(self, host: str, port: int = 1883, client_id: str = "tile-master"):
         self._host, self._port, self._client_id = host, port, client_id

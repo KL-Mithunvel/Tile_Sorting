@@ -54,6 +54,7 @@ class RunnerConfig:
     vacuum_timeout_s: float = 5.0    # `ok` for VAC ON (sent only after the grip is confirmed)
     motion_timeout_s: float = 60.0   # `done` for a motion that was accepted
     ping_interval_s: float = 1.0     # idle PING so the MCU's link watchdog stays happy
+    keepalive_s: float = 0.2         # PING this often while a motion is in flight (< LINK_TIMEOUT_MS)
     stall_s: float = 1.0             # a gap between ticks longer than this is OUR pause
     pick_retries: int = 1
 
@@ -99,6 +100,12 @@ class JobRunner:
         self._last_step_ts: Optional[float] = None
         self.stalls = 0
         self._link_error: Optional[str] = None
+
+    @property
+    def holding(self) -> bool:
+        """Is a tile (possibly) on the cup. A plain read, no lock: it is called
+        from `on_job_done`, which runs with this runner's lock already held."""
+        return self._holding
 
     # ---- operator actions ---------------------------------------------------
 
@@ -164,6 +171,7 @@ class JobRunner:
             return
         if self._active is not None:
             self._advance(now)
+            self._keepalive(now)
             return
         if self._phase == FAULT or not self._s.connected:
             return
@@ -184,6 +192,19 @@ class JobRunner:
         if self._ping_seq is None and now - self._last_ping >= self._cfg.ping_interval_s:
             self._last_ping = now
             self._ping_seq = self._s.send(protocol.ping())
+
+    def _keepalive(self, now: float) -> None:
+        """The MCU stops a motion when the Pi has been silent for LINK_TIMEOUT_MS
+        (protocol 5.4 rule 7), and a motion can take far longer than that with
+        nothing to send. So the runner PINGs through it, exactly as it does when idle.
+        Not tracked: an unanswered ping during a motion is caught by the motion's own
+        deadline, and by the MCU's watchdog the other way round."""
+        act = self._active
+        if act is None or act.seq is None or act.cmd is None or not act.cmd.is_motion or not self._s.connected:
+            return  # the watchdog only runs while a motion is in flight
+        if now - self._last_ping >= self._cfg.keepalive_s:
+            self._last_ping = now
+            self._s.send(protocol.ping())
 
     def _rebase(self, gap_s: float) -> None:
         """The runner was not running for `gap_s`: whatever the MCU did in that time is

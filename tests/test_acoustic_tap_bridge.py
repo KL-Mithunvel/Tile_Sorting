@@ -154,3 +154,52 @@ def test_stop_does_not_send_belt_zero_it_just_goes_silent():
     b.start()
     b.stop()
     assert not any(w.startswith(b"BELT") for w in ser.written)
+
+
+# ---- re-sending the last commands after a Nano watchdog trip ----------------------------------
+
+
+def _resend_rig(resend):
+    bus, ser = InMemoryBus(), FakeSerial()
+    return bus, ser, TapBridge(ser, bus, clock=lambda: 100.0, ping_s=0.5, resend_on_recover=resend)
+
+
+def _wdogreset(b):
+    b.handle_line(line("ERR WDOGRESET Pi is back; belt and striker need a fresh command"))
+
+
+def test_after_a_watchdog_trip_nothing_is_resent_unless_opted_in():
+    bus, ser, b = _resend_rig(resend=False)
+    b._on_belt("station/belt", b'{"percent": 60}')
+    b._on_strike("station/strike", b'{"enabled": true}')
+    ser.written.clear()
+    _wdogreset(b)
+    assert ser.written == []
+    # It is still reported, so the operator knows to re-issue the commands.
+    assert any(a["kind"] == "nano_error" for a in bus.messages("machine/alarm"))
+
+
+def test_opted_in_bridge_resends_the_last_strike_and_belt_once():
+    bus, ser, b = _resend_rig(resend=True)
+    b._on_belt("station/belt", b'{"percent": 60}')
+    b._on_strike("station/strike", b'{"enabled": true}')
+    ser.written.clear()
+    _wdogreset(b)
+    assert ser.written == [encode_strike(True), encode_belt(60)]
+    assert any(a["kind"] == "nano_resumed" for a in bus.messages("machine/alarm"))
+
+
+def test_resend_does_nothing_for_commands_it_was_never_given():
+    bus, ser, b = _resend_rig(resend=True)
+    _wdogreset(b)
+    assert ser.written == []
+
+
+def test_resend_follows_the_latest_command_not_the_first():
+    bus, ser, b = _resend_rig(resend=True)
+    b._on_belt("station/belt", b'{"percent": 60}')
+    b._on_belt("station/belt", b'{"percent": 0}')   # operator stopped the belt
+    b._on_strike("station/strike", b'{"enabled": false}')
+    ser.written.clear()
+    _wdogreset(b)
+    assert ser.written == [encode_strike(False), encode_belt(0)]

@@ -92,6 +92,15 @@ class StationCoordinator:
         self._vote_enabled = bool(final_cfg.get("vote_enabled", False))
         self._min_conf = float(final_cfg.get("min_confidence", 0.6))
         self._bins = dict(final_cfg.get("bins") or {})
+        # A Hold tile is NOT sent to the gantry (it has no location for it, and the gantry
+        # picks whatever is at the pickup point, so a tile it does not know about would be
+        # picked into the NEXT tile's bin). `hold_to_gantry: true` restores the old behaviour.
+        self._hold_to_gantry = bool(final_cfg.get("hold_to_gantry", False))
+        # ...and so a Hold tile must not reach the pickup while the feed is running: pause the
+        # feed until a person has taken it off the belt and resumes it.
+        self._hold_pauses_feed = bool(final_cfg.get("hold_pauses_feed", True))
+        self._needs_person: list[str] = []
+        self._sticky: dict = {}
         self._hold_all = False
 
         self._require_ack = bool(unoq_cfg.get("require_ack", True))
@@ -201,6 +210,7 @@ class StationCoordinator:
             self._feed_paused = bool(paused)
             self._event(f"gantry feed {'PAUSED' if paused else 'RESUMED'} ({source})")
             if not paused:
+                self._confirm_needs_person(source)
                 self._pump(self._clock())
 
     def set_line(self, running: bool, belt_percent: Optional[float] = None, source: str = "operator") -> bool:
@@ -244,6 +254,7 @@ class StationCoordinator:
             self._line_stopped = False
             self._line_saved = {}
             self._feed_paused = False
+            self._confirm_needs_person(source)
             self._event(f"LINE STARTED ({source}): belt {pct:g} %, striker allowed, gantry feed resumed")
             # Striker first, belt last: nothing moves until the line can use it.
             self._bus.publish(TOPIC_STRIKE, {"enabled": True}, qos=1)
@@ -256,6 +267,7 @@ class StationCoordinator:
             # Acknowledges the banner only. A fault that is still true (link
             # down, mic dead) keeps showing through `health` and the state.
             self._alarms = deque((a for a in self._alarms if a["level"] != "alarm"), maxlen=60)
+            self._sticky.clear()
 
     def set_health(self, name: str, level: str, detail: str = "") -> None:
         with self._lock:
@@ -417,8 +429,63 @@ class StationCoordinator:
         )
         self._tally[decision.grade] = self._tally.get(decision.grade, 0) + 1
         self._last_final = {"tile_id": entry.tile_id, "grade": decision.grade, "destination": decision.destination, "ts": now}
+        if decision.grade == HOLD and not self._hold_to_gantry:
+            self._hold_for_a_person(entry.tile_id, payload, now)
+            return
         self._enqueue(entry.tile_id, payload, now)
         self._pump(now)
+
+    # ---- Hold tiles: a person's job, never the gantry's ---------------------
+
+    def _hold_for_a_person(self, tile_id: str, payload: dict, now: float) -> None:
+        self._store.upsert(tile_id, now, delivery="needs_person")
+        self._needs_person.append(tile_id)
+        # Visible to the master and the Pi's own screens - but NOT on tile/<id>/final, which the
+        # UNO Q subscribes to and would turn into a pick job it cannot do correctly.
+        self._bus.publish(tile_topic(tile_id, "needs_person"), dict(payload, needs_person=True), qos=1)
+        if self._hold_pauses_feed and not self._feed_paused:
+            self._feed_paused = True
+            self._event(f"gantry feed PAUSED (hold tile {tile_id}): take it off the belt, then Resume feed")
+        self._sticky_alarm(
+            "needs_person",
+            "{n} hold tile(s) need a person: take them off the belt, then Resume feed",
+            tile_id,
+        )
+
+    def _confirm_needs_person(self, source: str) -> None:
+        """Resuming the feed is the operator's confirmation that the hold tiles are gone."""
+        if not self._needs_person:
+            return
+        n = len(self._needs_person)
+        self._needs_person.clear()
+        cur = self._sticky.pop("needs_person", None)
+        if cur and cur.get("item") is not None:
+            try:
+                self._alarms.remove(cur["item"])
+            except ValueError:
+                pass
+        self._event(f"{n} hold tile(s) confirmed taken off the belt ({source})")
+
+    def _sticky_alarm(self, kind: str, fmt: str, tile_id: Optional[str], republish_s: float = 10.0) -> None:
+        """One alarm per cause: the first occurrence is published at once, repeats only raise
+        its count and re-publish it (updated) at most every `republish_s`."""
+        now = self._clock()
+        cur = self._sticky.setdefault(kind, {"count": 0, "pub": None, "item": None})
+        cur["count"] += 1
+        msg = fmt.format(n=cur["count"])
+        if cur["item"] is None:
+            item = {"ts": now, "level": "alarm", "kind": kind, "message": msg, "tile_id": tile_id,
+                    "count": cur["count"]}
+            cur["item"], cur["pub"] = item, now
+            self._alarms.appendleft(item)
+            log.warning("ALARM %s: %s", kind, msg)
+            self._bus.publish(TOPIC_ALARM, dict(item), qos=1)
+            return
+        item = cur["item"]
+        item.update(message=msg, count=cur["count"], tile_id=tile_id)
+        if now - cur["pub"] >= republish_s:
+            cur["pub"], item["ts"] = now, now
+            self._bus.publish(TOPIC_ALARM, dict(item), qos=1)
 
     # ---- delivery to the UNO Q ------------------------------------------
 
@@ -522,7 +589,7 @@ class StationCoordinator:
                 snap = self._snapshot_locked(now, recent=0)
                 self._bus.publish(
                     TOPIC_STATUS,
-                    {k: snap[k] for k in ("now", "state", "state_detail", "health", "awaiting_count", "outbox_depth", "settings", "tally", "counters")},
+                    {k: snap[k] for k in ("now", "state", "state_detail", "health", "awaiting_count", "outbox_depth", "needs_person", "settings", "tally", "counters")},
                     qos=0,
                     retain=True,
                 )
@@ -757,6 +824,10 @@ class StationCoordinator:
             h["unoq"] = {"level": WARN, "detail": "acknowledgement not required (bench mode)"}
         elif self._link_down:
             h["unoq"] = {"level": FAIL, "detail": "no acknowledgement"}
+        elif self._feed_paused and self._needs_person:
+            h["unoq"] = {"level": WARN,
+                         "detail": f"{len(self._needs_person)} hold tile(s) need a person - take them off the belt, "
+                                   f"then Resume feed ({len(self._outbox)} held back)"}
         elif self._feed_paused:
             queued = len(self._outbox)
             if queued >= self._max_outbox:
@@ -805,6 +876,8 @@ class StationCoordinator:
             "last_final": dict(self._last_final) if self._last_final else None,
             "alarms": list(self._alarms)[:20],
             "outbox_depth": len(self._outbox) + (1 if self._inflight else 0),
+            "needs_person": len(self._needs_person),
+            "needs_person_tiles": list(self._needs_person)[-10:],
             "gantry": dict(self._gantry_status) if self._gantry_status else None,
             "awaiting_placement": len(self._awaiting_placement),
             "settings": {
@@ -812,6 +885,7 @@ class StationCoordinator:
                 "hold_all": self._hold_all,
                 "line": "stopped" if self._line_stopped else "running",
                 "feed": "paused" if self._feed_paused else "running",
+                "hold_to_gantry": self._hold_to_gantry,
                 "min_confidence": self._min_conf,
                 "max_wait_s": self.ledger.max_wait_s,
                 "require_ack": self._require_ack,

@@ -113,8 +113,10 @@ def test_no_tap_within_max_wait_is_held_not_guessed(rig):
     camera(bus, "T1", "Grade A")
     clock.t += 11.0
     c.tick()
-    (final,) = finals(bus)
+    assert finals(bus) == []                                     # a Hold is a person's job, not the gantry's
+    (final,) = bus.messages("tile/+/needs_person")
     assert final["final_grade"] == "Hold" and final["destination"] == "manual" and final["timed_out"] is True
+    assert store.get("T1")["delivery"] == "needs_person"
     assert any(a["kind"] == "no_tap_timeout" for a in c.snapshot()["alarms"])
 
 
@@ -141,11 +143,11 @@ def test_unreadable_camera_result_keeps_its_place_and_ends_up_held(rig):
     camera(bus, "T2", "Grade A")
     c.on_tap(GOOD_TAP)  # physically T1's tap
     c.on_tap(GOOD_TAP)
-    got = {f["tile_id"]: f for f in finals(bus)}
-    bus.publish("tile/T1/ack", {})
-    got = {f["tile_id"]: f for f in finals(bus)}
-    assert got["T1"]["final_grade"] == "Hold"
-    assert got["T2"]["final_grade"] == "Grade A"
+    held = {m["tile_id"]: m for m in bus.messages("tile/+/needs_person")}
+    assert held["T1"]["final_grade"] == "Hold"                   # it ended up held, in its own place
+    assert finals(bus) == []                                     # T2 waits behind the hold tile (feed paused)
+    bus.publish("station/cmd", {"cmd": "feed", "state": "resume"})
+    assert {f["tile_id"]: f for f in finals(bus)}["T2"]["final_grade"] == "Grade A"
 
 
 def test_sound_vote_only_counts_when_enabled_and_confident(rig):
@@ -193,7 +195,7 @@ def test_commands_from_master_change_settings(rig):
     bus.publish("station/cmd", {"cmd": "hold_all", "enabled": True})
     camera(bus, "T1", "Grade A")
     c.on_tap(GOOD_TAP)
-    assert finals(bus)[0]["final_grade"] == "Hold"
+    assert store.get("T1")["final_grade"] == "Hold" and finals(bus) == []
     bus.publish("station/cmd", {"cmd": "frobnicate"})
     assert any(a["kind"] == "bad_message" for a in c.snapshot()["alarms"])
 
@@ -256,7 +258,8 @@ def test_tile_under_striker_but_no_camera_result_is_sent_as_hold_to_keep_order(r
     clock, bus, store, c = rig
     tid = c.on_tap(GOOD_TAP, tile_present=True)  # the camera never reported this tile
     assert tid.startswith("UNKNOWN-")
-    final = finals(bus)[0]
+    assert finals(bus) == []                                     # kept off the gantry; a person takes it
+    (final,) = bus.messages("tile/+/needs_person")
     assert final["final_grade"] == "Hold" and final["destination"] == "manual" and final["camera_grade"] is None
     snap = c.snapshot()
     assert snap["counters"]["missed_camera"] == 1
@@ -345,8 +348,10 @@ def test_line_stop_holds_everything_zeroes_the_belt_and_inhibits_the_striker(rig
     c.on_tap(GOOD_TAP)
     assert store.get("T1")["final_grade"] == "Hold"
     assert finals(bus) == []                      # decided, but not handed to the gantry while stopped
+    assert store.get("T1")["delivery"] == "needs_person"         # a Hold is a person's job, never the gantry's
     bus.publish("station/cmd", {"cmd": "line", "state": "start"})
-    assert [f["final_grade"] for f in finals(bus)] == ["Hold"]   # delivered, as Hold, once the line runs
+    assert finals(bus) == []                      # starting the line does not send it either
+    assert bus.messages("tile/+/needs_person")[0]["tile_id"] == "T1"
 
 
 def test_line_start_restores_the_speed_and_the_hold_setting_it_overrode(rig):
@@ -469,3 +474,69 @@ def test_a_refused_line_start_leaves_the_feed_paused(rig):
     bus.publish("station/cmd", {"cmd": "line", "state": "stop"})
     bus.publish("station/cmd", {"cmd": "line", "state": "start"})
     assert c.line_stopped is True and c.feed_paused is True
+
+
+# ---- Hold tiles are a person's job ------------------------------------------
+
+def test_hold_is_kept_off_the_gantry_marked_and_announced_once(rig):
+    clock, bus, store, c = rig
+    bus.publish("station/cmd", {"cmd": "hold_all", "enabled": True})
+    for i in range(3):
+        camera(bus, f"H{i}", "Grade A", seq=i + 1)
+        c.on_tap(GOOD_TAP)
+    assert finals(bus) == []                                     # nothing for the UNO Q to turn into a pick
+    assert [store.get(f"H{i}")["delivery"] for i in range(3)] == ["needs_person"] * 3
+    assert [m["tile_id"] for m in bus.messages("tile/+/needs_person")] == ["H0", "H1", "H2"]
+    alarms = [a for a in c.snapshot()["alarms"] if a["kind"] == "needs_person"]
+    assert len(alarms) == 1 and alarms[0]["count"] == 3 and "3 hold tile(s)" in alarms[0]["message"]
+    assert len([m for m in bus.messages("machine/alarm") if m["kind"] == "needs_person"]) == 1   # not 3 on the bus
+    assert c.feed_paused is True
+    h = c.snapshot()["health"]["unoq"]
+    assert h["level"] == WARN and "need a person" in h["detail"]
+
+
+def test_resuming_the_feed_is_the_confirmation_and_clears_the_alert(rig):
+    clock, bus, store, c = rig
+    bus.publish("station/cmd", {"cmd": "hold_all", "enabled": True})
+    camera(bus, "H1")
+    c.on_tap(GOOD_TAP)
+    bus.publish("station/cmd", {"cmd": "hold_all", "enabled": False})
+    camera(bus, "T2", "Grade B", seq=2)
+    c.on_tap(GOOD_TAP)
+    assert finals(bus) == []                                     # T2 is held back behind the hold tile
+    bus.publish("station/cmd", {"cmd": "feed", "state": "resume"})
+    assert c.snapshot()["needs_person"] == 0
+    assert not [a for a in c.snapshot()["alarms"] if a["kind"] == "needs_person"]
+    assert [f["tile_id"] for f in finals(bus)] == ["T2"]         # now delivered
+
+
+def test_line_start_also_confirms_and_the_old_behaviour_is_a_config_choice():
+    clock, bus, store = Clock(), InMemoryBus(), TileStore(":memory:")
+    cfg = {**CFG, "final": {**CFG["final"], "hold_to_gantry": True}}
+    c = StationCoordinator(cfg, bus, store, clock=clock)
+    c.start()
+    c.set_health("mic", OK, "listening")
+    c.set_hold_all(True)
+    camera(bus, "H1")
+    c.on_tap(GOOD_TAP)
+    assert [f["final_grade"] for f in finals(bus)] == ["Hold"] and c.feed_paused is False
+    assert store.get("H1")["delivery"] != "needs_person"
+
+
+def test_an_unknown_tile_under_the_striker_is_also_a_hold_for_a_person(rig):
+    clock, bus, store, c = rig                                   # a tap with no camera result (missed detection)
+    c.on_tap(GOOD_TAP, tile_present=True)
+    rows = [r for r in (store.get(m["tile_id"]) for m in bus.messages("tile/+/needs_person"))]
+    assert len(rows) == 1 and rows[0]["tile_id"].startswith("UNKNOWN-") and rows[0]["delivery"] == "needs_person"
+    assert finals(bus) == [] and c.feed_paused is True
+
+
+def test_clear_alarms_resets_the_sticky_alert_so_a_new_hold_raises_it_again(rig):
+    clock, bus, store, c = rig
+    c.set_hold_all(True)
+    camera(bus, "H1")
+    c.on_tap(GOOD_TAP)
+    c.clear_alarms()
+    camera(bus, "H2", seq=2)
+    c.on_tap(GOOD_TAP)
+    assert len([m for m in bus.messages("machine/alarm") if m["kind"] == "needs_person"]) == 2

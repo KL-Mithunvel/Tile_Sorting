@@ -183,38 +183,57 @@ def test_feed_pause_during_a_full_gantry_queue_loses_nothing(line):
     assert line.queue.snapshot()["counters"].get("duplicate", 0) == 0
 
 
-def test_KNOWN_GAP_a_hold_tile_is_acked_then_fails_because_manual_is_not_a_gantry_location():
-    """Characterization, not a statement of what SHOULD happen. The station config sends Hold to
-    destination "manual" (documented as "put in the manual bin, not skip"), but the gantry has no
-    location of that name. Observed with the real components: the gantry ACKs it, then refuses the
-    job at planning time - no motion, `placed: failed`, one alarm per tile - so the tile is never
-    taken off the belt. Flip this test when the intended behaviour is decided (see
-    documents/programming/master_gui_handover.md, section 4)."""
+def _manual_cfg(**final):
     import copy
 
     cfg = copy.deepcopy(STATION_CFG)
     cfg["final"]["bins"]["Hold"] = "manual"          # what acoustic/config.yaml really says
-    line = Line(cfg).ready()
-    placed, alarms = [], []
-    import json
-    line.bus.subscribe("tile/+/placed", lambda t, p: placed.append(json.loads(p)))
-    line.bus.subscribe("machine/alarm", lambda t, p: alarms.append(json.loads(p)))
-    # no GantryReporter in this rig, so look at the runner itself:
-    line.pi.set_hold_all(True)
-    tid = line.decide("Grade A")
-    line.pi.set_hold_all(False)
-    after = line.decide("Grade B")                   # a normal tile right behind it still gets sorted
-    moves_before = line.moves()
-    line.run(30)
+    cfg["final"].update(final)
+    return cfg
 
-    assert line.store.get(tid)["final_grade"] == "Hold" and line.store.get(tid)["destination"] == "manual"
-    assert line.store.get(tid)["delivery"] == "acked"           # the UNO Q said ok ...
-    s = line.runner.status()
-    assert s["failed"] == 1 and s["completed"] == 1, s          # ... then refused the job
-    refused = [e for e in line.done_events if e[0] == tid]
-    assert len(refused) == 1 and refused[0][1] is False, line.done_events
-    assert "unknown destination 'manual'" in refused[0][2] and "bin_1" in refused[0][2], refused
-    assert line.model.counts()["bin_2"] == 1                    # the tile behind it was sorted
-    assert s["fault"] is None and s["active"] is None           # not a machine fault: it just carries on
-    assert line.store.get(after)["final_grade"] == "Grade B"
-    assert line.moves() > moves_before                          # (moves belong to the second tile only)
+
+def test_a_hold_tile_never_reaches_the_gantry_and_stops_the_feed_until_a_person_resumes():
+    """The gantry picks whatever is at the pickup point, so a Hold tile it is not told about
+    would be picked into the NEXT tile's bin. The Pi therefore keeps Hold off the gantry AND
+    pauses the feed, so the tile behind it cannot be picked until a person has cleared it."""
+    import json
+
+    line = Line(_manual_cfg()).ready()
+    needs = []
+    line.bus.subscribe("tile/+/needs_person", lambda t, p: needs.append(json.loads(p)))
+    ahead = line.decide("Grade A")                   # a normal tile ahead of the hold tile
+    line.pi.set_hold_all(True)
+    hold = line.decide("Grade A")                    # becomes Hold
+    line.pi.set_hold_all(False)
+    behind = line.decide("Grade B")                  # a normal tile behind it
+    line.run(40)
+
+    assert line.store.get(hold)["final_grade"] == "Hold"
+    assert line.store.get(hold)["delivery"] == "needs_person"
+    assert [n["tile_id"] for n in needs] == [hold] and needs[0]["needs_person"] is True
+    # the tile AHEAD was sorted; the hold tile never became a pick job; the tile BEHIND is held back
+    assert line.model.counts()["bin_1"] == 1 and line.model.counts()["bin_2"] == 0
+    assert line.runner.status()["failed"] == 0 and line.done_events == [(ahead, True, None)]
+    assert line.pi.feed_paused is True and line.pi.snapshot()["needs_person"] == 1
+    assert line.store.get(behind)["delivery"] == "pending"      # decided, waiting in the outbox
+    moves = line.moves()
+    line.run(10)
+    assert line.moves() == moves                                # the gantry sits idle, nothing mis-picked
+
+    line.feed_cmd("resume")                                      # the person has taken the tile away
+    line.run(40)
+    assert line.pi.snapshot()["needs_person"] == 0
+    assert line.model.counts()["bin_2"] == 1 and line.runner.status()["failed"] == 0
+    assert line.store.get(behind)["delivery"] == "acked"
+
+
+def test_hold_pauses_feed_can_be_switched_off_but_hold_still_stays_off_the_gantry():
+    line = Line(_manual_cfg(hold_pauses_feed=False)).ready()
+    line.pi.set_hold_all(True)
+    line.decide("Grade A")
+    line.pi.set_hold_all(False)
+    assert line.pi.feed_paused is False                          # the choice not to pause is honoured
+    line.decide("Grade A")
+    line.run(30)
+    assert line.runner.status()["failed"] == 0 and line.model.counts()["bin_1"] == 1
+    assert line.queue.snapshot()["counters"]["accepted"] == 1    # still only the normal tile

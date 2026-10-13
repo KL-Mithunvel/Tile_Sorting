@@ -112,6 +112,15 @@ station:
       "Grade C": "bin_3"
       "Reject": "bin_4"
       "Hold": "manual"
+    # A Hold tile is a person's job: it is NOT sent to the UNO Q (the gantry has no `manual`
+    # location, and it picks whatever is at the pickup point, so a tile it does not know about
+    # would be picked into the NEXT tile's bin). The Pi marks it `needs_person`, raises one
+    # sticky alert, and publishes tile/<id>/needs_person for the master.
+    hold_to_gantry: false
+    # While a Hold tile is on its way to the pickup the feed is paused, so the gantry cannot
+    # take it by mistake. A person takes it off the belt and presses Resume feed. false = keep
+    # feeding (only safe if something else keeps Hold tiles away from the pickup point).
+    hold_pauses_feed: true
 
   unoq:
     # The UNO Q answers every final with tile/<id>/ack. With require_ack true

@@ -814,6 +814,8 @@ class CameraWorker:
                 border_margin_px=crack_cfg["border_margin_px"],
                 max_missing_extent_fraction=corner_cfg["max_missing_extent_fraction"],
                 tile_size_inches=corner_cfg.get("tile_size_inches"),
+                max_aspect_ratio=corner_cfg.get("max_aspect_ratio"),
+                max_notch_depth_fraction=corner_cfg.get("max_notch_depth_fraction"),
                 grading_model=self._model,
                 trigger=self._mode,
                 **self._grading_opts,

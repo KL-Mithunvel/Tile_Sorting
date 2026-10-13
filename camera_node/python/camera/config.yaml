@@ -200,7 +200,7 @@ corner_detection:
   # across the tile's edge only drops fill_ratio to ~0.87, above this
   # threshold, so it would NOT have been flagged. See
   # max_missing_extent_fraction below, and corner_detection.py's docstring.
-  min_fill_ratio: 0.83
+  min_fill_ratio: 0.86
   # How far (as a fraction of the tile's own side length) the deepest point
   # of a gap between the tile's actual shape and its ideal rectangle is
   # allowed to reach before it counts as a broken corner too, independent of
@@ -209,6 +209,20 @@ corner_detection:
   # p99.5 was 0.159) plus a margin; a synthetic chip reaching halfway across
   # a tile's edge measures ~0.35, well above this.
   max_missing_extent_fraction: 0.22
+  # Two shape checks, added 2026-10-12 from 88 hand-labelled belt tiles (13
+  # damaged, 58 fine; development/README.md). Either one set to null turns it off.
+  #
+  # max_aspect_ratio: a tile with a corner/edge snapped off stops being square -
+  # the snapped one on the belt measured 1.47, the shards 1.3-2.7, intact tiles
+  # never above 1.11. ASSUMES SQUARE TILES (these are 9x9 in); set null for a
+  # rectangular product. Margin to the fine-tile max is thin (0.04).
+  max_aspect_ratio: 1.15
+  # max_notch_depth_fraction: the deepest dent in the outline as a fraction of
+  # the tile side - catches a clean bite (notch ~10% deep, fill still 0.94) that
+  # fill_ratio and the gap depth both pass. 0.08 rejected 2 of 58 fine tiles
+  # (3%) and caught 4 more damaged ones; 0.06 would reject 6 (10%). A business
+  # trade, not a measurement - re-check on the real rig.
+  max_notch_depth_fraction: 0.08
   # Real-world tile size (inches) — these tiles are 9x9in. Used only to
   # convert missing_area_px/missing_depth_px into inches for reporting
   # (missing_area_sq_inches, missing_depth_inches on CornerResult); doesn't

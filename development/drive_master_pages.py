@@ -198,6 +198,12 @@ def main():
         ws.pump(2.5)
         txt = ws.js("document.getElementById('belttxt').textContent")
         check("plant: Start line resumes the feed", "FEED PAUSED" not in (txt or ""), txt)
+        # the demo injects a camera fault every ~50 s and a fault correctly outranks hold-all:
+        # wait it out instead of assuming where in that cycle the run happens to be
+        for _ in range(60):
+            if ws.js("document.getElementById('state').textContent") != "fault":
+                break
+            ws.pump(0.5)
         ws.js("document.getElementById('holdOn').click()")
         ws.pump(2.0)
         state = ws.js("document.getElementById('state').textContent")

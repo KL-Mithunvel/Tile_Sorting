@@ -111,8 +111,7 @@ class GantryReporter:
         self.counters["placed" if ok else "failed"] += 1
         self._send(placed_topic(tile_id), body, qos=1)
         if not ok:
-            self._raise("gantry_pick_failed", f"{tile_id}: {body['reason']}"
-                        + (" - tile may still be on the cup" if body["tile_in_cup"] else ""), tile_id)
+            self._raise_pick_failure(tile_id, str(body["reason"]), bool(body["tile_in_cup"]), now)
         # The status is NOT built here: this runs inside the driver's own lock and a
         # driver's status() takes that same lock (MockJobDriver's is not re-entrant).
         # The next tick() publishes it.
@@ -185,6 +184,34 @@ class GantryReporter:
             elif self._alarm_kinds.get(kind) != text:
                 self._alarm_kinds[kind] = text
                 self._raise(kind, text, snap.get("active_tile"))
+
+    # One alarm per CAUSE, not per tile: a full stack or a bad destination fails every tile that
+    # needs it, which at a tile every few seconds would bury the list (12 Hold tiles gave 12
+    # alarms). The first failure of a cause is announced at once; repeats only raise a count that
+    # is re-published at most every PICK_REPUBLISH_S. A cause quiet for PICK_CAUSE_TTL_S is
+    # forgotten, so it announces itself again if it comes back. A tile left ON THE CUP always
+    # raises its own alarm: that one needs a person right now.
+    PICK_REPUBLISH_S = 10.0
+    PICK_CAUSE_TTL_S = 60.0
+
+    def _raise_pick_failure(self, tile_id: str, reason: str, in_cup: bool, now: float) -> None:
+        causes = self.__dict__.setdefault("_pick_causes", {})
+        cup = " - tile may still be on the cup" if in_cup else ""
+        c = causes.get(reason)
+        if c is None or now - c["last"] > self.PICK_CAUSE_TTL_S or in_cup:
+            if c is None or now - c["last"] > self.PICK_CAUSE_TTL_S:
+                causes[reason] = {"count": 1, "last": now, "pub": now}
+            else:
+                c["count"] += 1
+                c["last"] = now
+            self._raise("gantry_pick_failed", f"{tile_id}: {reason}{cup}", tile_id)
+            return
+        c["count"] += 1
+        c["last"] = now
+        if now - c["pub"] >= self.PICK_REPUBLISH_S:
+            c["pub"] = now
+            self._raise("gantry_pick_failed",
+                        f"{reason} - {c['count']} tiles so far (latest {tile_id})", tile_id)
 
     def _raise(self, kind: str, message: str, tile_id: Optional[str]) -> None:
         self._send(TOPIC_ALARM, {"ts": self._clock(), "level": "alarm", "kind": kind, "message": message,

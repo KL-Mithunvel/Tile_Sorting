@@ -366,3 +366,55 @@ def test_gantry_required_turns_a_missing_gantry_into_a_fault():
     assert c.snapshot()["health"]["gantry"]["level"] == FAIL
     bus.publish("station/gantry/status", {"state": "online", "level": "ok", "completed": 3, "queue_depth": 1})
     assert c.snapshot()["health"]["gantry"]["level"] == OK
+
+
+# ---- one alarm per CAUSE, not per tile -----------------------------------------------
+
+
+def _pick_alarms(r):
+    return [a for a in r.bus.messages("machine/alarm") if a["kind"] == "gantry_pick_failed"]
+
+
+def test_repeated_identical_failures_raise_one_alarm_but_every_tile_still_gets_its_report():
+    r = Rig().ready()
+    for i in range(6):
+        r.add(f"T{i}", "no_such_stack")
+    r.run(2.0)
+    assert len(r.bus.messages("tile/+/placed")) == 6            # the per-tile record is never thinned
+    assert all(m["outcome"] == "failed" for m in r.bus.messages("tile/+/placed"))
+    alarms = _pick_alarms(r)
+    assert len(alarms) == 1 and alarms[0]["tile_id"] == "T0" and "no_such_stack" in alarms[0]["message"]
+
+
+def test_the_count_is_republished_at_most_every_ten_seconds():
+    r = Rig().ready()
+    r.add("T0", "no_such_stack")
+    r.run(1.0)
+    for i in range(1, 4):
+        r.add(f"T{i}", "no_such_stack")
+    r.run(2.0)
+    assert len(_pick_alarms(r)) == 1                            # still inside the window
+    r.run(10.0)
+    r.add("T9", "no_such_stack")
+    r.run(1.0)
+    latest = _pick_alarms(r)[-1]
+    assert len(_pick_alarms(r)) == 2 and "5 tiles so far" in latest["message"] and "T9" in latest["message"]
+
+
+def test_different_causes_each_get_their_own_alarm():
+    r = Rig().ready()
+    r.add("T1", "no_such_stack")
+    r.add("T2", "another_missing_stack")
+    r.run(2.0)
+    msgs = [a["message"] for a in _pick_alarms(r)]
+    assert len(msgs) == 2 and any("no_such_stack" in m for m in msgs) and any("another_missing_stack" in m for m in msgs)
+
+
+def test_a_cause_that_goes_quiet_announces_itself_again_when_it_returns():
+    r = Rig().ready()
+    r.add("T1", "no_such_stack")
+    r.run(1.0)
+    r.run(65.0)                                                  # quiet for longer than the TTL
+    r.add("T2", "no_such_stack")
+    r.run(1.0)
+    assert len(_pick_alarms(r)) == 2 and _pick_alarms(r)[-1]["tile_id"] == "T2"

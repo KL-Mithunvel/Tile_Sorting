@@ -43,6 +43,8 @@ LEVELS = ("ok", "warn", "fail", "offline")
 
 def tile_stage(row: dict) -> str:
     """`camera` (graded, waiting for a tap), `acoustic` (tapped, no final yet) or `sorted`."""
+    if row.get("needs_person"):
+        return "needs_person"        # waiting at the pickup for a person; the gantry will not touch it
     if row.get("final_grade"):
         return "sorted"
     if row.get("acoustic_grade") or row.get("acoustic_status"):
@@ -125,11 +127,20 @@ def build_plant(snap: dict, now: float) -> dict:
     nano = snap.get("nano") or {}
     belt = nano.get("belt_pct")
 
+    # Tiles the Pi says still need a person: shown at the pickup only while that count is non-zero
+    # (resuming the feed is the person's confirmation that they are gone).
+    waiting_person = int(station.get("needs_person") or 0)
+    shown_person = 0
+
     tiles = []
-    for row in snap.get("recent") or []:
+    for row in snap.get("recent") or []:      # newest first
         first = row.get("first_ts")
         if first is None:
             continue
+        if row.get("needs_person"):
+            if shown_person >= waiting_person:
+                continue
+            shown_person += 1
         age = max(0.0, now - first)
         stage = tile_stage(row)
         if stage == "sorted" and age > SORTED_VISIBLE_S:
@@ -154,6 +165,7 @@ def build_plant(snap: dict, now: float) -> dict:
             "stopped": settings.get("line") == "stopped",
             "feed_paused": settings.get("feed") == "paused",
             "held_back": station.get("outbox_depth", 0),
+            "needs_person": waiting_person,
             "vote_enabled": bool(settings.get("vote_enabled")),
             "awaiting": station.get("awaiting_count", 0),
         },

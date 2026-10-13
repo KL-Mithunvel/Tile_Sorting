@@ -335,6 +335,7 @@ function binFor(dest) { return BIN_POS[dest] ? dest : 'bin_hold'; }
 function placeY(n) { return BIN_TOP + TILE_H / 2 + n * TILE_H; }
 function syncTiles(list) {
   const seen = new Set();
+  let personSlot = 0;
   for (const t of list) {
     seen.add(t.tile_id);
     let o = tiles.get(t.tile_id);
@@ -349,7 +350,11 @@ function syncTiles(list) {
     if (o.phase === 'placed') continue;
     o.mesh.material.color.setHex(GRADE[t.grade] ?? 0x8a8f98);
     o.dest = t.destination || o.dest;
-    if (o.phase === 'belt') {
+    o.needsPerson = t.stage === 'needs_person';
+    if (o.needsPerson) {
+      // waits at the pickup, never picked: stacked back along the belt if there are several
+      o.target.set(PICK_X - 1.5 * (personSlot++), TILE_Y, 0);
+    } else if (o.phase === 'belt') {
       o.target.set(Math.min(ux(Math.min(Math.max(t.u, 0), 1)), PICK_X), TILE_Y, 0);
       // it is waiting for the gantry only once it has actually ridden to the end of the belt
       if (t.stage === 'sorted' && Math.abs(o.mesh.position.x - PICK_X) < 0.15) { o.phase = 'waiting'; o.waitSince = performance.now(); }
@@ -473,6 +478,7 @@ function frame() {
 
   for (const o of tiles.values()) {
     if (o.phase !== 'belt' && o.phase !== 'waiting') continue;
+    if (o.needsPerson) o.mesh.material.emissive.setHex(Math.sin(time * 6) > 0 ? 0x6a3fb0 : 0x000000);
     const dx = o.target.x - o.mesh.position.x;
     const step = Math.min(Math.abs(dx), Math.abs(dx) * (1 - Math.exp(-6 * dt)) + 0.0, BELT_MAX_SPEED * dt);
     o.mesh.position.x += Math.sign(dx) * step;
@@ -596,7 +602,8 @@ async function poll() {
   bn.textContent = 'The Pi station is not reporting. The line decides on its own; check the Pi.';
   beltPct = typeof ln.belt_pct === 'number' ? ln.belt_pct : 0;
   $('belttxt').textContent = 'Belt ' + (typeof ln.belt_pct === 'number' ? ln.belt_pct.toFixed(0) + ' %' : '—') + ' · awaiting tap ' + ln.awaiting
-    + (ln.feed_paused ? ' · GANTRY FEED PAUSED (' + ln.held_back + ' held back)' : '');
+    + (ln.needs_person ? ' · ' + ln.needs_person + ' HOLD TILE(S) NEED A PERSON - take off the belt, then Resume feed'
+       : ln.feed_paused ? ' · GANTRY FEED PAUSED (' + ln.held_back + ' held back)' : '');
   applyLevels(p.stations); renderStations(p.stations); renderSelected(); syncTiles(p.tiles); drawMonitor(p);
   for (const [g, id] of Object.entries(gkey)) $(id).textContent = p.tally[g] || 0;
   $('alarm').textContent = p.alarms.length ? p.alarms[0].message : 'no alarms';

@@ -98,6 +98,14 @@ _RULES: dict[str, tuple] = {
          "thrown away - they will never be sorted.",
          ["Resume the feed now (Plant 3D > Resume feed), or Start line.",
           "Then find the tiles marked `dropped` in the Pi's tile table and sort them by hand."]),
+        (r"need a person", "Hold tile(s) are waiting for a person",
+         "The line decided it could not grade a tile with confidence (or hold-all is on). The gantry does not handle "
+         "Hold tiles - it picks whatever is at the pickup, so it would put the tile in the next tile's bin - so the "
+         "Pi paused the feed and is waiting for you.",
+         ["Take the hold tile(s) off the belt at the pickup point.",
+          "Then press Resume feed (Plant 3D) - that is what confirms they are gone and lets the gantry carry on.",
+          "If this keeps happening, look at WHY tiles are held: a no-tap timeout, a missed camera detection, or "
+          "hold-all left on."]),
         (r"feed paused", "The gantry feed is paused",
          "The Pi is holding decided tiles back from the gantry on purpose (a line stop, or Pause feed). The gantry "
          "finishes what it has and idles; nothing is lost while the queue has room.",

@@ -210,12 +210,17 @@ def main():
         ws.js("document.getElementById('stop').click()")
         ws.pump(2.5)
         txt = ws.js("document.getElementById('belttxt').textContent")
-        check("plant: Stop line also pauses the feed", "GANTRY FEED PAUSED" in (txt or ""), txt)
+        check("plant: Stop line also pauses the feed (tiles in flight become Hold and need a person)",
+              "FEED PAUSED" in (txt or "") or "NEED A PERSON" in (txt or ""), txt)
         calm()
         ws.js("document.getElementById('start').click()")
         ws.pump(2.5)
         txt = ws.js("document.getElementById('belttxt').textContent")
-        check("plant: Start line resumes the feed", "FEED PAUSED" not in (txt or ""), txt)
+        check("plant: Start line does not confirm hold tiles: the feed stays paused until Resume feed",
+              ("NEED A PERSON" in (txt or "")) or ("FEED PAUSED" not in (txt or "")), txt)
+        calm()
+        ws.js("document.getElementById('feedResume').click()")
+        ws.pump(2.5)
         calm()
         ws.js("document.getElementById('holdOn').click()")
         ws.pump(2.0)
@@ -223,8 +228,22 @@ def main():
         ws.pump(1.0)
         state = ws.js("document.getElementById('state').textContent")
         check("plant: Hold all turns the line state to hold_all", state == "hold_all", state)
+        # a Hold tile is a person's job: the feed pauses until the person confirms it is gone
+        need = ""
+        for _ in range(40):                              # a hold tile arrives within a few seconds
+            ws.pump(0.5)
+            need = ws.js("document.getElementById('belttxt').textContent") or ""
+            if "NEED A PERSON" in need:
+                break
+        check("plant: a Hold tile asks for a person and pauses the feed", "NEED A PERSON" in need, need)
         ws.js("document.getElementById('holdOff').click()")
-        ws.pump(1.5)
+        ws.pump(1.0)
+        calm()
+        ws.js("document.getElementById('feedResume').click()")   # the operator's confirmation
+        ws.pump(2.5)
+        txt = ws.js("document.getElementById('belttxt').textContent") or ""
+        check("plant: Resume feed confirms the hold tiles and clears the request",
+              "NEED A PERSON" not in txt and "FEED PAUSED" not in txt, txt)
         check("plant: no errors after controls", not errors(), "; ".join(errors()))
 
         # ---------------- gantry / tile sync (sampled over a real run) ----------------

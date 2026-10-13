@@ -292,3 +292,54 @@ def test_the_master_and_operator_are_not_part_of_the_lines_health_picture():
     from master.plant import stations_from_snapshot
     ids = {s["id"] for s in stations_from_snapshot(snap(station=status()))}
     assert "master" not in ids and "user" not in ids
+
+
+# ---- Hold tiles: a person's job (tile/<id>/needs_person) ------------------------
+
+def test_collector_takes_a_needs_person_message_as_the_tiles_final_and_flags_it():
+    c = MasterCollector()
+    c.handle_message("tile/H1/camera/result", json.dumps({"grade": "Grade A"}).encode(), now=10.0)
+    c.handle_message("tile/H1/needs_person", json.dumps({
+        "tile_id": "H1", "final_grade": "Hold", "destination": "manual", "needs_person": True,
+        "reasons": ["hold-all is on"], "ts": 11.0}).encode(), now=11.0)
+    (row,) = c.recent()
+    assert row["final_grade"] == "Hold" and row["needs_person"] is True and row["destination"] == "manual"
+    assert c.tally() == {"Hold": 1}
+    assert c.analysis_rows()[0]["final_ts"] == 11.0
+
+
+def test_plant_keeps_hold_tiles_at_the_pickup_only_while_the_pi_says_they_need_a_person():
+    st = status()
+    st["needs_person"] = 1
+    rows = [{"tile_id": "H2", "first_ts": 98.0, "camera_grade": "Grade A", "final_grade": "Hold", "needs_person": True},
+            {"tile_id": "H1", "first_ts": 90.0, "camera_grade": "Grade A", "final_grade": "Hold", "needs_person": True},
+            {"tile_id": "A1", "first_ts": 80.0, "camera_grade": "Grade A", "final_grade": "Grade A", "destination": "bin_1"}]
+    p = build_plant(snap(station=st, recent=rows), now=100.0)
+    by = {t["tile_id"]: t for t in p["tiles"]}
+    assert by["H2"]["stage"] == "needs_person" and "H1" not in by       # the newest one only: the Pi counts 1
+    assert p["line"]["needs_person"] == 1
+    st["needs_person"] = 0                                               # a person confirmed (feed resumed)
+    p = build_plant(snap(station=st, recent=rows), now=100.0)
+    assert not [t for t in p["tiles"] if t["stage"] == "needs_person"]
+
+
+def test_demo_line_keeps_hold_off_the_gantry_pauses_the_feed_and_resume_confirms():
+    bus, col = InMemoryBus(), MasterCollector()
+    col.attach(bus)
+    line = DemoLine(bus, interval_s=0.0, transit_s=0.0, fault_every_s=1e9, seed=3)
+    bus.publish("station/cmd", {"cmd": "hold_all", "enabled": True})
+    with line._lock:
+        line._step(1000.0)
+        line._step(1000.1)
+    assert bus.messages("tile/+/final") == []                          # never offered to the gantry
+    assert bus.messages("tile/+/needs_person") and line.feed_paused is True and line._needs_person
+    bus.publish("station/cmd", {"cmd": "feed", "state": "resume"})
+    assert line._needs_person == [] and line.feed_paused is False
+
+
+def test_troubleshoot_explains_a_feed_paused_for_a_person():
+    from master.troubleshoot import diagnose
+    s = [{"id": "gantry", "label": "g", "level": "warn",
+          "detail": "2 hold tile(s) need a person - take them off the belt, then Resume feed (0 held back)"}]
+    (f,) = diagnose(s, [], [], 100.0)
+    assert "waiting for a person" in f["title"] and any("Resume feed" in c for c in f["checks"])

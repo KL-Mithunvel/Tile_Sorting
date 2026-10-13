@@ -150,3 +150,13 @@ stand-ins (`master/sim_line.py`). The pill reads "sim - real station logic, simu
 - Still simulated: no firmware, no real timing, no vacuum, no broker.
 
 Everything done and still to do is in `documents/programming/master_gui_handover.md`.
+
+## Hold tiles: a person's job (added 2026-10-13)
+
+A tile the line cannot grade with confidence (no-tap timeout, a missed camera detection, or hold-all) is a
+**Hold**. It is **never sent to the gantry**: the gantry picks whatever is at its one pickup point, so a tile it
+was not told about would be picked into the NEXT tile's bin. Instead the Pi marks it `needs_person`, announces it on
+`tile/<id>/needs_person`, raises ONE sticky alert, and **pauses the gantry feed**. The 3D page leaves the tile
+pulsing purple at the pickup and the status line says "N HOLD TILE(S) NEED A PERSON". Take the tile(s) off the belt,
+then press **Resume feed** - that is the confirmation. **Start line does not confirm it** (it would let the gantry
+pick a tile still sitting there). Config: `station.final.hold_to_gantry` (false) and `hold_pauses_feed` (true).

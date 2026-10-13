@@ -50,8 +50,10 @@ CREATE TABLE IF NOT EXISTS health_events (
 );
 """
 
+# A Hold tile is not published on tile/<id>/final (the UNO Q would try to pick it); the Pi announces it on
+# tile/<id>/needs_person instead. It is the same record, so it fills the same column.
 _LEAF_TO_COLUMN = {"camera/result": "camera_json", "acoustic/result": "acoustic_json", "final": "final_json",
-                   "placed": "placed_json"}
+                   "needs_person": "final_json", "placed": "placed_json"}
 
 CSV_COLUMNS = [
     "tile_id", "first_seen", "camera_grade", "acoustic_grade", "acoustic_counted", "final_grade",
@@ -178,6 +180,7 @@ class MasterCollector:
             "final_grade": final.get("final_grade"),
             "destination": final.get("destination"),
             "acoustic_counted": final.get("acoustic_counted"),
+            "needs_person": bool(final.get("needs_person")),
             "timed_out": final.get("timed_out"),
             "reasons": final.get("reasons") or [],
             "ack_status": r["ack_status"],

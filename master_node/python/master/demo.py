@@ -36,6 +36,7 @@ class DemoLine(threading.Thread):
         self.line_stopped = False
         self._saved: dict = {}
         self.feed_paused = False
+        self._needs_person: list[str] = []
         self._held: list[tuple] = []      # (tile_id, final payload) not yet delivered to the "gantry"
         self.tally: dict[str, int] = {}
         self._n = 0
@@ -92,17 +93,25 @@ class DemoLine(threading.Thread):
             self.hold_all = bool(self._saved.get("hold_all", False))
             self.line_stopped, self.belt_pct, self.strike_enabled = False, float(pct), True
             self._saved = {}
-            self._set_feed(False)
+            if not self._needs_person:          # Start does not confirm hold tiles are gone; Resume feed does
+                self._set_feed(False)
 
     def _set_feed(self, paused: bool) -> None:
         self.feed_paused = paused
         if not paused:
+            self._needs_person.clear()          # resuming is the person's confirmation
             held, self._held = self._held, []
             for tid, payload in held:
                 self._deliver(tid, payload)
 
     def _deliver(self, tid: str, payload: dict) -> None:
         """The final reaches the bus (and is acknowledged) only when the feed runs."""
+        if payload.get("final_grade") == "Hold":
+            # a Hold is a person's job: never delivered to the gantry; it pauses the feed
+            self._needs_person.append(tid)
+            self.feed_paused = True
+            self._bus.publish(f"tile/{tid}/needs_person", dict(payload, needs_person=True))
+            return
         if self.feed_paused:
             self._held.append((tid, payload))
             return
@@ -190,7 +199,10 @@ class DemoLine(threading.Thread):
                        if camera_faulty else {"level": "ok", "detail": f"{self._n} tiles"}),
             "mic": {"level": "ok", "detail": "synthetic microphone"},
             "nano": {"level": "ok", "detail": f"belt {self.belt_pct:.0f} %"},
-            "unoq": ({"level": "warn", "detail": f"feed paused by the master, {len(self._held)} held back"}
+            "unoq": ({"level": "warn", "detail": f"{len(self._needs_person)} hold tile(s) need a person - take them "
+                                                f"off the belt, then Resume feed ({len(self._held)} held back)"}
+                     if self._needs_person else
+                     {"level": "warn", "detail": f"feed paused by the master, {len(self._held)} held back"}
                      if self.feed_paused else {"level": "ok", "detail": "demo acknowledgements"}),
         }
         if camera_faulty:
@@ -206,6 +218,7 @@ class DemoLine(threading.Thread):
         self._bus.publish("station/status", {
             "now": now, "state": state, "state_detail": detail, "health": health,
             "awaiting_count": len(self._awaiting), "outbox_depth": len(self._held),
+            "needs_person": len(self._needs_person),
             "settings": {"vote_enabled": self.vote_enabled, "hold_all": self.hold_all,
                          "line": "stopped" if self.line_stopped else "running",
                          "feed": "paused" if self.feed_paused else "running",

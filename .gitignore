@@ -47,3 +47,7 @@ development/output/*.mp4
 # Generated report figures (documents/deliverables/review_2/figures/make_figures.py) - small, and the report needs them
 !documents/deliverables/review_2/figures/
 !documents/deliverables/review_2/figures/*.png
+
+# Project overview flow chart (documents/deliverables/project_overview/make_project_flowchart.py) - small, the documents need it
+!documents/deliverables/project_overview/
+!documents/deliverables/project_overview/*.png

@@ -55,6 +55,7 @@
   <a class="tab on" href="/">Plant 3D</a>
   <a class="tab" href="/analysis">Analysis</a>
   <a class="tab" href="/troubleshoot">Troubleshoot</a>
+  <a class="tab" href="/tiles">Pi record</a>
   <a class="tab" href="/insights">AI insights</a>
   <a class="tab" href="/classic">Classic view</a>
   <span style="flex:1"></span>
@@ -260,8 +261,7 @@ let gantry;
 // controls on the right belong to.
 const MASTER = { x:-1.0, z:8.6 };      // front of the line, clear of the side panels in the overview
 let screenCtx = null, screenTex = null;
-const linkPackets = [];
-let linkLine = null, linkCurve = null;
+const netLinks = [];
 {
   const g = new THREE.Group(); g.position.set(MASTER.x, 0, MASTER.z); g.rotation.y = 0.35;   // screen faces the viewer, turned to the operator
   const wood = mat(0x4a5666), darkM = mat(0x1d242e), steelM = mat(0x2d3643);
@@ -299,17 +299,49 @@ let linkLine = null, linkCurve = null;
   g.children[g.children.length - 1].scale.set(2.2, 0.42, 1);
 }
 {
-  // link PC -> Pi's rack: a curve, coloured by the master's broker link, with packets while connected
-  const from = new THREE.Vector3(MASTER.x - 1.1, 1.4, MASTER.z + 0.3);
-  const to = new THREE.Vector3(ux(0.45), 1.0, -5.2);
-  const mid = from.clone().lerp(to, 0.5); mid.y = 6.5;
-  linkCurve = new THREE.QuadraticBezierCurve3(from, mid, to);
-  linkLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(linkCurve.getPoints(48)),
-                            new THREE.LineBasicMaterial({ color:COL.offline, transparent:true, opacity:.8 }));
-  scene.add(linkLine);
-  for (let i = 0; i < 4; i++) {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), new THREE.MeshBasicMaterial({ color:0x58a6ff }));
-    s.userData.t = i / 4; scene.add(s); linkPackets.push(s);
+  // Ethernet network: one router (the D-Link) on the floor behind the belt, three cables lying on
+  // the floor: master PC -> router (runs UNDER the conveyor, between its legs), router -> Pi rack,
+  // router -> the gantry's UNO Q box. Cable colour = that link's state; packets run along it.
+  const RX = 1.6, RZ = -5.2, FY = 0.06;
+  const rg = new THREE.Group(); rg.position.set(RX, 0, RZ);
+  const body = box(1.3, 0.3, 0.7, mat(0x1d242e)); body.position.y = 0.15; rg.add(body);
+  for (let i = 0; i < 5; i++) {
+    const led = box(0.08, 0.04, 0.04, mat(0x2fbf71, { emissive:0x2fbf71, emissiveIntensity:1.2 }));
+    led.position.set(-0.45 + i * 0.22, 0.3, 0.36); rg.add(led);
+  }
+  for (const sx of [-0.45, 0.45]) { const ant = box(0.05, 0.7, 0.05, mat(0x2d3643)); ant.position.set(sx, 0.65, -0.2); rg.add(ant); }
+  const rl = label('ROUTER'); rl.scale.set(2.2, 0.42, 1); rl.position.y = 1.3; rg.add(rl);
+  scene.add(rg);
+  // gantry's controller (UNO Q) box, at the foot of its back-left leg
+  const ux2 = GANTRY.cx - GANTRY.hw - 0.8, uz2 = -5.95;
+  const uq = box(0.7, 0.35, 0.5, mat(0x1d242e)); uq.position.set(ux2, 0.18, uz2); scene.add(uq);
+  const ul = label('UNO Q'); ul.scale.set(1.6, 0.3, 1); ul.position.set(ux2, 0.9, uz2); scene.add(ul);
+
+  const V = (x, z) => new THREE.Vector3(x, FY, z);
+  const paths = {
+    master: [V(MASTER.x - 1.16, MASTER.z + 0.48), V(-2.16, MASTER.z - 1.2), V(-2.16, -4.1), V(RX, -4.1), V(RX, RZ + 0.35)],
+    pi:     [V(ux(0.45) + 0.6, RZ), V(RX - 0.65, RZ)],
+    gantry: [V(RX, RZ - 0.35), V(RX, uz2), V(ux2 - 0.35, uz2)],
+  };
+  for (const [name, pts] of Object.entries(paths)) {
+    const m = new THREE.MeshStandardMaterial({ color:COL.offline, roughness:.5, emissive:COL.offline, emissiveIntensity:.35 });
+    const lens = [0]; let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], len = a.distanceTo(b); total += len; lens.push(total);
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(b.x - a.x) + 0.1, 0.1, Math.abs(b.z - a.z) + 0.1), m);
+      seg.position.copy(a).lerp(b, 0.5); scene.add(seg);
+    }
+    const at = d => {
+      d = Math.max(0, Math.min(total, d));
+      for (let i = 1; i < pts.length; i++) if (d <= lens[i]) return pts[i - 1].clone().lerp(pts[i], (d - lens[i - 1]) / (lens[i] - lens[i - 1] || 1));
+      return pts[pts.length - 1].clone();
+    };
+    const link = { name, m, total, at, packets:[] };
+    for (let i = 0; i < Math.max(2, Math.round(total / 3)); i++) {
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.14, 10, 8), new THREE.MeshBasicMaterial({ color:0x58a6ff }));
+      s.position.y = 0.2; s.userData.t = i / Math.max(2, Math.round(total / 3)); scene.add(s); link.packets.push(s);
+    }
+    netLinks.push(link);
   }
 }
 // bins: four stacks + a hold tray
@@ -544,12 +576,15 @@ function frame() {
     }
   }
 
-  // packets travel the link while the master can hear the broker
-  for (const s of linkPackets) {
-    s.visible = !!(plant && plant.broker_connected);
-    if (!s.visible) continue;
-    s.userData.t = (s.userData.t + dt * 0.22) % 1;
-    s.position.copy(linkCurve.getPoint(s.userData.t));
+  // packets travel each cable while that link is up (master: the broker link; Pi / gantry: their station state)
+  for (const l of netLinks) {
+    const up = l.name === 'master' ? !!(plant && plant.broker_connected)
+      : !!stationObj[l.name] && (stationObj[l.name].level === 'ok' || stationObj[l.name].level === 'warn');
+    for (const s of l.packets) {
+      s.visible = up; if (!up) continue;
+      s.userData.t = (s.userData.t + dt * 2.2 / l.total) % 1;
+      const pt = l.at(s.userData.t * l.total); s.position.x = pt.x; s.position.z = pt.z;
+    }
   }
   controls.update(); renderer.render(scene, camera); requestAnimationFrame(frame);
 }
@@ -580,7 +615,10 @@ function drawMonitor(p) {
   row(230, 'controls', p.controls ? 'ON' : 'read-only', p.controls ? ok : warn);
   row(262, 'mode', p.demo ? (p.demo_label || 'demo') : 'live', p.demo ? '#a371f7' : ok);
   screenTex.needsUpdate = true;
-  if (linkLine) linkLine.material.color.setHex(p.broker_connected ? COL.ok : COL.fail);
+  for (const l of netLinks) {
+    const lv = l.name === 'master' ? (p.broker_connected ? 'ok' : 'fail') : ((stationObj[l.name] || {}).level || 'offline');
+    const c = COL[lv] ?? COL.offline; l.m.color.setHex(c); l.m.emissive.setHex(c);
+  }
 }
 
 // ---------- polling ----------

@@ -27,6 +27,7 @@ import time
 from typing import Callable, Optional
 
 from acoustic.features import analyze_clip, grade_from_reference, spectrum_preview, waveform_preview
+from fusion.blobs import BlobStore, EvidenceRecorder
 from fusion.coordinator import FAIL, OK, StationCoordinator
 from fusion.store import TileStore
 from fusion.transport import Bus
@@ -52,6 +53,7 @@ class StationService:
         capture_factory: Callable[[dict], object] = default_capture_factory,
         clock: Callable[[], float] = time.time,
         monotonic: Callable[[], float] = time.monotonic,
+        blobs: Optional[BlobStore] = None,
     ):
         self._config = config
         self._station_cfg = config.get("station") or {}
@@ -66,8 +68,13 @@ class StationService:
         self._reference = self._station_cfg.get("reference")
         self._sample_rate = int((config.get("audio") or {}).get("sample_rate", 44100))
 
+        # Pictures and tap recordings kept beside the database (None = numbers only).
+        self.blobs = blobs
+        keep_audio = bool(((self._station_cfg.get("store") or {}).get("keep_audio", True)))
+        self._evidence = EvidenceRecorder(blobs, keep_audio=keep_audio) if blobs is not None else None
         self.coordinator = StationCoordinator(
-            self._station_cfg, bus, store, clock=clock, on_external_tap=self._external_tap
+            self._station_cfg, bus, store, clock=clock, on_external_tap=self._external_tap,
+            evidence=self._evidence,
         )
 
         self._capture = None
@@ -218,6 +225,8 @@ class StationService:
         preview["tile_id"] = tile_id
         with self._lock:
             self._last_tap = preview
+        if tile_id and self._evidence is not None:
+            self._evidence.tap(tile_id, clip, self._sample_rate, {k: v for k, v in preview.items() if k != "tile_id"})
         return tile_id
 
     def _tick_loop(self) -> None:
@@ -257,6 +266,10 @@ class StationService:
             "open": cap is not None,
             "error": self._mic_error,
         }
+
+    @property
+    def store(self) -> TileStore:
+        return self._store
 
     def tile(self, tile_id: str) -> Optional[dict]:
         """One tile's stored record (None if unknown)."""

@@ -41,6 +41,9 @@ def main(argv=None) -> None:
     p.add_argument("--sim", action="store_true",
                    help="no broker: run the REAL station coordinator + gantry runner on a simulated machine "
                         "(implies --controls; see master/sim_line.py)")
+    p.add_argument("--pi-url", default=None,
+                   help="Pi station GUI to pull the record from (default: config.yaml sync.pi_url)")
+    p.add_argument("--no-sync", action="store_true", help="do not pull the Pi's record in this run")
     p.add_argument("--ai", choices=("none", "ollama", "anthropic"), default=None,
                    help="language model that explains anomalies (default: config.yaml insights.provider)")
     args = p.parse_args(argv)
@@ -93,12 +96,30 @@ def main(argv=None) -> None:
 
     threading.Thread(target=_watch, daemon=True, name="health-watch").start()
 
+    # The Pi's own record. Never in a demo/sim run (those would mix synthetic tiles into the real copy).
+    mirror = syncer = None
+    sync_cfg = cfg.get("sync") or {}
+    if sync_cfg.get("enabled", True) and not (args.no_sync or args.demo or args.sim):
+        from master.mirror import PiMirror
+        from master.sync import PiSyncer
+
+        def _abs(path: str) -> Path:
+            return Path(path) if Path(path).is_absolute() else REPO_ROOT / path
+
+        mirror = PiMirror(_abs(sync_cfg.get("mirror_path", "data/master/pi_mirror.db")),
+                          _abs(sync_cfg.get("blob_dir", "data/master/pi_blobs")))
+        syncer = PiSyncer(mirror, args.pi_url or sync_cfg.get("pi_url", "http://192.168.1.11:5001"),
+                          token=sync_cfg.get("token"), fetch_blobs=bool(sync_cfg.get("fetch_blobs", True)))
+        syncer.start(float(sync_cfg.get("interval_s", 15)))
+        where += f"; Pi record from {syncer._base}"
+
     controls = bool(args.controls or args.demo or args.sim or dash.get("controls_enabled", False))
     ai_cfg = dict(cfg.get("insights") or {})
     if args.ai:
         ai_cfg["provider"] = args.ai
     llm = build_provider(ai_cfg)
     app = create_app(collector, bus, controls_enabled=controls, demo=args.demo or args.sim, llm=llm,
+                     mirror=mirror, syncer=syncer,
                      demo_label="sim - real station logic, simulated machine" if args.sim else "demo — synthetic line")
     print(f"Master at http://{dash['host']}:{dash['port']}/  {where}  controls {'ON' if controls else 'off'}  "
           f"AI explainer {llm.name + ' (' + str(getattr(llm, 'model', '')) + ')' if llm else 'off'}")
@@ -109,8 +130,12 @@ def main(argv=None) -> None:
     finally:
         if demo_line is not None:
             demo_line.stop()
+        if syncer is not None:
+            syncer.stop()
         bus.stop()
         collector.close()
+        if mirror is not None:
+            mirror.close()
 
 
 if __name__ == "__main__":

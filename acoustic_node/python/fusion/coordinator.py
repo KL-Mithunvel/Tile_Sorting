@@ -76,6 +76,7 @@ class StationCoordinator:
         store: TileStore,
         clock: Callable[[], float] = time.time,
         on_external_tap: Optional[Callable[[], None]] = None,
+        evidence=None,
     ):
         ledger_cfg = cfg.get("ledger") or {}
         final_cfg = cfg.get("final") or {}
@@ -84,6 +85,8 @@ class StationCoordinator:
         self._bus, self._store, self._clock = bus, store, clock
         self._lock = threading.RLock()
         self._on_external_tap = on_external_tap
+        # Anything with camera_result(tile_id, camera_dict): keeps the tile's picture.
+        self._evidence = evidence
 
         self.ledger = TileLedger(
             max_wait_s=float(ledger_cfg.get("max_wait_s", 30.0)),
@@ -277,7 +280,17 @@ class StationCoordinator:
 
     def set_health(self, name: str, level: str, detail: str = "") -> None:
         with self._lock:
+            before = self._extra_health.get(name, {}).get("level")
             self._extra_health[name] = {"level": level, "detail": detail}
+        if before != level:
+            self._record("health", None, {"name": name, "level": level, "detail": detail})
+
+    def _record(self, kind: str, tile_id: Optional[str], data: dict) -> None:
+        # The history is for later; a full disk must not take the live line down.
+        try:
+            self._store.add_event(kind, self._clock(), tile_id, data)
+        except Exception:  # noqa: BLE001
+            log.exception("could not record a %s event", kind)
 
     # ---- inputs ----------------------------------------------------------
 
@@ -308,6 +321,8 @@ class StationCoordinator:
             self._store.upsert(
                 tile_id, now, seq=seq, state="awaiting_tap", camera_grade=grade, camera_json=data,
             )
+            if self._evidence is not None and data:
+                self._evidence.camera_result(tile_id, data)
 
     def pop_tap_event(self) -> Optional[dict]:
         """The oldest strike event not yet paired with a clip (None when the
@@ -774,6 +789,7 @@ class StationCoordinator:
         item = {"ts": now, "level": "alarm", "kind": kind, "message": message, "tile_id": tile_id}
         self._alarms.appendleft(item)
         log.warning("ALARM %s: %s", kind, message)
+        self._record("alarm", tile_id, item)
         self._bus.publish(TOPIC_ALARM, item, qos=1)
 
     def _event(self, message: str) -> None:

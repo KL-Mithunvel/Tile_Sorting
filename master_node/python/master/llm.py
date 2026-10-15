@@ -35,7 +35,8 @@ SYSTEM_PROMPT = (
     "You are the diagnostics assistant for a ceramic tile inspection and sorting line: a conveyor, a camera "
     "station that grades tiles for cracks and broken corners, an acoustic station that taps each tile and "
     "listens, and a pick-and-place gantry that sorts tiles into bins. A rule-based monitor has flagged the "
-    "items below. Explain them for the line operator.\n"
+    "items below (statistical anomalies, current station health, and consistency checks of the stored tile "
+    "record). Explain them for the line operator.\n"
     "Rules: use ONLY the numbers and facts given; do not invent measurements, causes or events. Give possible "
     "causes as hypotheses, most likely first, and say what a person could look at to tell them apart. Say when "
     "the data is too thin to conclude. Do not tell anyone to change settings or restart anything; suggest what "
@@ -175,9 +176,17 @@ def build_provider(cfg: Optional[dict], http: Http = _http):
 
 # ---- what is sent, and the explanation --------------------------------------
 
-def summarize_for_model(insights: dict, findings: list[dict]) -> dict:
+# Evidence keys that carry tile ids / run ids / free text and so never leave the master.
+_PRIVATE_EVIDENCE = {"examples", "runs", "error", "tile_ids", "detail", "problems"}
+
+
+def _numbers(evidence: dict) -> dict:
+    return {k: v for k, v in (evidence or {}).items() if k not in _PRIVATE_EVIDENCE}
+
+
+def summarize_for_model(insights: dict, findings: list[dict], integrity: Optional[list[dict]] = None) -> dict:
     """The only data that leaves this module: whitelisted, no tile ids or rows."""
-    return {
+    out = {
         "window_minutes": round(insights.get("window_s", 0) / 60),
         "recent_minutes": round(insights.get("recent_s", 0) / 60),
         "tiles_recent": insights.get("recent_tiles"),
@@ -188,12 +197,17 @@ def summarize_for_model(insights: dict, findings: list[dict]) -> dict:
         "current_findings": [{"station": f.get("station"), "level": f.get("level"), "title": f.get("title"),
                               "reported": f.get("detail")} for f in findings],
     }
+    if integrity:
+        out["record_checks"] = [{"title": f["title"], "severity": f["severity"], "summary": f["summary"],
+                                 "numbers": _numbers(f.get("evidence"))} for f in integrity]
+    return out
 
 
-def explain(provider, insights: dict, findings: list[dict], clock: Callable[[], float] = time.time) -> dict:
+def explain(provider, insights: dict, findings: list[dict], clock: Callable[[], float] = time.time,
+            integrity: Optional[list[dict]] = None) -> dict:
     """Ask the provider to explain. Raises LlmError; the caller shows it."""
-    payload = summarize_for_model(insights, findings)
-    if not payload["anomalies"] and not payload["current_findings"]:
+    payload = summarize_for_model(insights, findings, integrity)
+    if not payload["anomalies"] and not payload["current_findings"] and not payload.get("record_checks"):
         return {"text": "Nothing has been flagged, so there is nothing to explain.", "provider": provider.name,
                 "model": getattr(provider, "model", None), "sent": payload, "ms": 0, "ts": clock(), "skipped": True}
     t0 = time.monotonic()

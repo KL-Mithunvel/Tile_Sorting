@@ -12,11 +12,12 @@ from __future__ import annotations
 import time
 from typing import Callable, Optional
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from master.collector import MasterCollector
 from master.analysis import DEFAULT_WINDOW_S, WINDOWS_S, build_analysis
 from master.insights import detect
+from master.integrity import analyse as analyse_record
 from master.llm import LlmError, explain
 from master.plant import STATIONS, build_plant, stations_from_snapshot
 from master.troubleshoot import diagnose, timeline
@@ -24,7 +25,7 @@ from master.troubleshoot import diagnose, timeline
 
 def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
                demo: bool = False, clock: Callable[[], float] = time.time, llm=None,
-               demo_label: str = "demo — synthetic line") -> Flask:
+               demo_label: str = "demo — synthetic line", mirror=None, syncer=None) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
@@ -109,6 +110,22 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
                             collector.alarm_rows(now - 600), now, master_connected=connected)
         return now, ins, findings
 
+    def _record_checks(window: int, now: float) -> dict:
+        """Consistency checks over the Pi's own record (the master's synced copy)."""
+        if mirror is None:
+            return {"now": now, "tiles_checked": 0, "events_checked": 0, "findings": [], "available": False}
+        since = now - window
+        tiles = mirror.tiles(since)
+        blobs: dict = {}
+        for t in tiles:
+            full = mirror.tile(t["tile_id"])
+            if full and full.get("blobs"):
+                blobs[t["tile_id"]] = {b["name"]: b["status"] for b in full["blobs"]}
+        report = syncer.last_report if syncer is not None else None
+        out = analyse_record(tiles, mirror.events(since_ts=since - 300), now, blobs=blobs, sync_report=report)
+        out["available"] = True
+        return out
+
     @app.route("/insights")
     def insights_page():
         return render_template("insights.html", windows=WINDOWS_S, default_window=DEFAULT_WINDOW_S)
@@ -126,6 +143,7 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
             "name": llm.name, "model": getattr(llm, "model", None), "destination": llm.destination,
             "leaves_the_network": llm.leaves_the_network}
         ins["last_explanation"] = explain_state["last"]
+        ins["record_checks"] = _record_checks(window, now)["findings"]
         return jsonify(ins)
 
     @app.route("/api/insights/provider")
@@ -152,11 +170,90 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         explain_state["at"] = t
         now, ins, findings = _insights_now(window)
         try:
-            result = explain(llm, ins, findings, clock=clock)
+            result = explain(llm, ins, findings, clock=clock, integrity=_record_checks(window, now)["findings"])
         except LlmError as e:
             return jsonify(ok=False, error=str(e)), 502
         explain_state["last"] = result
         return jsonify(ok=True, **result)
+
+    # ---- the Pi's own record (synced copy) ---------------------------------------
+
+    @app.route("/tiles")
+    def tiles_page():
+        return render_template("tiles.html", windows=WINDOWS_S, default_window=DEFAULT_WINDOW_S)
+
+    def _compact(t: dict) -> dict:
+        cam, ac = t.get("camera") or {}, t.get("acoustic") or {}
+        return {
+            "tile_id": t["tile_id"], "created_ts": t["created_ts"], "state": t.get("state"),
+            "camera_grade": t.get("camera_grade"), "acoustic_grade": t.get("acoustic_grade"),
+            "final_grade": t.get("final_grade"), "destination": t.get("destination"),
+            "delivery": t.get("delivery"), "placement": t.get("placement"), "transit_s": t.get("transit_s"),
+            "peak_hz": ac.get("peak_frequency_hz"), "tap_valid": ac.get("valid"),
+            "cracks": cam.get("crack_count") if isinstance(cam, dict) else None,
+            "disagree": bool(t.get("camera_grade") and t.get("acoustic_grade")
+                             and t["camera_grade"] != t["acoustic_grade"]),
+        }
+
+    @app.route("/api/pi/tiles")
+    def api_pi_tiles():
+        if mirror is None:
+            return jsonify(ok=False, error="this master has no Pi record (mirror not configured)"), 409
+        try:
+            limit = max(1, min(int(request.args.get("limit", 200)), 2000))
+        except ValueError:
+            return jsonify(ok=False, error="limit must be an integer"), 400
+        grade = request.args.get("grade")
+        flag = request.args.get("flag")
+        rows = [_compact(t) for t in mirror.tiles(newest_first=True, limit=20000)]
+        if grade:
+            rows = [r for r in rows if r["final_grade"] == grade]
+        if flag == "disagree":
+            rows = [r for r in rows if r["disagree"]]
+        elif flag == "problem":
+            rows = [r for r in rows if r["delivery"] in ("needs_person", "dropped", "rejected")
+                    or r["placement"] in ("failed", "overdue") or r["tap_valid"] is False]
+        return jsonify(ok=True, total=len(rows), tiles=rows[:limit], counts=mirror.counts())
+
+    @app.route("/api/pi/tile/<tile_id>")
+    def api_pi_tile(tile_id: str):
+        if mirror is None:
+            return jsonify(ok=False, error="no Pi record"), 409
+        t = mirror.tile(tile_id)
+        if t is None:
+            return jsonify(ok=False, error="unknown tile"), 404
+        return jsonify(ok=True, tile=t, events=mirror.events(tile_id=tile_id))
+
+    @app.route("/api/pi/blob/<tile_id>/<name>")
+    def api_pi_blob(tile_id: str, name: str):
+        if mirror is None:
+            abort(404)
+        p = mirror.blob_path(tile_id, name)
+        if p is None:
+            abort(404)
+        return send_file(p, max_age=3600)
+
+    @app.route("/api/pi/sync", methods=["GET", "POST"])
+    def api_pi_sync():
+        if syncer is None or mirror is None:
+            return jsonify(ok=False, configured=False,
+                           error="no Pi sync is configured (sync.pi_url in config.yaml)"), 409
+        if request.method == "POST":
+            if not request.is_json:
+                return jsonify(ok=False, error="send a JSON body (Content-Type: application/json)"), 415
+            return jsonify(configured=True, **syncer.sync_once())
+        out = {"ok": True, "configured": True, "last": syncer.last_report, "counts": mirror.counts(),
+               "cursor": mirror.cursor()}
+        if request.args.get("reconcile"):
+            out["reconcile"] = syncer.reconcile()
+        return jsonify(out)
+
+    @app.route("/api/pi/integrity")
+    def api_pi_integrity():
+        window = _window_arg()
+        if window is None:
+            return jsonify(ok=False, error=f"window must be one of {list(WINDOWS_S)} seconds"), 400
+        return jsonify(ok=True, **_record_checks(window, clock()))
 
     @app.route("/classic")
     def classic():

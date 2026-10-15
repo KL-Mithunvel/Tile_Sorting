@@ -38,7 +38,7 @@
 <nav>
   <h1>Tile line — master</h1>
   <a class="tab" href="/">Plant 3D</a><a class="tab" href="/analysis">Analysis</a><a class="tab" href="/troubleshoot">Troubleshoot</a>
-  <span class="tab on">AI insights</span><a class="tab" href="/classic">Classic view</a>
+  <a class="tab" href="/tiles">Pi record</a><span class="tab on">AI insights</span><a class="tab" href="/classic">Classic view</a>
   <span style="flex:1"></span><span class="pill demo" id="demo" style="display:none">demo — synthetic line</span>
 </nav>
 
@@ -49,6 +49,12 @@
   <div id="notice"></div>
   <div id="anoms" class="muted">Loading…</div>
   <div class="muted" style="margin-top:8px;font-size:12px">These compare the latest stretch with the stretch before it, using only this master's own record. They show that behaviour <em>changed</em>, not why. A line that has been bad all along reads as normal.</div>
+</section>
+
+<section class="card">
+  <h2>Errors in the stored record (rule-based, from the Pi's own database)</h2>
+  <div id="rchecks" class="muted">Loading…</div>
+  <div class="muted" style="margin-top:8px;font-size:12px">Consistency checks over every tile the Pi recorded, plus outages that line up with bad outcomes. The model below explains these too; it never decides what is an error. Open the <a href="/tiles" style="color:var(--accent)">Pi record</a> page to look at the tiles themselves.</div>
 </section>
 
 <section class="card">
@@ -84,6 +90,16 @@ function render(d) {
     const t = h("h3"); t.append(h("span", "pill " + a.severity, a.severity === "warn" ? "warning" : "note"), document.createTextNode(a.title));
     c.append(t, h("div", null, a.summary), h("div", "nums", numbers(a.evidence)));
     box.appendChild(c);
+  }
+  const rc = $("rchecks"); rc.replaceChildren(); rc.className = "";
+  const rcs = d.record_checks || [];
+  if (!rcs.length) rc.appendChild(h("div", "good", "Nothing wrong found in the stored record for this window (or no Pi record has been synced yet)."));
+  for (const f of rcs) {
+    const c = h("div", "anom " + (f.severity === "info" ? "info" : "warn"));
+    const t = h("h3"); t.append(h("span", "pill " + (f.severity === "info" ? "info" : "warn"), f.severity === "alarm" ? "error" : f.severity === "warn" ? "warning" : "note"), document.createTextNode(f.title));
+    const nums = Object.entries(f.evidence || {}).filter(([k]) => !["examples", "runs"].includes(k)).reduce((o, [k, v]) => (o[k] = v, o), {});
+    c.append(t, h("div", null, f.summary), h("div", "nums", numbers(nums)));
+    rc.appendChild(c);
   }
   if (d.last_explanation && !working && !$("result").children.length) showResult(d.last_explanation);
 }

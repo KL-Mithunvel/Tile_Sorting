@@ -7,6 +7,18 @@ broker:
 store:
   path: "data/master/master.db"   # relative to the repo root; data/ is gitignored
 
+# Pull the Pi's own record (every tile, event, and its evidence files) into this PC.
+# The live MQTT collector only sees what was published while the master was running;
+# this fills the gaps and brings the pictures and tap recordings. Read-only on the Pi.
+sync:
+  enabled: true
+  pi_url: "http://192.168.1.11:5001"   # the Pi station GUI (acoustic/dashboard.py)
+  token: null                          # must match station.sync.token on the Pi, if set there
+  interval_s: 15
+  fetch_blobs: true
+  mirror_path: "data/master/pi_mirror.db"
+  blob_dir: "data/master/pi_blobs"
+
 dashboard:
   host: "0.0.0.0"
   port: 8000             # network_plan.md section 3.1 (reserved for the master dashboard)
@@ -18,7 +30,7 @@ dashboard:
 # language model (if any) EXPLAINS what it found, and only when a person clicks the
 # button on the AI insights page.
 insights:
-  provider: "none"             # none | ollama | anthropic
+  provider: "ollama"           # none | ollama | anthropic  (ollama = local, nothing leaves the PC)
   timeout_s: 90
   ollama:                      # local, works on the isolated control LAN
     url: "http://localhost:11434"

@@ -21,10 +21,12 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import tempfile
 from pathlib import Path
 
 from acoustic.dashboard import create_app
 from acoustic.station import StationService
+from fusion.blobs import BlobStore
 from fusion.store import TileStore
 from fusion.transport import InMemoryBus, MqttBus, TOPIC_STATUS
 
@@ -79,6 +81,7 @@ def main(argv=None) -> None:
         config.setdefault("trigger", {})["mode"] = "simulated"
         bus = InMemoryBus()
         store = TileStore(":memory:")
+        blob_root = Path(tempfile.mkdtemp(prefix="tile_demo_blobs_"))   # demo evidence never touches data/
         capture_factory = lambda cfg: SyntheticCapture(cfg)  # noqa: E731
         demo_thread = FakeCameraAndStriker(bus)
     else:
@@ -97,16 +100,23 @@ def main(argv=None) -> None:
             # A self-test must not pollute the line's real record.
             db_path = Path("data/station/selftest.db")
         store = TileStore(db_path if db_path.is_absolute() else REPO_ROOT / db_path)
+        store_cfg = st_cfg.get("store") or {}
+        blob_dir = Path(store_cfg.get("blob_dir", "data/station/blobs"))
+        if args.synthetic_mic:
+            blob_dir = Path("data/station/selftest_blobs")
+        blob_root = blob_dir if blob_dir.is_absolute() else REPO_ROOT / blob_dir
         if args.synthetic_mic:
             from acoustic.demo import SyntheticCapture
 
             capture_factory = lambda cfg: SyntheticCapture(cfg)  # noqa: E731
 
+    budget = float((st_cfg.get("store") or {}).get("blob_budget_gb", 20.0))
+    blobs = BlobStore(blob_root, store, budget_bytes=int(budget * 1024 ** 3))
     try:
         service = (
-            StationService(config, bus, store, capture_factory=capture_factory)
+            StationService(config, bus, store, capture_factory=capture_factory, blobs=blobs)
             if capture_factory
-            else StationService(config, bus, store)
+            else StationService(config, bus, store, blobs=blobs)
         )
         service.start()
     except Exception as exc:  # noqa: BLE001
@@ -159,7 +169,7 @@ def main(argv=None) -> None:
         return
 
     controls = bool(args.controls or args.demo or dash_cfg.get("controls_enabled", False))
-    app = create_app(service, controls_enabled=controls)
+    app = create_app(service, controls_enabled=controls, sync_token=(st_cfg.get("sync") or {}).get("token"))
     host, port = dash_cfg.get("host", "0.0.0.0"), int(dash_cfg.get("port", 5001))
     print(f"Station GUI at http://{host}:{port}/  (service view: /service, controls {'ON' if controls else 'off'})")
     try:

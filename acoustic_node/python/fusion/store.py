@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,32 @@ CREATE TABLE IF NOT EXISTS tiles (
     placed_ts      REAL
 );
 CREATE INDEX IF NOT EXISTS tiles_created ON tiles (created_ts);
+
+-- Append-only history: every change to a tile, every alarm, every health
+-- change. `seq` is the sync cursor (the master asks for "everything after N").
+CREATE TABLE IF NOT EXISTS events (
+    seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        REAL NOT NULL,
+    kind      TEXT NOT NULL,
+    tile_id   TEXT,
+    data_json TEXT
+);
+CREATE INDEX IF NOT EXISTS events_tile ON events (tile_id);
+
+-- Evidence files kept beside the database (tile picture, tap audio, ...).
+CREATE TABLE IF NOT EXISTS blobs (
+    tile_id    TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    rel_path   TEXT NOT NULL,
+    sha256     TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    mime       TEXT,
+    created_ts REAL NOT NULL,
+    pruned     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (tile_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 _JSON_FIELDS = {"camera_json", "acoustic_json", "reasons_json"}
@@ -70,7 +97,16 @@ class TileStore:
                                  ("tile_in_cup", "INTEGER"), ("placed_ts", "REAL")):
                 if column not in have:
                     self._db.execute(f"ALTER TABLE tiles ADD COLUMN {column} {kind}")
+            if self._db.execute("SELECT value FROM meta WHERE key = 'store_id'").fetchone() is None:
+                # Names this database. A master that sees a different id knows the
+                # Pi's record was replaced and its cursor means nothing any more.
+                self._db.execute("INSERT INTO meta (key, value) VALUES ('store_id', ?)", (uuid.uuid4().hex,))
             self._db.commit()
+
+    @property
+    def store_id(self) -> str:
+        with self._lock:
+            return self._db.execute("SELECT value FROM meta WHERE key = 'store_id'").fetchone()["value"]
 
     def upsert(self, tile_id: str, now: float, **fields) -> None:
         """Create the row if new, then set the given columns. Dict values for
@@ -78,6 +114,7 @@ class TileStore:
         unknown = set(fields) - _COLUMNS
         if unknown:
             raise ValueError(f"unknown tile column(s): {sorted(unknown)}")
+        event_data = dict(fields)
         for name in _JSON_FIELDS & set(fields):
             if fields[name] is not None and not isinstance(fields[name], str):
                 fields[name] = json.dumps(fields[name], separators=(",", ":"), default=str)
@@ -93,7 +130,108 @@ class TileStore:
             fields["updated_ts"] = now
             cols = ", ".join(f"{c} = ?" for c in fields)
             self._db.execute(f"UPDATE tiles SET {cols} WHERE tile_id = ?", (*fields.values(), tile_id))
+            self._db.execute(
+                "INSERT INTO events (ts, kind, tile_id, data_json) VALUES (?,?,?,?)",
+                (now, "tile", tile_id, json.dumps(event_data, separators=(",", ":"), default=str)),
+            )
             self._db.commit()
+
+    # ---- history, sync, evidence -------------------------------------------
+
+    def _append_locked(self, kind: str, now: float, tile_id: Optional[str], data: dict) -> int:
+        cur = self._db.execute(
+            "INSERT INTO events (ts, kind, tile_id, data_json) VALUES (?,?,?,?)",
+            (now, kind, tile_id, json.dumps(data, separators=(",", ":"), default=str)),
+        )
+        return int(cur.lastrowid)
+
+    def add_event(self, kind: str, now: float, tile_id: Optional[str] = None, data: Optional[dict] = None) -> int:
+        """Append a non-tile event (alarm, health change, note). Returns its seq."""
+        with self._lock:
+            seq = self._append_locked(kind, now, tile_id, data or {})
+            self._db.commit()
+            return seq
+
+    @staticmethod
+    def _event(r: sqlite3.Row) -> dict:
+        return {"seq": r["seq"], "ts": r["ts"], "kind": r["kind"], "tile_id": r["tile_id"],
+                "data": json.loads(r["data_json"]) if r["data_json"] else {}}
+
+    def events_after(self, seq: int = 0, limit: int = 500) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT seq, ts, kind, tile_id, data_json FROM events WHERE seq > ? ORDER BY seq LIMIT ?",
+                (int(seq), int(limit)),
+            ).fetchall()
+        return [self._event(r) for r in rows]
+
+    def events_for(self, tile_id: str) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT seq, ts, kind, tile_id, data_json FROM events WHERE tile_id = ? ORDER BY seq", (tile_id,)
+            ).fetchall()
+        return [self._event(r) for r in rows]
+
+    def head_seq(self) -> int:
+        with self._lock:
+            return int(self._db.execute("SELECT COALESCE(MAX(seq), 0) AS m FROM events").fetchone()["m"])
+
+    def rows_by_ids(self, tile_ids: list[str]) -> list[dict]:
+        out: list[dict] = []
+        with self._lock:
+            for i in range(0, len(tile_ids), 500):
+                chunk = list(tile_ids[i:i + 500])
+                marks = ",".join("?" * len(chunk))
+                out += [_row(r) for r in self._db.execute(
+                    f"SELECT * FROM tiles WHERE tile_id IN ({marks})", chunk).fetchall()]
+        return out
+
+    def add_blob(self, tile_id: str, name: str, rel_path: str, sha256: str, size: int, now: float,
+                 mime: Optional[str] = None) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO blobs (tile_id, name, rel_path, sha256, size, mime, created_ts, pruned) "
+                "VALUES (?,?,?,?,?,?,?,0) ON CONFLICT(tile_id, name) DO UPDATE SET rel_path=excluded.rel_path, "
+                "sha256=excluded.sha256, size=excluded.size, mime=excluded.mime, created_ts=excluded.created_ts, "
+                "pruned=0",
+                (tile_id, name, rel_path, sha256, int(size), mime, now),
+            )
+            self._append_locked("blob", now, tile_id, {"name": name, "sha256": sha256, "size": int(size)})
+            self._db.commit()
+
+    def blobs_for(self, tile_id: str) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._db.execute(
+                "SELECT * FROM blobs WHERE tile_id = ? ORDER BY name", (tile_id,)).fetchall()]
+
+    def get_blob(self, tile_id: str, name: str) -> Optional[dict]:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM blobs WHERE tile_id = ? AND name = ?", (tile_id, name)).fetchone()
+        return dict(row) if row else None
+
+    def live_blobs_oldest_first(self) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._db.execute(
+                "SELECT * FROM blobs WHERE pruned = 0 ORDER BY created_ts, tile_id, name").fetchall()]
+
+    def mark_blob_pruned(self, tile_id: str, name: str, now: float) -> None:
+        with self._lock:
+            self._db.execute("UPDATE blobs SET pruned = 1 WHERE tile_id = ? AND name = ?", (tile_id, name))
+            self._append_locked("blob_pruned", now, tile_id, {"name": name})
+            self._db.commit()
+
+    def manifest(self) -> dict:
+        """What this store holds, for a master to check its copy against."""
+        with self._lock:
+            tiles = self._db.execute("SELECT COUNT(*) AS n FROM tiles").fetchone()["n"]
+            live = self._db.execute(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM blobs WHERE pruned = 0").fetchone()
+            gone = self._db.execute("SELECT COUNT(*) AS n FROM blobs WHERE pruned = 1").fetchone()["n"]
+            head = self._db.execute("SELECT COALESCE(MAX(seq), 0) AS m FROM events").fetchone()["m"]
+            sid = self._db.execute("SELECT value FROM meta WHERE key = 'store_id'").fetchone()["value"]
+        return {"store_id": sid, "head_seq": int(head), "tiles": tiles, "blobs_live": live["n"],
+                "blob_bytes": live["b"], "blobs_pruned": gone}
 
     def get(self, tile_id: str) -> Optional[dict]:
         with self._lock:

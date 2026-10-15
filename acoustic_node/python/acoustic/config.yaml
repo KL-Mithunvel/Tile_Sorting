@@ -88,6 +88,18 @@ station:
   # Relative to the repo root; data/ is gitignored.
   store:
     path: "data/station/tiles.db"
+    # Evidence kept per tile: the camera picture, the tap recording (WAV) and a
+    # small spectrum preview. When the files exceed the budget the OLDEST are
+    # deleted first (the database rows and history are kept forever).
+    blob_dir: "data/station/blobs"
+    blob_budget_gb: 20
+    keep_audio: true
+
+  # The master PC pulls this record from the GUI port (read-only, /api/sync/*).
+  # Set a token and the master must send it as X-Sync-Token (the GUI is served on
+  # 0.0.0.0, so with null anyone on the LAN can read the record).
+  sync:
+    token: null
 
   ledger:
     # A tile that has not been tapped this long after the camera graded it is

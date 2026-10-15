@@ -36,8 +36,13 @@ def create_app(
     service: StationService,
     controls_enabled: bool = False,
     repo_root: Optional[Path] = None,
+    sync_token: Optional[str] = None,
 ) -> Flask:
     app = Flask(__name__)
+    # Read-only record API for the master PC (see acoustic/sync_api.py).
+    from acoustic.sync_api import make_blueprint
+
+    app.register_blueprint(make_blueprint(service.store, service.blobs, sync_token))
     data_root = ((repo_root or _REPO_ROOT) / "data").resolve()
 
     @app.route("/")

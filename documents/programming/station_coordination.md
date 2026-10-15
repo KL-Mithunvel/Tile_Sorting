@@ -256,3 +256,14 @@ placeholder); the missed-camera-detection check needs the Nano's `tile_present` 
 with the rms trigger a missed camera detection still shifts every later pairing by one
 until a timeout; a stopped belt with a tile under the striker is not modelled. The Nano
 side is specified in `nano_serial_protocol.md` and has no firmware yet.
+
+## 8. The Pi's own record, evidence files and master sync (added 2026-10-15)
+
+The Pi is the system of record; the master is optional and only holds a copy.
+
+- **History**: `fusion/store.py` keeps an append-only `events` table (every tile change, alarm, health change, blob) beside the per-tile row. `seq` is the sync cursor. `store_id` names the database so a replaced Pi database is noticed.
+- **Evidence**: `fusion/blobs.py` keeps, per tile, the camera picture (copied from the camera's snapshot), the tap WAV and a spectrum/waveform preview JSON, each with a SHA-256, under `station.store.blob_dir`. Oldest files are pruned first when `blob_budget_gb` is exceeded; rows and history are never pruned. The camera payload carries only one picture (`snapshot_path`), so there is no separate "context" picture yet.
+- **Sync API** (read-only, on the station GUI :5001, `acoustic/sync_api.py`): `/api/sync/info`, `/events?after=N`, `/tiles?ids=`, `/blob/<tile>/<name>`; optional `station.sync.token` as `X-Sync-Token`.
+- **Master** (`master/mirror.py`, `sync.py`): pulls events from its cursor, then the touched tile rows, advances the cursor only after those are stored, then fetches missing files and verifies each against its SHA-256. Interrupted passes re-run safely; `reconcile()` compares counts with the Pi's manifest. Page: `/tiles`.
+- **Error finding** (`master/integrity.py`, deterministic): stuck delivery, tiles waiting for a tap, final grade better than its inputs allow, missing tile numbers, unreported tiles, unusable taps, failed placements, held tiles, missing evidence, outages followed by bad outcomes, repeating alarms, sync problems. `llm.py` (local Ollama by default in `master/config.yaml`) only explains these, only on a button press, and receives numbers without tile ids.
+- **Not verified**: a real broker/Pi/mic/camera; Ollama with a real model; large-window performance (`/api/insights` reads each tile's file status one by one).

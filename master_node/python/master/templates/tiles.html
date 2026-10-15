@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master — Pi record</title>
+<style>
+  :root { --bg:#0b0e13; --panel:#141a23; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3; --accent:#58a6ff;
+    --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; --ai:#a371f7; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:12px 14px 40px; }
+  nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }
+  nav h1 { font-size:16px; margin:0 6px 0 0; }
+  .tab { padding:5px 12px; border-radius:8px; border:1px solid var(--line); color:var(--muted); text-decoration:none; }
+  .tab.on { color:var(--text); border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+  h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button, select { font:inherit; padding:6px 12px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); }
+  button { cursor:pointer; } button:disabled { opacity:.45; cursor:not-allowed; }
+  .muted { color:var(--muted); } .ok { color:var(--ok); } .warn { color:var(--warn); } .fail { color:var(--fail); }
+  .grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:12px; }
+  @media (max-width:1000px) { .grid { grid-template-columns:1fr; } }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  tr.row { cursor:pointer; } tr.row:hover { background:rgba(255,255,255,.04); } tr.sel { background:rgba(88,166,255,.14); }
+  .scroll { max-height:520px; overflow:auto; }
+  .g { font-weight:700; } .g-Reject { color:var(--fail); } .g-Hold { color:var(--warn); } .g-A { color:var(--ok); }
+  img.tile { max-width:100%; border-radius:8px; border:1px solid var(--line); background:#000; }
+  canvas { width:100%; height:110px; background:#0e1116; border:1px solid var(--line); border-radius:8px; }
+  .ev { font-size:12px; border-left:3px solid var(--line); padding:2px 8px; margin:3px 0; }
+  .ev.alarm { border-left-color:var(--fail); } .ev.blob { border-left-color:var(--accent); }
+  pre { background:#0e1116; border:1px solid var(--line); border-radius:8px; padding:8px; overflow:auto; max-height:240px; font-size:12px; }
+  .f { border-left:6px solid var(--muted); padding:6px 10px; margin:6px 0; background:rgba(255,255,255,.02); border-radius:0 8px 8px 0; }
+  .f.alarm { border-left-color:var(--fail); } .f.warn { border-left-color:var(--warn); } .f.info { border-left-color:var(--accent); }
+</style>
+</head>
+<body>
+<nav>
+  <h1>Tile line — master</h1>
+  <a class="tab" href="/">Plant 3D</a><a class="tab" href="/analysis">Analysis</a><a class="tab" href="/troubleshoot">Troubleshoot</a>
+  <span class="tab on">Pi record</span><a class="tab" href="/insights">AI insights</a><a class="tab" href="/classic">Classic view</a>
+</nav>
+
+<section class="card">
+  <h2>Sync with the Pi</h2>
+  <div id="sync" class="muted">Loading…</div>
+  <div class="bar" style="margin-top:8px">
+    <button id="syncnow">Sync now</button>
+    <button id="reconcile">Check the copy is complete</button>
+    <span id="syncbusy" class="muted"></span>
+  </div>
+  <div id="recon" style="margin-top:6px"></div>
+</section>
+
+<section class="card">
+  <h2>Errors found in the record</h2>
+  <div id="checks" class="muted">Loading…</div>
+</section>
+
+<div class="grid">
+  <section class="card">
+    <h2>Tiles (newest first)</h2>
+    <div class="bar" style="margin-bottom:8px">
+      <label class="muted">Final grade <select id="grade"><option value="">all</option><option>Grade A</option><option>Grade B</option><option>Grade C</option><option>Reject</option><option>Hold</option></select></label>
+      <label class="muted">Show <select id="flag"><option value="">everything</option><option value="disagree">camera and sound disagree</option><option value="problem">problems only</option></select></label>
+      <span id="count" class="muted"></span>
+    </div>
+    <div class="scroll"><table><thead><tr>
+      <th>Tile</th><th>Time</th><th>Camera</th><th>Sound</th><th>Final</th><th>Bin</th><th>Delivery</th><th>Placed</th><th>Peak Hz</th>
+    </tr></thead><tbody id="rows"></tbody></table></div>
+  </section>
+
+  <section class="card" id="detail">
+    <h2>Tile detail</h2>
+    <div class="muted">Pick a tile.</div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+const fmtT = ts => new Date(ts * 1000).toLocaleTimeString();
+const gcls = g => 'g ' + (g === 'Reject' ? 'g-Reject' : g === 'Hold' ? 'g-Hold' : g === 'Grade A' ? 'g-A' : '');
+let selected = null;
+
+async function jget(url) { const r = await fetch(url); return r.json(); }
+
+async function loadSync(withRecon) {
+  const d = await jget('/api/pi/sync' + (withRecon ? '?reconcile=1' : ''));
+  const box = $('sync'); box.textContent = '';
+  if (!d.configured) { box.textContent = d.error || 'No Pi sync is configured.'; return; }
+  const last = d.last;
+  const c = d.counts || {};
+  const blobs = Object.entries(c.blobs || {}).map(([k, v]) => `${v} ${k}`).join(', ') || 'none';
+  const line = el('div');
+  if (!last) line.textContent = 'No sync has completed yet.';
+  else if (last.ok) { line.append(el('span', 'ok', 'OK '), document.createTextNode(`last pull ${fmtT(last.ts)} — ${last.events} new events, ${last.tiles} tiles, ${last.blobs_fetched} files` + (last.behind ? `, ${last.behind} events still behind` : ''))); }
+  else { line.append(el('span', 'fail', 'FAILED '), document.createTextNode(`${fmtT(last.ts)} — ${last.error}`)); }
+  box.append(line, el('div', 'muted', `This copy holds ${c.tiles || 0} tiles, ${c.events || 0} events, files: ${blobs}.`));
+  if (withRecon && d.reconcile) showRecon(d.reconcile);
+}
+function showRecon(r) {
+  const b = $('recon'); b.textContent = '';
+  if (!r.ok) { b.append(el('span', 'fail', 'Could not check: ' + r.error)); return; }
+  if (r.in_sync) b.append(el('span', 'ok', 'Complete: this copy matches what the Pi says it holds.'));
+  else { b.append(el('span', 'warn', 'Not complete yet:')); r.problems.forEach(p => b.append(el('div', 'muted', '• ' + p))); }
+}
+$('syncnow').onclick = async () => {
+  $('syncnow').disabled = true; $('syncbusy').textContent = 'pulling…';
+  try { await fetch('/api/pi/sync', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
+  finally { $('syncnow').disabled = false; $('syncbusy').textContent = ''; }
+  await refresh(true);
+};
+$('reconcile').onclick = async () => { const d = await jget('/api/pi/sync?reconcile=1'); if (d.reconcile) showRecon(d.reconcile); };
+
+async function loadChecks() {
+  const d = await jget('/api/pi/integrity?window=3600');
+  const box = $('checks'); box.textContent = '';
+  if (!d.ok) { box.textContent = d.error; return; }
+  if (!d.available) { box.textContent = 'No Pi record on this master.'; return; }
+  if (!d.findings.length) { box.append(el('span', 'ok', `Nothing wrong found in ${d.tiles_checked} tiles of the last hour.`)); return; }
+  d.findings.forEach(f => {
+    const row = el('div', 'f ' + f.severity);
+    row.append(el('strong', null, f.title + ' '), el('span', 'muted', '[' + f.severity + ']'), el('div', null, f.summary));
+    if (f.tile_ids && f.tile_ids.length) {
+      const ids = el('div', 'muted');
+      ids.append(document.createTextNode('e.g. '));
+      f.tile_ids.forEach(t => { const a = el('a', null, t); a.href = '#'; a.style.marginRight = '8px'; a.onclick = ev => { ev.preventDefault(); openTile(t); }; ids.append(a); });
+      row.append(ids);
+    }
+    box.append(row);
+  });
+}
+
+async function loadRows() {
+  const q = new URLSearchParams({limit: 300});
+  if ($('grade').value) q.set('grade', $('grade').value);
+  if ($('flag').value) q.set('flag', $('flag').value);
+  const d = await jget('/api/pi/tiles?' + q);
+  const body = $('rows'); body.textContent = '';
+  if (!d.ok) { $('count').textContent = d.error; return; }
+  $('count').textContent = `${d.tiles.length} of ${d.total} shown`;
+  d.tiles.forEach(t => {
+    const tr = el('tr', 'row' + (t.tile_id === selected ? ' sel' : ''));
+    tr.append(el('td', null, t.tile_id.replace(/^T\d{4}-\d\d-\d\d_/, '')), el('td', null, fmtT(t.created_ts)),
+      el('td', gcls(t.camera_grade), t.camera_grade || '—'), el('td', gcls(t.acoustic_grade) + (t.disagree ? ' warn' : ''), t.acoustic_grade || '—'),
+      el('td', gcls(t.final_grade), t.final_grade || '—'), el('td', null, t.destination || '—'),
+      el('td', null, t.delivery || '—'), el('td', null, t.placement || '—'),
+      el('td', null, t.peak_hz != null ? Math.round(t.peak_hz) : '—'));
+    tr.onclick = () => openTile(t.tile_id);
+    body.append(tr);
+  });
+}
+
+function drawSpectrum(canvas, spec) {
+  const ctx = canvas.getContext('2d'), w = canvas.width = canvas.clientWidth * 2, h = canvas.height = 220;
+  ctx.fillStyle = '#0e1116'; ctx.fillRect(0, 0, w, h);
+  if (!spec || !spec.mag || !spec.mag.length) return;
+  ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2; ctx.beginPath();
+  spec.mag.forEach((m, i) => { const x = i / (spec.mag.length - 1) * w, y = h - 8 - m * (h - 16); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.stroke();
+}
+
+async function openTile(id) {
+  selected = id;
+  const d = await jget('/api/pi/tile/' + encodeURIComponent(id));
+  const box = $('detail'); box.textContent = '';
+  box.append(el('h2', null, 'Tile detail'));
+  if (!d.ok) { box.append(el('div', 'fail', d.error)); return; }
+  const t = d.tile, st = Object.fromEntries((t.blobs || []).map(b => [b.name, b.status]));
+  box.append(el('div', null, t.tile_id));
+  const sum = el('div', 'muted', `camera ${t.camera_grade || '—'} · sound ${t.acoustic_grade || '—'}${t.acoustic_counted ? ' (counted)' : ' (not counted)'} · final ${t.final_grade || '—'} → ${t.destination || '—'}`);
+  box.append(sum);
+  const base = '/api/pi/blob/' + encodeURIComponent(id) + '/';
+  if (st.camera === 'ok') { const im = el('img', 'tile'); im.src = base + 'camera'; box.append(im); }
+  else box.append(el('div', 'muted', 'Tile picture: ' + (st.camera || 'not kept')));
+  if (st.tap === 'ok') { const a = el('audio'); a.controls = true; a.src = base + 'tap'; a.style.width = '100%'; box.append(a); }
+  else box.append(el('div', 'muted', 'Tap recording: ' + (st.tap || 'not kept')));
+  if (st.tap_preview === 'ok') {
+    const cv = el('canvas'); box.append(cv);
+    try { const p = await (await fetch(base + 'tap_preview')).json(); drawSpectrum(cv, p.spectrum); } catch (e) { /* no preview */ }
+  }
+  box.append(el('h2', null, 'Timeline'));
+  d.events.forEach(e => {
+    const bits = e.kind === 'tile' ? Object.keys(e.data).filter(k => k !== 'camera_json' && k !== 'acoustic_json').map(k => `${k}=${typeof e.data[k] === 'object' ? '…' : e.data[k]}`).join(' ')
+      : JSON.stringify(e.data);
+    box.append(el('div', 'ev ' + e.kind, `${fmtT(e.ts)}  ${e.kind}  ${bits}`));
+  });
+  const det = el('details'); det.append(el('summary', 'muted', 'Full stored row')); det.append(el('pre', null, JSON.stringify(t, null, 2)));
+  box.append(det);
+  loadRows();
+}
+
+async function refresh(withRecon) { await Promise.all([loadSync(withRecon), loadChecks(), loadRows()]); }
+$('grade').onchange = loadRows; $('flag').onchange = loadRows;
+refresh(false);
+setInterval(() => refresh(false), 15000);
+</script>
+</body>
+</html>

@@ -44,6 +44,8 @@ def main(argv=None) -> None:
     p.add_argument("--pi-url", default=None,
                    help="Pi station GUI to pull the record from (default: config.yaml sync.pi_url)")
     p.add_argument("--no-sync", action="store_true", help="do not pull the Pi's record in this run")
+    p.add_argument("--print-sudoers", action="store_true",
+                   help="print the sudoers line each node needs for the control panel's start/stop, then exit")
     p.add_argument("--ai", choices=("none", "ollama", "anthropic"), default=None,
                    help="language model that explains anomalies (default: config.yaml insights.provider)")
     args = p.parse_args(argv)
@@ -51,6 +53,13 @@ def main(argv=None) -> None:
         p.error("--sim and --demo are alternatives; pick one")
 
     cfg = load_config()
+    if args.print_sudoers:
+        from master.nodes import load_nodes, sudoers_rule
+        for n in load_nodes(cfg.get("nodes")):
+            if n["ssh"] and any(s["kind"] == "systemd" for s in n["services"]):
+                print(f"# {n['label']}: save as /etc/sudoers.d/tile-master (check with visudo -cf), mode 0440")
+                print(sudoers_rule(n["user"], n["services"]))
+        return
     broker = cfg["broker"]
     host = args.host or broker["host"]
     port = args.port or int(broker.get("port", 1883))
@@ -113,13 +122,34 @@ def main(argv=None) -> None:
         syncer.start(float(sync_cfg.get("interval_s", 15)))
         where += f"; Pi record from {syncer._base}"
 
+    # Control panel: SSH to the nodes (or a simulated set in --demo/--sim) + the station health from the bus.
+    nodes_mgr = None
+    nodes_cfg = cfg.get("nodes") or {}
+    if nodes_cfg.get("enabled", True) and nodes_cfg.get("list"):
+        from master.nodes import NodeManager, SimulatedBackend, SshBackend, load_nodes
+        from master.plant import build_plant
+
+        node_list = load_nodes(nodes_cfg)
+
+        def _health() -> dict:
+            now = time.time()
+            return {s["id"]: s for s in build_plant(collector.snapshot(now=now), now)["stations"]}
+
+        if args.demo or args.sim:
+            backend = SimulatedBackend({(n["id"], s["id"]): "active" for n in node_list for s in n["services"]})
+        else:
+            backend = SshBackend(float(nodes_cfg.get("ssh_timeout_s", 6)),
+                                 identity_file=nodes_cfg.get("identity_file"))
+        nodes_mgr = NodeManager(node_list, backend, _health, float(nodes_cfg.get("poll_interval_s", 5)))
+        nodes_mgr.start()
+
     controls = bool(args.controls or args.demo or args.sim or dash.get("controls_enabled", False))
     ai_cfg = dict(cfg.get("insights") or {})
     if args.ai:
         ai_cfg["provider"] = args.ai
     llm = build_provider(ai_cfg)
     app = create_app(collector, bus, controls_enabled=controls, demo=args.demo or args.sim, llm=llm,
-                     mirror=mirror, syncer=syncer,
+                     mirror=mirror, syncer=syncer, nodes=nodes_mgr, guis=cfg.get("guis"),
                      demo_label="sim - real station logic, simulated machine" if args.sim else "demo — synthetic line")
     print(f"Master at http://{dash['host']}:{dash['port']}/  {where}  controls {'ON' if controls else 'off'}  "
           f"AI explainer {llm.name + ' (' + str(getattr(llm, 'model', '')) + ')' if llm else 'off'}")
@@ -128,6 +158,8 @@ def main(argv=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        if nodes_mgr is not None:
+            nodes_mgr.stop()
         if demo_line is not None:
             demo_line.stop()
         if syncer is not None:

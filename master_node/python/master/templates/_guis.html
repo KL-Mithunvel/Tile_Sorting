@@ -1,0 +1,25 @@
+<details class="guis" id="guisMenu">
+  <summary class="tab" style="cursor:pointer;list-style:none">Open GUIs ▾</summary>
+  <div class="guimenu" id="guiList"><span style="color:var(--muted,#8b95a3)">Loading…</span></div>
+</details>
+<style>
+  .guis { position:relative; }
+  .guis summary::-webkit-details-marker { display:none; }
+  .guimenu { position:absolute; z-index:50; top:calc(100% + 6px); left:0; min-width:300px; background:var(--panel,#141a23);
+    border:1px solid var(--line,#2a313c); border-radius:10px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+  .guimenu a { display:block; padding:6px 10px; border-radius:6px; color:var(--text,#e8ecf1); text-decoration:none; }
+  .guimenu a:hover { background:rgba(88,166,255,.14); }
+  .guimenu small { display:block; color:var(--muted,#8b95a3); font-size:11px; }
+</style>
+<script>
+(function () {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const box = document.getElementById("guiList"), menu = document.getElementById("guisMenu");
+  fetch("/api/guis", {cache: "no-store"}).then((r) => r.json()).then((d) => {
+    box.innerHTML = (d.guis || []).map((g) =>
+      `<a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.label)}<small>${esc(g.note || g.url)}</small></a>`).join("")
+      || '<span style="color:var(--muted,#8b95a3)">No GUIs listed in config.yaml (guis:)</span>';
+  }).catch(() => { box.textContent = "Could not load the list"; });
+  document.addEventListener("click", (e) => { if (!menu.contains(e.target)) menu.removeAttribute("open"); });
+})();
+</script>

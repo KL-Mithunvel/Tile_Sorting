@@ -31,11 +31,20 @@ sudo apt install -y \
     python3-numpy \
     python3-flask \
     python3-yaml \
-    python3-sounddevice \
+    python3-pip \
     libportaudio2 \
     python3-paho-mqtt \
     mosquitto \
     mosquitto-clients
+
+# sounddevice has no apt package on Debian 13 (trixie) - found 2026-10-15, the
+# first time this script ran. It is a small pure-Python wrapper over the
+# libportaudio2 installed above, so pip it into the service user's ~/.local
+# (--user keeps it out of the system dirs; --break-system-packages is the PEP 668
+# opt-in). The service runs as that user with the system interpreter, which picks
+# ~/.local up.
+echo "==> Installing sounddevice (pip, --user)"
+sudo -u "$RUN_USER" /usr/bin/python3 -m pip install --user --break-system-packages sounddevice
 
 # The broker. Bookworm's mosquitto 2.x refuses remote connections unless told
 # otherwise, which is what we want while only this Pi and the UNO Q (a known
@@ -81,7 +90,8 @@ fi
 
 echo
 echo "==> Verifying imports with the system interpreter"
-/usr/bin/python3 - <<'PYCHECK'
+# As the service user: sounddevice lives in that user's ~/.local, not root's.
+sudo -u "$RUN_USER" /usr/bin/python3 - <<'PYCHECK'
 import sys
 missing = []
 for mod in ("numpy", "flask", "yaml", "sounddevice", "paho.mqtt.client", "sqlite3"):

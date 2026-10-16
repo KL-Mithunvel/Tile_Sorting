@@ -38,3 +38,47 @@ insights:
   anthropic:                   # needs internet; the key is read ONLY from this environment variable
     model: "claude-sonnet-5-5"
     api_key_env: "ANTHROPIC_API_KEY"
+
+# Control panel (/nodes): see whether each node's program is running and start / stop / restart it.
+# SSH uses THIS PC's key (no passwords stored). Only the services listed here can ever be run;
+# a request names a node id, a service id and start/stop/restart, never a command.
+# Start/stop buttons additionally need dashboard.controls_enabled (or --controls).
+#   systemd services on the Pi run through a narrow sudoers rule, printed by:
+#     python -m master.live_master --print-sudoers
+nodes:
+  enabled: true
+  poll_interval_s: 5
+  ssh_timeout_s: 6
+  # identity_file: "~/.ssh/id_ed25519"      # default: ssh's own default key
+  list:
+    - id: pi
+      label: "Raspberry Pi 5 (tile-pi)"
+      host: "192.168.1.11"
+      user: klm
+      note: "Camera, microphone/decision service and the MQTT broker."
+      services:
+        - {id: broker, label: "MQTT broker", unit: mosquitto, confirm: true, stop_all: false}
+        - {id: station, label: "Station service (decision + microphone)", unit: tile-acoustic,
+           station: pi, gui: "http://192.168.1.11:5001/"}
+        - {id: camera, label: "Camera service", unit: tile-camera,
+           station: camera, gui: "http://192.168.1.11:5000/"}
+    - id: unoq
+      label: "Arduino UNO Q (pick & place)"
+      host: "192.168.1.15"
+      user: arduino
+      note: "app = the App Lab app id from `arduino-app-cli app list`; the pick-and-place app is not deployed yet."
+      services:
+        - {id: gantry, label: "Pick & place app", kind: arduino_app, app: "user:pick_place_node", station: gantry}
+    - id: nano
+      label: "Arduino Nano (conveyor + striker)"
+      ssh: false
+      station: conveyor
+      note: "Reached over the Pi's USB serial; shown from its status on the bus only. Not started from here."
+
+# Other GUIs to open from the "Open GUIs" menu in every master page's top bar (new tab).
+# These are links only: the master does not proxy or control them. Use addresses THIS PC can reach.
+guis:
+  - {label: "Camera dashboard (Pi)", url: "http://192.168.1.11:5000/", note: "live feed, trigger line, last tile"}
+  - {label: "Station run view (Pi)", url: "http://192.168.1.11:5001/", note: "tiles, finals, alarms"}
+  - {label: "Station service view (Pi)", url: "http://192.168.1.11:5001/service", note: "mic level, waveform, health"}
+  - {label: "Router admin (D-Link)", url: "http://192.168.1.1/", note: "control LAN, DHCP"}

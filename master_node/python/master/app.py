@@ -25,7 +25,7 @@ from master.troubleshoot import diagnose, timeline
 
 def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
                demo: bool = False, clock: Callable[[], float] = time.time, llm=None,
-               demo_label: str = "demo — synthetic line", mirror=None, syncer=None) -> Flask:
+               demo_label: str = "demo — synthetic line", mirror=None, syncer=None, nodes=None, guis=None) -> Flask:
     app = Flask(__name__)
 
     @app.route("/")
@@ -35,6 +35,25 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
     @app.route("/favicon.ico")
     def favicon():
         return ("", 204)          # no icon; answer quietly instead of a 404 in every page's console
+
+    @app.route("/api/guis")
+    def api_guis():
+        """Links to the other GUIs (config.yaml guis:). Only http(s) URLs are ever offered."""
+        ok = [{"label": str(g.get("label", g.get("url"))), "url": g["url"], "note": g.get("note")}
+              for g in (guis or []) if isinstance(g, dict) and str(g.get("url", "")).startswith(("http://", "https://"))]
+        return jsonify(ok=True, guis=ok)
+
+    @app.route("/nodes")
+    def nodes_page():
+        return render_template("nodes.html")
+
+    @app.route("/api/nodes")
+    def api_nodes():
+        if nodes is None:
+            return jsonify(ok=True, configured=False, controls=controls_enabled, demo=demo, nodes=[],
+                           summary={"services": 0, "online": 0, "problem": 0, "stopped": 0})
+        return jsonify(ok=True, configured=True, controls=controls_enabled, demo=demo,
+                       demo_label=demo_label, **nodes.view())
 
     @app.route("/analysis")
     def analysis_page():
@@ -397,6 +416,43 @@ def create_app(collector: MasterCollector, bus, controls_enabled: bool = False,
         if enabled is None:
             return jsonify(ok=False, error="enabled must be true or false"), 400
         return _send("station/strike", {"enabled": enabled})
+
+    def _node_action(node_id: str, service_id: str, action: str):
+        denied = _guard()
+        if denied:
+            return denied
+        if nodes is None:
+            return jsonify(ok=False, error="the control panel is not configured (config.yaml nodes:)"), 404
+        try:
+            started = nodes.run(node_id, service_id, action, confirm=_body().get("confirm") is True)
+        except KeyError as exc:
+            return jsonify(ok=False, error=str(exc.args[0])), 404
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except PermissionError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        except RuntimeError as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+        return jsonify(ok=True, started=started)
+
+    @app.route("/api/nodes/all/<action>", methods=["POST"])
+    def cmd_nodes_all(action):
+        """Start every node's services in order, or stop them in reverse (the broker is never stopped
+        in bulk). Services run in the background; the panel shows each result as it lands."""
+        denied = _guard()
+        if denied:
+            return denied
+        if nodes is None:
+            return jsonify(ok=False, error="the control panel is not configured (config.yaml nodes:)"), 404
+        try:
+            plan = nodes.run_all(action)
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
+        return jsonify(ok=True, started=plan)
+
+    @app.route("/api/nodes/<node_id>/<service_id>/<action>", methods=["POST"])
+    def cmd_node_service(node_id, service_id, action):
+        return _node_action(node_id, service_id, action)
 
     GANTRY_CMDS = ("pause", "resume", "acknowledge", "reset_stack", "home", "recover")
 

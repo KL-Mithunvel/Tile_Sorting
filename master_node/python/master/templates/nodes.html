@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tile Master — Control panel</title>
+<style>
+  :root { --bg:#0b0e13; --panel:#141a23; --line:#2a313c; --text:#e8ecf1; --muted:#8b95a3; --accent:#58a6ff;
+    --ok:#2fbf71; --warn:#e3b341; --fail:#f85149; --offline:#6b7480; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding:12px 14px 40px; }
+  nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:8px 12px; background:var(--panel); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }
+  nav h1 { font-size:16px; margin:0 6px 0 0; }
+  .tab { padding:5px 12px; border-radius:8px; border:1px solid var(--line); color:var(--muted); text-decoration:none; }
+  .tab.on { color:var(--text); border-color:var(--accent); background:rgba(88,166,255,.12); }
+  .pill { padding:2px 10px; border-radius:999px; border:2px solid var(--line); font-weight:700; text-transform:uppercase; font-size:11px; white-space:nowrap; }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.warn { color:var(--warn); border-color:var(--warn); }
+  .pill.fail { color:#fff; background:var(--fail); border-color:var(--fail); } .pill.offline { color:var(--offline); border-color:var(--offline); }
+  .pill.demo { color:#a371f7; border-color:#a371f7; font-size:12px; padding:3px 12px; }
+  button { font:inherit; padding:5px 12px; border-radius:8px; border:1px solid var(--line); background:#0e1116; color:var(--text); cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.go { border-color:var(--ok); color:var(--ok); } button.halt { border-color:var(--fail); color:var(--fail); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:12px; }
+  .card.ok { border-left:6px solid var(--ok); } .card.warn { border-left:6px solid var(--warn); }
+  .card.fail { border-left:6px solid var(--fail); } .card.offline { border-left:6px solid var(--offline); }
+  .head { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .head h2 { margin:0; font-size:16px; }
+  .muted { color:var(--muted); } .small { font-size:12px; }
+  .summary { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .summary .big { font-size:20px; font-weight:700; }
+  .banner { border:1px solid var(--warn); color:var(--warn); border-radius:10px; padding:8px 12px; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; font-weight:600; }
+  td.act { white-space:nowrap; } td.act button { margin-right:4px; }
+  a { color:var(--accent); }
+  .err { color:var(--fail); }
+  @media (max-width:700px) { td.act { white-space:normal; } }
+</style>
+</head>
+<body>
+<nav>
+  <h1>Tile line — master</h1>
+  <a class="tab" href="/">Plant 3D</a><a class="tab" href="/analysis">Analysis</a><a class="tab" href="/troubleshoot">Troubleshoot</a>
+  <span class="tab on">Control panel</span>{% include "_guis.html" %}
+  <a class="tab" href="/tiles">Pi record</a><a class="tab" href="/insights">AI insights</a><a class="tab" href="/classic">Classic view</a>
+  <span style="flex:1"></span><span class="pill demo" id="demo" style="display:none">demo — simulated nodes</span>
+</nav>
+
+<div id="banner" class="banner" style="display:none"></div>
+
+<div class="summary">
+  <span class="big" id="sum">Loading…</span>
+  <span style="flex:1"></span>
+  <button class="go" id="startAll" disabled>Start all nodes</button>
+  <button class="halt" id="stopAll" disabled>Stop all nodes</button>
+</div>
+<div class="muted small" style="margin:-6px 0 12px">
+  This starts and stops the <b>programs</b> on each machine (over SSH). It is <b>not an e-stop</b> and does not
+  cut power to the belt or the gantry. Stop all leaves the MQTT broker running; stop it on its own row.
+</div>
+
+<div id="nodes"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let controls = false;
+
+function ago(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  return s < 90 ? Math.round(s) + " s ago" : s < 5400 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago";
+}
+
+function serviceRow(n, s) {
+  const la = s.last_action;
+  const last = la ? `<div class="small ${la.ok ? "muted" : "err"}">${esc(la.action)} ${la.ok ? "ok" : "FAILED"} ${esc(ago(la.at))}${la.message ? " — " + esc(la.message) : ""}</div>` : "";
+  const dis = (!controls || s.busy) ? "disabled" : "";
+  const btn = (a, cls) => `<button ${dis} class="${cls || ""}" data-n="${esc(n.id)}" data-s="${esc(s.id)}" data-a="${a}" data-c="${s.confirm ? 1 : 0}" data-l="${esc(s.label)}">${a[0].toUpperCase() + a.slice(1)}</button>`;
+  const line = s.line_detail ? `<div class="small muted">line: ${esc(s.line_level)} — ${esc(s.line_detail)}</div>` : "";
+  const gui = s.gui ? ` <a class="small" target="_blank" rel="noopener" href="${esc(s.gui)}">open its page</a>` : "";
+  return `<tr>
+    <td><b>${esc(s.label)}</b>${gui}<div class="small muted">${esc(s.kind === "systemd" ? "systemd: " : "app: ")}${esc(s.target)}</div></td>
+    <td><span class="pill ${esc(s.tone)}">${esc(s.status)}</span>${s.busy ? ' <span class="muted small">working…</span>' : ""}${line}${last}</td>
+    <td class="small muted">${esc(s.state)}${s.since ? "<br>since " + esc(s.since) : ""}</td>
+    <td class="act">${btn("start", "go")}${btn("stop", "halt")}${btn("restart")}</td></tr>`;
+}
+
+function nodeCard(n) {
+  const rows = n.services.length
+    ? `<table><tr><th>Program</th><th>Status</th><th>Process</th><th>Control</th></tr>${n.services.map((s) => serviceRow(n, s)).join("")}</table>`
+    : `<div class="muted small" style="margin-top:6px">${n.ssh ? "No managed programs." : "Monitored from its messages on the bus; nothing to start from here."}</div>`;
+  return `<section class="card ${esc(n.tone)}">
+    <div class="head"><h2>${esc(n.label)}</h2><span class="pill ${esc(n.tone)}">${esc(n.status)}</span>
+      <span class="muted small">${n.host ? esc(n.host) : "no SSH"}</span>
+      ${n.checked_at ? `<span class="muted small">checked ${esc(ago(n.checked_at))}</span>` : ""}</div>
+    ${n.note ? `<div class="muted small">${esc(n.note)}</div>` : ""}
+    ${n.error && n.ssh && !n.reachable ? `<div class="err small">${esc(n.error)}</div>` : ""}
+    ${!n.ssh && n.line_detail ? `<div class="small muted">line: ${esc(n.line_detail)}</div>` : ""}
+    ${rows}</section>`;
+}
+
+async function load() {
+  let d;
+  try { d = await (await fetch("/api/nodes", {cache: "no-store"})).json(); } catch (e) { $("sum").textContent = "Master not reachable"; return; }
+  controls = !!d.controls;
+  $("demo").style.display = d.demo ? "" : "none";
+  if (!d.configured) { $("sum").textContent = "Control panel not configured"; $("nodes").innerHTML = '<div class="muted">Add a <code>nodes:</code> block to master/config.yaml.</div>'; return; }
+  const b = $("banner");
+  b.style.display = controls ? "none" : "";
+  b.textContent = "View only. Start the master with --controls (or dashboard.controls_enabled: true) to enable the buttons.";
+  const sm = d.summary;
+  $("sum").innerHTML = `${sm.online} of ${sm.services} programs online` +
+    (sm.problem ? ` · <span class="err">${sm.problem} with a problem</span>` : "") + (sm.stopped ? ` · <span class="muted">${sm.stopped} stopped</span>` : "");
+  $("startAll").disabled = $("stopAll").disabled = !controls;
+  $("nodes").innerHTML = d.nodes.map(nodeCard).join("");
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.ok === false) alert(j.error || ("request failed (" + r.status + ")"));
+  load();
+}
+
+$("nodes").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-a]");
+  if (!b || b.disabled) return;
+  const a = b.dataset.a, needsConfirm = b.dataset.c === "1" && a !== "start";
+  if (needsConfirm && !confirm(`${a} "${b.dataset.l}"? Everything on the line that depends on it will lose its connection.`)) return;
+  post(`/api/nodes/${encodeURIComponent(b.dataset.n)}/${encodeURIComponent(b.dataset.s)}/${a}`, needsConfirm ? {confirm: true} : {});
+});
+$("startAll").addEventListener("click", () => post("/api/nodes/all/start"));
+$("stopAll").addEventListener("click", () => { if (confirm("Stop every node's programs (the broker stays up)? The line will stop deciding tiles.")) post("/api/nodes/all/stop"); });
+
+load(); setInterval(load, 2000);
+</script>
+</body>
+</html>

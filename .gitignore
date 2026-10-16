@@ -48,6 +48,10 @@ development/output/*.mp4
 !documents/deliverables/review_2/figures/
 !documents/deliverables/review_2/figures/*.png
 
+# Review 2 GUI screenshots (development/capture_*.py) - evidence for the report
+!documents/deliverables/review_2/screenshots/
+!documents/deliverables/review_2/screenshots/*.png
+
 # Project overview flow chart (documents/deliverables/project_overview/make_project_flowchart.py) - small, the documents need it
 !documents/deliverables/project_overview/
 !documents/deliverables/project_overview/*.png

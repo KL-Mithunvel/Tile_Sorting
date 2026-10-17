@@ -31,10 +31,11 @@ dashboard:
 # button on the AI insights page.
 insights:
   provider: "ollama"           # none | ollama | anthropic  (ollama = local, nothing leaves the PC)
-  timeout_s: 90
+  timeout_s: 180               # measured 2026-10-17: 56 s cold load + answer on the GPU; margin for CPU fallback
   ollama:                      # local, works on the isolated control LAN
     url: "http://localhost:11434"
     model: "llama3.2:3b"       # install with: ollama pull llama3.2:3b
+    keep_alive: "30m"          # keep the model loaded between clicks (warm answer 8 s vs cold 56 s)
   anthropic:                   # needs internet; the key is read ONLY from this environment variable
     model: "claude-sonnet-5-5"
     api_key_env: "ANTHROPIC_API_KEY"

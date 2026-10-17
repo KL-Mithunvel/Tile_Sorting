@@ -80,6 +80,7 @@ class OllamaProvider:
     url: str = "http://localhost:11434"
     model: str = "llama3.2:3b"
     timeout_s: float = 90.0
+    keep_alive: str = "30m"      # how long Ollama keeps the model in memory after a call (its default is 5m)
     http: Http = _http
     name: str = "ollama"
 
@@ -106,7 +107,7 @@ class OllamaProvider:
 
     def complete(self, system: str, user: str) -> str:
         r = self.http("POST", self.url.rstrip("/") + "/api/chat", {}, {
-            "model": self.model, "stream": False, "options": {"temperature": 0.2},
+            "model": self.model, "stream": False, "keep_alive": self.keep_alive, "options": {"temperature": 0.2},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}, self.timeout_s)
         text = ((r.get("message") or {}).get("content") or "").strip()
         if not text:
@@ -160,13 +161,13 @@ def build_provider(cfg: Optional[dict], http: Http = _http):
     """The provider named in config's `insights:` block, or None when it is `none`/absent."""
     cfg = cfg or {}
     name = str(cfg.get("provider") or "none").lower()
-    timeout = float(cfg.get("timeout_s", 60))
+    timeout = float(cfg.get("timeout_s", 180))
     if name == "none":
         return None
     if name == "ollama":
         o = cfg.get("ollama") or {}
         return OllamaProvider(url=o.get("url", "http://localhost:11434"), model=o.get("model", "llama3.2:3b"),
-                              timeout_s=timeout, http=http)
+                              timeout_s=timeout, keep_alive=str(o.get("keep_alive", "30m")), http=http)
     if name == "anthropic":
         a = cfg.get("anthropic") or {}
         return AnthropicProvider(model=a.get("model", "claude-sonnet-5-5"),

@@ -40,6 +40,36 @@ Calibrate, Monitor, Record, Label).
 `annotator_1..4_*` - the Tkinter tile annotator on a **copy** of the 92-tile belt dataset (tile, context view,
 pipeline readings, zoom). `review_sheet_labelling_html` - the borderline-tile review sheet.
 
+## AI insights, one fault at a time (added 2026-10-17, same synthetic rules)
+Seven master GUIs were started side by side (ports 8101-8107), each fed an hour of **invented** tiles that behave
+normally for the first three quarters and then change in exactly one way. On each page the rule-based check flagged
+only that change, and *Explain these* was pressed so the real local model (`llama3.2:3b`, Ollama, on the laptop GPU)
+answered. Every page has the same layout: top = the **rule-based finding** (always on, no AI); middle = checks on the
+Pi's stored record (empty here: nothing synced); bottom = the **model's explanation** with its response time and the
+warning "AI-generated ... can be wrong". The coloured badge is the severity (WARNING / NOTE).
+
+| File | The one fault planted | What the rule-based finding says | What the model answered (and how good it is) |
+|---|---|---|---|
+| `insights_fault_1_reject_rate` | Share of tiles rejected rises from about 5 % to 40 % | "Reject rate has risen": 22 % lately (10 of 45) against 7 % before (9 of 135) | Restates the numbers, suggests checking the camera and the pick-and-place gantry. The causes it names are guesses. 21 s |
+| `insights_fault_2_hold_rate` | 35 % of recent tiles end as "Hold" (need a person) | "More tiles are being held for a person": 33 % (15 of 45) against 0 % | Explains what a hold is, tells the operator to check the belt and gantry for blockages. Generic. 17 s |
+| `insights_fault_3_no_tap_timeouts` | 25 % of recent tiles never get a tap result and time out | "More tiles are timing out without a tap": 27 % (12 of 45) against 0 % | Says the data is thin; blames the acoustic station or damaged tiles. It words the fault as tiles "not responding to the tap", which is not quite what a timeout means (no tap result arrived). 14 s |
+| `insights_fault_4_camera_sound_disagree` | The sound result disagrees with the camera on most tiles | "Camera and sound disagree more than before": match 29 % (13 of 45) against 89 % (120 of 135) | Repeats the finding, suggests cleaning/checking the sensors and calibration, says the sample is small. 12 s |
+| `insights_fault_5_slow_transit` | Time from camera to final grade rises from 2.6 s to 6.0 s | "Tiles take longer from camera to final grade": median 6.0 s against 2.6 s (2.3x) | Suggests the belt slowed or the taps are late (this wording comes from the rule-based text itself) and says to check belt speed and tap timing. 14 s |
+| `insights_fault_6_low_throughput` | Tiles arrive less often: 1.3/min instead of 3.0/min | "Fewer tiles are coming through" (a NOTE, not a warning): 1.3/min against 3.0/min | Fine if the belt was stopped on purpose, otherwise check the camera view and the belt. It states the same finding twice. 16 s |
+| `insights_fault_7_alarm_burst` | The same alarm (`camera_silent`) is raised six times in 15 minutes | "Alarm 'camera_silent' keeps repeating": 6 alarms in 15 min | Explains the alarm and suggests a dirty sensor, which is a guess (a "silent" camera is more likely a stopped feed). 14 s |
+
+What these pictures prove and do not prove: the rule-based detector flags each kind of change by itself on
+synthetic data; the model puts it in plain words in 12-21 s once loaded (56 s the first time, while it loads). They
+do **not** show anything about a real line. The model often guesses a cause the data does not contain, which is why
+the page labels every answer as AI-generated.
+
+Regenerate (from the repo root, venv active; Ollama running with `llama3.2:3b`): start one master per fault, then capture.
+```
+python development/launch_one_fault.py reject_rate 8101     # hold_rate 8102, timeouts 8103, agreement 8104,
+                                                            # transit 8105, throughput 8106, alarm_burst 8107
+python development/capture_screens.py insights_fault
+```
+
 ## Not captured
 Tile parameter tuner (`development/tile_param_tuner.py`), the matplotlib desktop twin, anything on the Pi, the
 UNO Q or the Nano (no hardware), the real microphone/striker flow.

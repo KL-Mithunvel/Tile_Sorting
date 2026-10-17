@@ -42,3 +42,11 @@ SHOTS = [
     {"name": "pickplace_twin_top_view", "url": T + "/", "wait": 4, "full": False,
      "steps": [click("[data-view=top]"), 3]},
 ]
+
+# One AI-insights page per planted fault (each master started with exactly one fault; see
+# screenshots/README.md "AI insights, one fault at a time"). Ports 8101-8107.
+FAULT_PAGES = [("1_reject_rate", 8101), ("2_hold_rate", 8102), ("3_no_tap_timeouts", 8103),
+               ("4_camera_sound_disagree", 8104), ("5_slow_transit", 8105), ("6_low_throughput", 8106),
+               ("7_alarm_burst", 8107)]
+SHOTS += [{"name": f"insights_fault_{n}", "url": f"http://localhost:{p}/insights", "wait": 4,
+           "steps": [click("#explain"), 40], "max_h": 1500} for n, p in FAULT_PAGES]

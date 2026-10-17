@@ -46,4 +46,4 @@ Team: Mithunvel KL (23BMH1029), Kanigalpula Teja Pavan Sai Adinarayana Gupta
   file-level changes); this logbook should stay closer to what the college guidelines
   actually ask for â€” a dated record of activity, compact enough for the guide to sign
   off on regularly, not a full technical diff.
-
+| 2026-10-17 | **AI insights tested with a real local model.** Installed `llama3.2:3b` in Ollama and ran the master's explainer on synthetic data with seven planted faults, one fault per page; each was detected on its own and nothing else fired. Measured on the laptop GPU: 56 s first call, 8-16 s afterwards, 100 % GPU. Kept the model loaded (`keep_alive` 30 min) and raised the timeout to 180 s. Finding: the model reads clearly but guesses causes the data does not state. Not run on real line data. | `master_node/python/master/llm.py`, `config.yaml`; `review_2/screenshots/insights_fault_*.png`; `development/launch_one_fault.py` | |

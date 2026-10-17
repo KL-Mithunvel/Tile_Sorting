@@ -39,7 +39,7 @@ The same rule is recorded in `.CLAUDE/CLAUDE.md` (Development Rules, rule 6) so 
 |---|---|---|---|
 | 1. Technical depth & domain knowledge | Expert-level understanding *and justification* | Ch.4 (methods with equations and reasons for each choice), §5.6 (faults found and why), App. A | Literature list is short of the 20 recent journal papers the template asks for |
 | 2. Demonstration & system performance | "Optimized, industry-ready" | §5.1 status matrix, §5.2–5.5 measured results, demo plan §0.4 | **Not industry-ready and cannot be claimed so.** Nothing has run on the Pi, the tap rig or the gantry. Level 3–4 ("functional", "stable") is the defensible target; the report is built to defend that honestly |
-| 3. Innovation & originality | Highly innovative | §5.7 (what is new, what is not) | Two novelty items proposed after Review 1 (LLM diagnosis, adaptive grading) are **not built** and are reported as future work |
+| 3. Innovation & originality | Highly innovative | §5.7 (what is new, what is not) | Of the two novelty items proposed after Review 1, LLM diagnosis is built (laptop-only, synthetic data, §5.7); adaptive grading is **not built** and is reported as future work |
 | 4. Question handling & defence | Excellent analytical defence | §5.6 faults, §6.3 hurdles, §0.5 likely questions | Needs rehearsal, not text |
 | 5. Societal, industrial & future scope | Strong relevance with scalability | §2.7, §3.3, §5.8, §6.2 | No measured saving; no SMTW tile size/throughput data yet |
 
@@ -218,6 +218,13 @@ Mithunvel KL (23BMH1029) · Kanigalpula Teja Pavan Sai Adinarayana Gupta (23BMH1
 | 5.8 | Corner-check operating point trade-off |
 | 5.9 | Development timeline |
 | 5.10 | Test-suite growth |
+| 5.11 | AI insights: Reject rate has risen |
+| 5.12 | AI insights: More tiles are being held for a person |
+| 5.13 | AI insights: More tiles are timing out without a tap |
+| 5.14 | AI insights: Camera and sound disagree more than before |
+| 5.15 | AI insights: Tiles take longer from camera to final grade |
+| 5.16 | AI insights: Fewer tiles are coming through |
+| 5.17 | AI insights: Alarm 'camera_silent' keeps repeating |
 
 ## LIST OF TABLES
 
@@ -860,8 +867,47 @@ each is now either refused at start-up or shown on the dashboard.
 - A **human-in-the-loop calibration** workflow so thresholds come from the line's own labelled footage.
 - A **repeatable, non-contact impact** design (dual-solenoid gravity ball drop).
 
-**Proposed but not built** (reported as future work, not as results): an LLM-assisted fault-diagnosis layer over the
-event log, and adaptive grading that learns from operator corrections. **Not original:** the individual techniques
+**Built since Review 1, laptop-only:** the first novelty item, the AI-assisted fault layer, now exists as the master's *AI
+insights* page. Rule-based checks (`master/insights.py`, `integrity.py`) decide what changed; a local language model
+(Ollama, `llama3.2:3b`) only *explains* it, when a person presses a button, and receives a whitelisted summary, never
+tile rows. It was run on 2026-10-16/17 on synthetic data with one planted fault at a time: each of the seven fault kinds was
+detected on its own page and nothing else fired (Figures 5.11-5.17). Model timing on this laptop (RTX 1000 Ada, 6 GB): 56 s
+for the first call (model load), 8-16 s afterwards, 100 % on the GPU (`ollama ps`). **What this does not show:** it has
+never seen real line data; the numbers are invented; the 3B model's explanations are readable but partly guessed (for
+example it names a gantry fault or "taps not responding" where the findings state no cause, and one earlier run
+invented a camera-heartbeat line), so every answer carries the label "AI-generated ... can be wrong". It cannot say *why*
+something changed, and a line that was always bad reads as normal.
+
+![Figure 5.11 — AI insights: Reject rate has risen](screenshots/insights_fault_1_reject_rate.png)
+
+*Figure 5.11 — Reject rate has risen. Reject rate 22 % lately (10 of 45) against 7 % before (9 of 135); synthetic data, local model's explanation shown.*
+
+![Figure 5.12 — AI insights: More tiles are being held for a person](screenshots/insights_fault_2_hold_rate.png)
+
+*Figure 5.12 — More tiles are being held for a person. Hold rate 33 % (15 of 45) against 0 % (0 of 135); synthetic data, local model's explanation shown.*
+
+![Figure 5.13 — AI insights: More tiles are timing out without a tap](screenshots/insights_fault_3_no_tap_timeouts.png)
+
+*Figure 5.13 — More tiles are timing out without a tap. No-tap timeout rate 27 % (12 of 45) against 0 % (0 of 135); synthetic data, local model's explanation shown.*
+
+![Figure 5.14 — AI insights: Camera and sound disagree more than before](screenshots/insights_fault_4_camera_sound_disagree.png)
+
+*Figure 5.14 — Camera and sound disagree more than before. Agreement 29 % (13 of 45) against 89 % (120 of 135); synthetic data, local model's explanation shown.*
+
+![Figure 5.15 — AI insights: Tiles take longer from camera to final grade](screenshots/insights_fault_5_slow_transit.png)
+
+*Figure 5.15 — Tiles take longer from camera to final grade. Median 6.0 s against 2.6 s (2.3x); synthetic data, local model's explanation shown.*
+
+![Figure 5.16 — AI insights: Fewer tiles are coming through](screenshots/insights_fault_6_low_throughput.png)
+
+*Figure 5.16 — Fewer tiles are coming through. 1.3 tiles/min against 3.0 tiles/min; synthetic data, local model's explanation shown.*
+
+![Figure 5.17 — AI insights: Alarm 'camera_silent' keeps repeating](screenshots/insights_fault_7_alarm_burst.png)
+
+*Figure 5.17 — Alarm 'camera_silent' keeps repeating. 6 'camera_silent' alarms in 15 min; synthetic data, local model's explanation shown.*
+
+**Proposed but not built** (reported as future work, not as results): adaptive grading that learns from operator
+corrections. **Not original:** the individual techniques
 (Canny, distance transform, FFT, MQTT, YOLO/ViT) are standard; the contribution is their assembly, the fail-safe
 protocol, and the measurement discipline.
 
@@ -948,7 +994,7 @@ Further hurdles are in Table 5.7 (resize filter, camera scan, colour cast).
 5. **Gantry firmware** on the UNO Q, with the stepper library question answered under Zephyr.
 6. **Dimensional check** from the camera (width, height, squareness) to meet FR-06.
 7. **Pilot at SMTW:** real tile sizes and throughput, manual-vs-automatic comparison, cost model filled in.
-8. **Software novelty:** event log → LLM fault summaries; adaptive grading from operator corrections.
+8. **Software novelty:** the LLM fault explainer is built (laptop-only) and needs a trial on real line data and a better prompt or model; adaptive grading from operator corrections is not built.
 
 ---
 

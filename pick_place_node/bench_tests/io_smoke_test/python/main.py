@@ -22,14 +22,15 @@ thread and call App.run() afterwards; nothing else here would need to change.
 
 from __future__ import annotations
 
+from bridge_backend import BridgeIOBackend
 from dashboard import create_app
-from serial_backend import SerialIOBackend, SharedState, load_config
+from serial_backend import SharedState, load_config
 
 
 def main() -> None:
     config = load_config()
     state = SharedState()
-    backend = SerialIOBackend(config, state)
+    backend = BridgeIOBackend(config, state)
     backend.start()
 
     app = create_app(state, backend, config["dashboard"]["poll_interval_s"])

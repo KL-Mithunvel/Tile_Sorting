@@ -43,7 +43,7 @@ if errorlevel 1 goto :error
 echo.
 echo Done. Next, on the board (tools\uno_q\ssh.bat):
 echo   arduino-app-cli app restart ~/%DEST% -v
-echo Then open http://%UNO_Q_HOST%:5060/ from a browser on the same WiFi.
+echo Then open http://%UNO_Q_HOST%:5070/ from a browser on the same WiFi.
 goto :eof
 
 :error

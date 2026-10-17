@@ -18,7 +18,7 @@ outside the node's App Bricks project" role.
   for the whole test; this sketch never touches STEP/DIR.
 - It reports status over serial ~5 Hz and accepts `VAC ON` / `VAC OFF`.
 - The Python side (`python/`) opens that serial link, and serves a Flask GUI
-  (`http://<board-ip>:5060/`) showing live E-stop/limit-switch readings and a
+  (`http://<board-ip>:5070/`) showing live E-stop/limit-switch readings and a
   vacuum on/off button.
 
 ## Known discrepancy — read this before trusting "triggered"
@@ -39,19 +39,21 @@ README) to match reality instead of the current guess.
 
 ## Known unverified
 
-- **`pyserial` may not be preinstalled in the App Lab Python container.** It's now in
-  the repo-root `requirements.txt` (for the dev-laptop venv), but nothing pushes that
-  file alongside this app the way `push.bat` does for `acoustic_node/` — if
-  `python/main.py` fails on `import serial` on the board, `pip install pyserial` there
-  (or inside the container, whichever `arduino-app-cli`'s error points at).
-- **The serial port path on the board's Linux side is a placeholder**
-  (`python/config.yaml`'s `serial.port: "/dev/ttyACM0"`). Whether the App Lab
-  Python container this app runs in can even open a device node for the
-  sketch's `Serial` link is untested — same class of unknown as the App
-  Bricks bridge API elsewhere in this repo
-  (`pick_place_control_protocol.md` §9). If `SerialIOBackend.start()` fails to
-  open the configured port, SSH onto the board (`tools/uno_q/ssh.bat`) and
-  `ls /dev/tty*` to find candidates, then edit `config.yaml`.
+- **The App Lab container has none of this app's Python packages.** Observed
+  2026-10-16: the first run died with `ModuleNotFoundError: No module named 'flask'`.
+  App Lab builds a per-app venv (`.cache/.venv`) and installs only what is in
+  `python/requirements.txt`, so that file (`flask`, `pyyaml`, `pyserial`) is part of
+  the app and is pushed with it. The first start needs internet for pip. Whether the
+  container can open the serial device (below) is still unverified.
+- **There is no serial device for the MCU in the container** (observed
+  2026-10-16: `/dev/ttyACM0` does not exist; `/dev/ttyHS1` is the MCU link
+  owned by `arduino-router`). So the Python side no longer uses pyserial: it
+  calls the sketch through the App Lab Bridge (`python/bridge_backend.py`:
+  `Bridge.call("io_status")` / `("vac", 0|1)`), and the sketch registers them
+  with `Bridge.provide()`. The sketch's `Serial` output still streams to the
+  laptop over USB (COM8) — handy for reading the raw levels with no GUI. The
+  Bridge path is written from Arduino's example, **not yet confirmed working**.
+  `serial_backend.py` is kept only for its `SharedState`/`load_config`.
 - **`python/main.py` does not use the `arduino.app_utils.App.run()` pattern**
   the other nodes' stubs use — see that file's docstring for why (this app's
   Python side has real background work to do, unlike `stepper_smoke_test`'s
@@ -59,6 +61,26 @@ README) to match reality instead of the current guess.
   of an already-unverified serial port wasn't worth it). If `arduino-app-cli`
   turns out to need `App.run()` specifically for the container to be
   considered "running," that's the first thing to revisit.
+
+## Verified on the lab board, 2026-10-16
+
+- Build, flash and container start work; `python/requirements.txt` is installed by
+  the container on first start (needs internet once).
+- The GUI reads the sketch through the Bridge: `/api/status` returned
+  `connected: true` with live levels. With nothing wired every input read HIGH
+  (pull-up), so that run says nothing about switch polarity yet.
+- The board's generated `app.yaml` has `ports: []`, which leaves the container's
+  5070 unreachable from the network; edit it to list `5070` (as the reference
+  `app.yaml` here does) and restart.
+- The laptop can reach the GUI over USB with
+  `adb forward tcp:5070 tcp:5070` -> `http://localhost:5070/` (adb is in
+  `%LOCALAPPDATA%\Arduino15\packages\arduino\tools\adb\<ver>\`). Raw levels also
+  stream on the board's USB serial port (COM8 here).
+- **The GUI port is 5070, not 5060.** Chrome and Edge refuse port 5060 (and 5061,
+  the SIP ports) with `ERR_UNSAFE_PORT`, while `curl` and the status API on 5060
+  worked fine — so the server looked healthy and the page still would not open.
+  Avoid browser-restricted ports for any dashboard here.
+- Not yet done: press each switch and record LOW/HIGH.
 
 ## Before running — hardware prerequisites
 
@@ -91,7 +113,7 @@ tools\uno_q\ssh.bat
 arduino-app-cli app restart ~/ArduinoApps/io_smoke_test -v   :: ~90 s
 ```
 
-Then open `http://<UNO_Q_HOST>:5060/` (or whatever the board's current hotspot
+Then open `http://<UNO_Q_HOST>:5070/` (or whatever the board's current hotspot
 IP is — see `tools/uno_q/config.bat`) from any browser on the same WiFi.
 
 If the GUI never shows a connection (banner stays red, "Not connected to the

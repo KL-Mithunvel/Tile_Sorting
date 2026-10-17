@@ -57,6 +57,8 @@
 //   on the board:            arduino-app-cli app restart ~/ArduinoApps/io_smoke_test -v
 // ============================================================================
 
+#include "Arduino_RouterBridge.h"
+
 const int LIM_X = 9, LIM_Y = 10, LIM_Z = 11;
 const int ESTOP = A0;
 const int VAC_EN = 12;
@@ -82,23 +84,44 @@ void setup() {
   pinMode(EN, OUTPUT);
   digitalWrite(EN, HIGH);  // active-low: HIGH = all 4 stepper drivers disabled
 
+  Bridge.begin();
+  Bridge.provide("io_status", bridgeIoStatus);
+  Bridge.provide("vac", bridgeVac);
+
   delay(300);
   Serial.println("=== io smoke test ===");
   Serial.println("reporting raw pin levels -- see sketch header re: doc discrepancy");
   Serial.println("commands: VAC ON | VAC OFF");
 }
 
+String statusLine() {
+  String s = "IO LIM_X=";
+  s += digitalRead(LIM_X);
+  s += " LIM_Y=";
+  s += digitalRead(LIM_Y);
+  s += " LIM_Z=";
+  s += digitalRead(LIM_Z);
+  s += " ESTOP=";
+  s += digitalRead(ESTOP);
+  s += " VAC=";
+  s += (vacOn ? 1 : 0);
+  return s;
+}
+
 void sendStatus() {
-  Serial.print("IO LIM_X=");
-  Serial.print(digitalRead(LIM_X));
-  Serial.print(" LIM_Y=");
-  Serial.print(digitalRead(LIM_Y));
-  Serial.print(" LIM_Z=");
-  Serial.print(digitalRead(LIM_Z));
-  Serial.print(" ESTOP=");
-  Serial.print(digitalRead(ESTOP));
-  Serial.print(" VAC=");
-  Serial.println(vacOn ? 1 : 0);
+  Serial.println(statusLine());
+}
+
+// --- Bridge functions (Linux side: Bridge.call("io_status") / ("vac", 0|1)) ---
+// A raw serial link to the Linux side does not exist on the UNO Q; the Python
+// app reaches this sketch only through arduino-router.
+String bridgeIoStatus() {
+  return statusLine();
+}
+
+void bridgeVac(int on) {
+  vacOn = (on != 0);
+  digitalWrite(VAC_EN, vacOn ? HIGH : LOW);
 }
 
 void handleLine(String line) {

@@ -8,5 +8,5 @@
 name: io_smoke_test
 icon: 🔌
 ports:
-  - 5060
+  - 5070
 bricks: []

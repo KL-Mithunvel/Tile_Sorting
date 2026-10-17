@@ -33,8 +33,8 @@
 //  - Limit switches X/Y/Z (INPUT_PULLUP): LOW at rest, HIGH when pressed.
 //  - E-stop A0 (INPUT_PULLUP): HIGH when not pressed, LOW when pressed.
 // (The wiring doc's "LOW = triggered" was wrong for the limits, right for the e-stop.)
-// Unplugged-wire levels are not measured yet, so the limits' fail-safe on a broken
-// wire is still an assumption.
+// A0 unplugged also reads HIGH (= not pressed), so a broken e-stop wire is NOT
+// detected. Limit-switch unplugged levels are not measured yet.
 #ifndef GANTRY_LIMIT_TRIGGERED_LEVEL
 #define GANTRY_LIMIT_TRIGGERED_LEVEL HIGH
 #endif

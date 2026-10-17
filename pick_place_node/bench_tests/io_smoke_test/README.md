@@ -82,7 +82,7 @@ README) to match reality instead of the current guess.
   the SIP ports) with `ERR_UNSAFE_PORT`, while `curl` and the status API on 5060
   worked fine — so the server looked healthy and the page still would not open.
   Avoid browser-restricted ports for any dashboard here.
-- **Polarity measured 2026-10-17 (limit switches X/Y/Z): LOW at rest, HIGH when pressed.** This is what NC to GND with a pull-up predicts, so the wiring doc's "LOW = triggered" was backwards (now corrected there). E-stop A0 is the opposite: HIGH when not pressed, LOW when pressed. The vacuum output D12 switches on and off from the GUI. Not yet done: wire-unplugged level for the limits and A0.
+- **Polarity measured 2026-10-17 (limit switches X/Y/Z): LOW at rest, HIGH when pressed.** This is what NC to GND with a pull-up predicts, so the wiring doc's "LOW = triggered" was backwards (now corrected there). E-stop A0 is the opposite: HIGH when not pressed, LOW when pressed. The vacuum output D12 switches on and off from the GUI. A0 unplugged also reads HIGH, the same as not pressed, so a broken e-stop wire is not detected (not fail-safe). Not yet done: wire-unplugged level for the limits.
 
 ## Before running — hardware prerequisites
 

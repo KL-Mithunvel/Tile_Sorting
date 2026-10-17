@@ -29,16 +29,17 @@
 #include "gantry_core.h"
 
 // ---- switches -----------------------------------------------------------------
-// Limit switches / e-stop are wired normally-closed to GND with INPUT_PULLUP: at
-// rest the pin reads LOW, and a pressed switch OR a broken wire opens the circuit
-// and reads HIGH. (The wiring doc says "LOW = triggered", which is backwards for
-// that wiring; io_smoke_test exists to settle it on the real switches - flip these
-// two if it shows the opposite.)
+// Measured on the bench with io_smoke_test, 2026-10-17:
+//  - Limit switches X/Y/Z (INPUT_PULLUP): LOW at rest, HIGH when pressed.
+//  - E-stop A0 (INPUT_PULLUP): HIGH when not pressed, LOW when pressed.
+// (The wiring doc's "LOW = triggered" was wrong for the limits, right for the e-stop.)
+// Unplugged-wire levels are not measured yet, so the limits' fail-safe on a broken
+// wire is still an assumption.
 #ifndef GANTRY_LIMIT_TRIGGERED_LEVEL
 #define GANTRY_LIMIT_TRIGGERED_LEVEL HIGH
 #endif
 #ifndef GANTRY_ESTOP_ASSERTED_LEVEL
-#define GANTRY_ESTOP_ASSERTED_LEVEL  HIGH
+#define GANTRY_ESTOP_ASSERTED_LEVEL  LOW
 #endif
 
 // Vacuum sensor on A3. UNVERIFIED sensor type: this treats it as an analog level
@@ -62,7 +63,7 @@ static const int PIN_DIR[3] = {5, 6, 7};
 static const int PIN_EN = 8;            // shared, ACTIVE-LOW
 static const int PIN_LIM[3] = {9, 10, 11};
 static const int PIN_VAC_EN = 12;       // MOSFET / relay gate
-static const int PIN_ESTOP = A0;        // NC loop to GND
+static const int PIN_ESTOP = A0;        // pressed = LOW (measured 2026-10-17)
 static const int PIN_VAC_SENSE = A3;
 
 // DIR polarity per axis: flip one if that axis runs the wrong way (the core's

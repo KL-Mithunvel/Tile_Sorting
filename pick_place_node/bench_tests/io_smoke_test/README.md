@@ -21,7 +21,9 @@ outside the node's App Bricks project" role.
   (`http://<board-ip>:5070/`) showing live E-stop/limit-switch readings and a
   vacuum on/off button.
 
-## Known discrepancy — read this before trusting "triggered"
+## Known discrepancy — RESOLVED for the limit switches 2026-10-17
+
+Measured: X/Y/Z read LOW at rest and HIGH when pressed, i.e. triggered = HIGH. The text below is the original reasoning; the e-stop (A0) reads HIGH idle / LOW pressed, so the doc was right for it.
 
 The wiring doc's pin table says `LOW = triggered / wire broken` for the
 E-stop and limit-switch inputs. For an NC switch wired signal→GND with
@@ -80,7 +82,7 @@ README) to match reality instead of the current guess.
   the SIP ports) with `ERR_UNSAFE_PORT`, while `curl` and the status API on 5060
   worked fine — so the server looked healthy and the page still would not open.
   Avoid browser-restricted ports for any dashboard here.
-- Not yet done: press each switch and record LOW/HIGH.
+- **Polarity measured 2026-10-17 (limit switches X/Y/Z): LOW at rest, HIGH when pressed.** This is what NC to GND with a pull-up predicts, so the wiring doc's "LOW = triggered" was backwards (now corrected there). E-stop A0 is the opposite: HIGH when not pressed, LOW when pressed. The vacuum output D12 switches on and off from the GUI. Not yet done: wire-unplugged level for the limits and A0.
 
 ## Before running — hardware prerequisites
 

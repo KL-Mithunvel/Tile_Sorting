@@ -95,12 +95,12 @@ GPIO** — same caveat as every other unverified App Lab item in this repo
 | D4 | `Z_STEP` | output | Z driver STEP | Shield-fixed. |
 | D7 | `Z_DIR` | output | Z driver DIR | Shield-fixed. |
 | D8 | `EN` | output | all 4 drivers ENABLE | Shield-fixed, **active-LOW**, shared. Drive HIGH to disable all (used on e-stop/alarm). |
-| D9 | `LIM_X` | input, `INPUT_PULLUP` | X limit switch (NC→GND) | Shield endstop header. LOW = triggered / wire broken. |
+| D9 | `LIM_X` | input, `INPUT_PULLUP` | X limit switch (NC→GND) | Shield endstop header. **Measured 2026-10-17 (X, Y, Z): LOW = at rest (switch closed), HIGH = pressed.** The old note "LOW = triggered" was backwards. Unplugged-wire level not yet measured (expected HIGH = fail-safe). |
 | D10 | `LIM_Y` | input, `INPUT_PULLUP` | Y limit switch (NC→GND) | Shield endstop header. |
 | D11 | `LIM_Z` | input, `INPUT_PULLUP` | Z limit switch (NC→GND) | Shield endstop header. |
 | D12 | `VAC_EN` | output → MOSFET/relay gate | Vacuum pump / valve driver | Shield "SpinEnable" pin, repurposed. Switches the pump through an external driver — the MCU does **not** drive the coil directly (`project_charter.md` §8.2). |
 | D13 | `STATUS_LED` | output | Onboard LED | On = running, off/blink = `ALARM`. Shield "SpinDir" pin — free here. |
-| A0 | `ESTOP_SENSE` | input, `INPUT_PULLUP` | E-stop loop (NC) | Shield "Abort" pin. LOW = loop open = e-stop tripped. Interrupt-capable. **This is only the MCU's awareness of the e-stop — the loop also physically breaks motor power (§5).** |
+| A0 | `ESTOP_SENSE` | input, `INPUT_PULLUP` | E-stop loop (NC) | Shield "Abort" pin. **Measured 2026-10-17: HIGH = not pressed, LOW = e-stop pressed** (the opposite sense to the limit switches, so the e-stop is not wired as a closed NC loop to GND; how it is wired, and the unplugged-wire level, are still to check). Interrupt-capable. **This is only the MCU's awareness of the e-stop — the loop also physically breaks motor power (§5).** |
 | A1 | *(reserved)* | — | — | Shield "Hold" pin — spare (candidate: cycle-start / pause button). |
 | A2 | *(reserved)* | — | — | Shield "Resume" pin — spare. |
 | A3 | `VAC_SENSE` | input (analog) | Vacuum pressure sensor / switch | Shield "CoolEn" pin, repurposed. Read before lifting; `VACUUM_TIMEOUT` fault if grip not confirmed. |

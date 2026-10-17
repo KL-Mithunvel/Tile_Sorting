@@ -149,6 +149,9 @@ the sketch, `Bridge.call("fn", args)` from Python (example on the board at
 ### 0.7 Homing, limits, soft limits  **[FW]**
 
 - [ ] Wire the 3 limit switches (**NC to GND**, internal pull-up). Confirm each reads correctly when pressed and when the wire is unplugged (both = "triggered", fail-safe).
+  - [ ] **Run the `io_smoke_test` polarity check (app is deployed, GUI works, 2026-10-16).** Per switch X=D9, Y=D10, Z=D11 and the e-stop A0, read the tile at rest, pressed, and wire unplugged. Predicted for NC to GND with pull-up: rest LOW, pressed HIGH, unplugged HIGH. As of 2026-10-16 all four read HIGH with nothing wired, which only means the NC contacts are not connected pin-to-GND yet. Launch: `tools/uno_q/push-io-test.bat` (board on hotspot `172.20.10.3`, GUI `http://<board-ip>:5070/`; see `bench_tests/io_smoke_test/README.md`).
+  - [ ] Then record the observed levels in: `pick_place_hardware_connections_plan.md` §3 (fix the "LOW = triggered" note), the `io_smoke_test` README "Known discrepancy" section, §0.1 here, `Final_Report.md` and `Logbook.md`.
+  - [ ] Vacuum button (`Bridge.call("vac")`, D12) not yet tested.
 - [ ] Implement the **homing cycle** per axis: fast seek (`HOME_SEEK`) toward `HOME_DIR_*` → hit switch → back off `HOME_BACKOFF` → slow re-touch (`HOME_TOUCH`) → set axis zero. Order: **Z up first**, then X, then Y.
   - [ ] Test `HOME Z`, `HOME X`, `HOME Y`, `HOME ALL`. Each ends with `done` and `HOMED=1`.
 - [ ] Implement **soft limits** from `SETENV`: any `MOVE` outside the envelope → `err OUT_OF_BOUNDS`, no motion. `MOVE` before homed → `err NOT_HOMED`.

@@ -49,7 +49,12 @@ printf '1 HOME ALL\n@tick 5000\n2 MOVE X100 F6000\n@tick 3000\n' | ./gantry_host
 5. **Direction.** `DIR_INVERT[]` in `sketch.ino`, per axis, after the first single-axis jog with the
    motor free.
 6. **Vacuum sensor** (`A3`): analog level vs a threshold, or a switch? `GANTRY_VAC_*`.
-7. **Encoders** (`GANTRY_ENCODERS_ENABLED`, off): TCA9548A channel map `{X:7, Y:5, Z:3, Y':6}` is the bench
+7. **Encoders** (`GANTRY_ENCODERS_ENABLED`, **on** since 2026-10-18, `GANTRY_ENCODER_MASK` 0x07 = X, Y, Z; one Y
+   motor, no clone). Detect-only feedback: `LOST_STEPS_<axis>` once homed, `ENCODER_<axis>` if a masked-in
+   encoder stops answering (now also while homing), and `HOME_NO_ENCODER_<axis>` if a switch seek commands
+   more than `home_stall_mm` (10) of travel and the encoder shows under half of it. An encoder that is not
+   fitted must be left out of the mask or it alarms. No correction is applied. Tests: 4 new in
+   `tests/test_gantry_firmware_conformance.py`. Original note: TCA9548A channel map `{X:7, Y:5, Z:3, Y':6}` is the bench
    wiring of 2026-10-18 (ToF 1 on ch0), on **`Wire2`** (A4/A5 are not `Wire` on the UNO Q); the read-back of the mux channel is there because four
    identical `0x36` parts answer whatever is selected. Tolerances (`SETTOL`) are guesses — measure the
    dynamic error at speed before trusting `LOST_STEPS`.

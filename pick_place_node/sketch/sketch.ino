@@ -61,9 +61,15 @@
 #define GANTRY_VAC_THRESHOLD     600   // 10-bit counts; PLACEHOLDER
 #endif
 
-// AS5600 encoders behind the TCA9548A: 0 = off (the default until they are wired).
+// AS5600 encoders behind the TCA9548A. On since 2026-10-18 (detect-only feedback: lost-step
+// alarms, and a homing seek must make its encoder move). GANTRY_ENCODER_MASK says which are
+// FITTED: bit0 X, bit1 Y, bit2 Z, bit3 A (the Y clone). 0x07 = one Y motor, no clone; an
+// encoder in the mask that does not answer is an ENCODER_<axis> alarm, so only list fitted ones.
 #ifndef GANTRY_ENCODERS_ENABLED
-#define GANTRY_ENCODERS_ENABLED 0
+#define GANTRY_ENCODERS_ENABLED 1
+#endif
+#ifndef GANTRY_ENCODER_MASK
+#define GANTRY_ENCODER_MASK 0x07
 #endif
 
 // ---- pins (CNC Shield V3.10, GRBL pinout) ----------------------------------------------
@@ -250,6 +256,7 @@ void setup() {
   cfg = gantry::Config::defaults();
   cfg.link_timeout_ms = 500;  // the Pi's runner PINGs every 200 ms during a motion
   cfg.encoders_enabled = GANTRY_ENCODERS_ENABLED != 0;
+  cfg.encoder_mask = GANTRY_ENCODER_MASK;
   static gantry::Gantry instance(hal, cfg);
   machine = &instance;
   machine->begin();

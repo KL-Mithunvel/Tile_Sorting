@@ -40,7 +40,7 @@ def exe(tmp_path_factory):
 class Machine:
     """One MCU (spec or firmware) behind the same tiny driver."""
 
-    def __init__(self, kind, exe, encoders=False, link_timeout=None, vac_timeout_ms=None):
+    def __init__(self, kind, exe, encoders=False, link_timeout=None, vac_timeout_ms=None, extra_args=()):
         self.kind = kind
         cfg = load_config()
         ws = cfg["workspace"]
@@ -55,6 +55,7 @@ class Machine:
                 args += ["--link-timeout", str(link_timeout)]
             if vac_timeout_ms:
                 args += ["--vac-timeout", str(vac_timeout_ms)]
+            args += list(extra_args)
             self.mcu = host_mcu.HostMcu(exe, *args)
         self.seq = 0
         self.events = []
@@ -529,6 +530,46 @@ def test_an_unreadable_encoder_is_a_fault_not_a_pass(fw):
     fw.mcu.control("@enc_fail X 1")
     fw.run(0.5)
     assert any(a.startswith("ENCODER_X") for a in fw.alarms())
+
+
+def test_homing_alarms_if_the_encoder_does_not_follow_the_motor(fw):
+    """Detect only: a seek that moves the motor commands but not the encoder must stop, not spin blind."""
+    fw.mcu.control("@enc_stuck X 1")
+    s = fw.send("HOME X")
+    fw.run(8.0)
+    assert "HOME_NO_ENCODER_X" in fw.alarms()
+    assert fw.outcome(s)["done"] is None
+
+
+def test_homing_alarms_on_an_unreadable_encoder_before_the_first_zero(fw):
+    """Homing runs before the encoders are zeroed; a dead one must still be a fault there."""
+    fw.mcu.control("@enc_fail Z 1")
+    fw.send("HOME ALL")
+    fw.run(8.0)
+    assert any(a.startswith("ENCODER_Z") for a in fw.alarms())
+
+
+def test_a_healthy_encoder_does_not_trip_the_homing_stall_check(fw):
+    fw.home()
+    assert not fw.alarms()
+
+
+def test_a_masked_off_encoder_is_never_polled_so_it_cannot_alarm(exe):
+    """One Y motor, no clone: with the A encoder masked off, its absence is neither an
+    ENCODER_A fault nor SKEW_Y / LOST_STEPS_Y, while the fitted ones stay watched."""
+    m = Machine("host", exe, encoders=True, extra_args=["--encoder-mask", "7"])
+    try:
+        m.mcu.control("@enc_fail A 1")
+        m.mcu.control("@enc_offset A 25")
+        m.home()
+        m.take()
+        m.run(1.0)
+        assert not m.alarms()
+        m.mcu.control("@enc_offset X 5")  # a fitted encoder is still watched
+        m.run(0.5)
+        assert "LOST_STEPS_X" in m.alarms()
+    finally:
+        m.close()
 
 
 def test_encoder_wrap_around_is_unwrapped(fw):

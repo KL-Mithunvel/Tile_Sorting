@@ -74,6 +74,8 @@ struct Config {
   uint32_t link_timeout_ms;      // 0 = watchdog off
   uint32_t hb_ms, pos_ms;
   bool encoders_enabled;
+  uint8_t encoder_mask;          // bit i = encoder i (X,Y,Z,A) is fitted and polled; the rest are ignored
+  float home_stall_mm;           // while seeking a switch: commanded travel before the encoder must show motion
   float lost_mm, skew_mm;        // SETTOL
   float enc_mm_per_count[ENCODERS];  // signed; mm of axis travel per AS5600 count
   uint8_t enc_fail_limit;        // consecutive unreadable polls before ENCODER_<axis>
@@ -97,6 +99,8 @@ struct Config {
     c.hb_ms = 500;
     c.pos_ms = 100;
     c.encoders_enabled = false;
+    c.encoder_mask = 0x0F;
+    c.home_stall_mm = 10.0f;
     c.lost_mm = 1.0f;
     c.skew_mm = 0.5f;
     for (int i = 0; i < ENCODERS; i++) c.enc_mm_per_count[i] = (i == ENC_Z ? 8.0f : 40.0f) / 4096.0f;
@@ -340,6 +344,8 @@ class Gantry {
   bool enc_ok_[ENCODERS];
   int enc_rr_;
   uint32_t next_enc_;
+  int32_t seek_enc_start_;  // enc_acc_ of the homing axis when its switch seek began
+  float seek_mm_start_;     // commanded position at that moment
   char* strtok_state_;
 
   // ---- plumbing ------------------------------------------------------------------------------------
@@ -374,6 +380,8 @@ class Gantry {
     enc_zeroed_ = false;
     enc_rr_ = 0;
     next_enc_ = 0;
+    seek_enc_start_ = 0;
+    seek_mm_start_ = 0.0f;
     strtok_state_ = 0;
   }
 
@@ -583,6 +591,8 @@ class Gantry {
   void beginHomeAxis() {
     int a = home_axis_list_[home_i_];
     home_phase_ = HP_SEEK;
+    seek_enc_start_ = enc_acc_[a];   // axis index == encoder index for X, Y, Z
+    seek_mm_start_ = posMm(a);
     float far_mm = (c_.axis[a].max_mm - c_.axis[a].min_mm) * 1.5f + 50.0f;
     int32_t span = (int32_t)(far_mm * c_.axis[a].steps_per_mm);
     startAxis(a, pos_steps_[a] + c_.axis[a].home_dir * span, c_.home_fast_mm_min, true);
@@ -825,16 +835,18 @@ class Gantry {
   }
 
   void serviceClosedLoop(uint32_t now) {
-    if (!c_.encoders_enabled || now < next_enc_) return;
+    if (!c_.encoders_enabled || (c_.encoder_mask & ((1u << ENCODERS) - 1)) == 0 || now < next_enc_) return;
     next_enc_ = now + 2;  // round-robin: one encoder per 2 ms, never a long blocking sweep
     int i = enc_rr_;
-    enc_rr_ = (enc_rr_ + 1) % ENCODERS;
+    for (int k = 0; k < ENCODERS && !((c_.encoder_mask >> i) & 1); k++) i = (i + 1) % ENCODERS;  // skip unfitted ones
+    enc_rr_ = (i + 1) % ENCODERS;
     uint16_t raw;
     if (!h_.readEncoder(i, &raw)) {
       enc_ok_[i] = false;
       if (enc_fail_[i] < 255) enc_fail_[i]++;
-      // An unreadable encoder is a fault, never a pass.
-      if (enc_zeroed_ && enc_fail_[i] >= c_.enc_fail_limit) {
+      // An unreadable encoder is a fault, never a pass - also while homing, before the
+      // encoders are zeroed (an unfitted/dead one must not let a blind seek run).
+      if ((enc_zeroed_ || fsm_ == FSM_HOMING) && enc_fail_[i] >= c_.enc_fail_limit) {
         char r[24] = "ENCODER_";
         char l[2] = {i == ENC_A ? 'A' : AXIS_LETTER[i], 0};
         catStr(r, sizeof r, l);
@@ -849,6 +861,20 @@ class Gantry {
     else if (d < -2048) d += 4096;
     enc_last_raw_[i] = raw;
     enc_acc_[i] += d;
+    // Detect only: a switch seek must make the encoder move. A motor that is not turning
+    // (no power, driver off, shaft slipping, wrong encoder wired) would otherwise spin
+    // blind until the travel span ran out.
+    if (fsm_ == FSM_HOMING && home_phase_ == HP_SEEK && i < AXES && i == home_axis_list_[home_i_]) {
+      float cmd = fabsf(posMm(i) - seek_mm_start_);
+      float got = fabsf((float)(enc_acc_[i] - seek_enc_start_) * c_.enc_mm_per_count[i]);
+      if (cmd > c_.home_stall_mm && got < 0.5f * cmd) {
+        char r[24] = "HOME_NO_ENCODER_";
+        char l[2] = {AXIS_LETTER[i], 0};
+        catStr(r, sizeof r, l);
+        raiseAlarm(r);
+        return;
+      }
+    }
     if (!enc_zeroed_) { enc_ok_[i] = false; return; }
     int refAxis = (i == ENC_A) ? AX_Y : i;
     float ref = c_.axis[refAxis].home_pos_mm;

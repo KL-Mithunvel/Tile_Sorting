@@ -25,12 +25,13 @@
 //    @limit <X|Y|Z> <0|1>    force a limit switch on (1) / back to physical (0)
 //    @enc_offset <X|Y|Z|A> <mm>   add a fixed error to that encoder (lost steps / skew)
 //    @enc_fail <X|Y|Z|A> <0|1>    that encoder stops answering
+//    @enc_stuck <X|Y|Z|A> <0|1>   that encoder keeps answering but stops following the motor
 //    @phys <X|Y|Z>           print the real (simulated) position of an axis
 //    @steps <X|Y|Z>          print how many STEP pulses that axis has received
 //    @dump                   print "@dump k=v ..." with what the simulation knows
 //
 //  Options: --fast (750 mm/s, 20 steps/mm, SETSPEED ignored, so whole pick-and-place
-//  cycles take simulated seconds, not minutes) --encoders --link-timeout <ms>
+//  cycles take simulated seconds, not minutes) --encoders --encoder-mask <bits> --link-timeout <ms>
 //  --vac-timeout <ms> --tick-us <n>
 //
 //  The simulated machine: each axis is a point whose real position follows the
@@ -64,6 +65,8 @@ struct SimHal : Hal {
   uint32_t vacHoldMs = 0;
   double encOff[ENCODERS] = {0, 0, 0, 0};
   bool encFail[ENCODERS] = {false, false, false, false};
+  bool encStuck[ENCODERS] = {false, false, false, false};  // answers, but no longer follows the motor
+  uint16_t encFrozen[ENCODERS] = {0, 0, 0, 0};
   bool enabled = false;
 
   void setEnable(bool on) override { enabled = on; }
@@ -96,7 +99,8 @@ struct SimHal : Hal {
     double mm = (i == ENC_A ? phys[AX_Y] : phys[i]) + encOff[i];
     long counts = lround(mm / cfg.enc_mm_per_count[i]);
     long r = ((counts % 4096) + 4096) % 4096;
-    *raw = (uint16_t)r;
+    if (!encStuck[i]) encFrozen[i] = (uint16_t)r;
+    *raw = encFrozen[i];
     return true;
   }
   void write(const char* line) override {
@@ -118,6 +122,7 @@ int main(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "--fast") fast = true;
     else if (a == "--encoders") hal.cfg.encoders_enabled = true;
+    else if (a == "--encoder-mask" && i + 1 < argc) hal.cfg.encoder_mask = (uint8_t)atoi(argv[++i]);
     else if (a == "--link-timeout" && i + 1 < argc) hal.cfg.link_timeout_ms = (uint32_t)atol(argv[++i]);
     else if (a == "--vac-timeout" && i + 1 < argc) hal.cfg.vac_timeout_ms = (uint32_t)atol(argv[++i]);
     else if (a == "--tick-us" && i + 1 < argc) hal.cfg.tick_us = (uint32_t)atol(argv[++i]);
@@ -170,6 +175,7 @@ int main(int argc, char** argv) {
       else if (!strcmp(cmd, "@limit") && got >= 3) { int a = axisIndex(a1); if (a >= 0 && a < AXES) hal.forceLimit[a] = atoi(a2) != 0; }
       else if (!strcmp(cmd, "@enc_offset") && got >= 3) { int a = axisIndex(a1); if (a >= 0) hal.encOff[a] = atof(a2); }
       else if (!strcmp(cmd, "@enc_fail") && got >= 3) { int a = axisIndex(a1); if (a >= 0) hal.encFail[a] = atoi(a2) != 0; }
+      else if (!strcmp(cmd, "@enc_stuck") && got >= 3) { int a = axisIndex(a1); if (a >= 0) hal.encStuck[a] = atoi(a2) != 0; }
       else if (!strcmp(cmd, "@phys") && got >= 2) { int a = axisIndex(a1); if (a >= 0 && a < AXES) printf("@phys %s %.4f\n", a1, hal.phys[a]); }
       else if (!strcmp(cmd, "@steps") && got >= 2) { int a = axisIndex(a1); if (a >= 0 && a < AXES) printf("@steps %s %ld\n", a1, hal.stepCount[a]); }
       else if (!strcmp(cmd, "@dump")) {

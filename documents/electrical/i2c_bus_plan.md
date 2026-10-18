@@ -28,15 +28,15 @@ The two controllers share **no wiring or hardware** (owner, 2026-10-10), so ther
 ### 1.1 Bus map
 
 ```text
-UNO Q  (3.3 V logic, header pins A4=SDA / A5=SCL)           NANO (5 V logic, A4=SDA / A5=SCL)
+UNO Q  (3.3 V logic, header pins A4=SDA / A5=SCL = `Wire2`)  NANO (5 V logic, A4=SDA / A5=SCL)
    │                                                              │
    └── TCA9548A  0x70                                             ├── VL53L1X  ToF 2  (striker station)   0x29 -> re-addressed
-         ├── ch0  AS5600  X motor        0x36                      └── VL53L1X  ToF 3  (belt end / fall)    0x29
-         ├── ch1  AS5600  Y motor        0x36                           ^ both default to 0x29: CLASH, see 3.1
-         ├── ch2  AS5600  Y' (clone)     0x36
-         ├── ch3  AS5600  Z motor        0x36
-         ├── ch4  VL53L1X ToF 1 (pickup) 0x29
-         └── ch5-7  spare
+         ├── ch7  AS5600  X motor        0x36   (bench, 2026-10-18)   └── VL53L1X  ToF 3  (belt end / fall)    0x29
+         ├── ch5  AS5600  Y motor        0x36   (bench)                   ^ both default to 0x29: CLASH, see 3.1
+         ├── ch6  AS5600  Y' (clone)     0x36   (bench)
+         ├── ch3  AS5600  Z motor        0x36   (bench)
+         ├── ch0  VL53L1X ToF 1 (pickup) 0x29   (bench, 2026-10-18: ToF moved to ch0)
+         └── ch1, ch2, ch4  spare
 ```
 
 ToF 1 and ToF 3 watch the **same physical spot** but feed different controllers — see
@@ -158,9 +158,11 @@ uncertainty for step timing).
 - ToF 1's address is the factory `0x29` on the UNO Q bus: fine, because the only other
   device types on that bus (mux `0x70`, AS5600 `0x36`) differ — and the AS5600s are behind
   the mux anyway. Put ToF 1 on its own mux channel to isolate it from the encoders.
-- The UNO Q has a Qwiic connector in addition to the header I2C. **VERIFY** whether the
-  Qwiic port is the same bus as A4/A5 or a second one, and which one the Arduino core's
-  default `Wire` maps to. A second bus would let the ToF live away from the encoders.
+- **Measured 2026-10-18:** on the UNO Q Zephyr core the header pins A4/A5 are **`Wire2`** (i2c3,
+  PC1/PC0), not `Wire`. `Wire` is i2c2 (D20/D21) and `Wire1` is i2c4 (by the board's bus
+  order; the Qwiic port is probably `Wire1`, not tested). Sketches that use plain `Wire` with
+  the mux on A4/A5 see an empty bus. Found with `bench_tests/i2c_scan_test/` (mux `0x70` on
+  `Wire2` only). A second bus is available if the ToF should live away from the encoders.
 - Library footprint on the **Nano (328P: 32 KB flash, 2 KB RAM)**: two VL53L1X driver
   instances plus Wire plus the striker FSM must fit. **VERIFY** by compiling before the
   design is frozen; a lighter VL53L1X library may be needed.
@@ -173,7 +175,7 @@ uncertainty for step timing).
 |---|---|---|---|
 | UNO Q | TCA9548A | `0x70` | RESET wired to a GPIO (pin TBD) |
 | UNO Q, mux ch0-3 | AS5600 x4 | `0x36` | one per mux channel |
-| UNO Q, mux ch4 | VL53L1X (ToF 1) | `0x29` | own channel |
+| UNO Q, mux ch0 | VL53L1X (ToF 1) | `0x29` | own channel (was ch4 in the first plan) |
 | Nano | VL53L1X (ToF 2) | `0x29` -> new address | re-addressed each boot (3.1) |
 | Nano | VL53L1X (ToF 3) | `0x29` | kept at default; its fail-safe is mandatory |
 
@@ -205,8 +207,13 @@ No two devices on one bus share an address once 3.1 is solved.
 - [ ] Choose the Nano ToF addressing method (3.1); XSHUT is the recommendation.
 - [ ] Confirm whether the motors have a rear shaft for the AS5600 magnet (3.3).
 - [ ] Confirm each module's board voltage / pull-ups for its bus (3.4).
-- [ ] Confirm the UNO Q's Qwiic vs A4/A5 bus and the core's I2C timeout behaviour.
+- [x] Confirm the UNO Q's A4/A5 bus: it is `Wire2` (2026-10-18). Still open: which bus the Qwiic
+      port is, and the core's I2C timeout behaviour (a hung read may block `loop()`).
 - [ ] Choose the UNO Q mux RESET pin; the shield pin table (A1 and A2 are free) is the candidate.
 - [ ] Compile-check the two-ToF Nano sketch for flash/RAM headroom.
 - [ ] Measure real encoder sweep time on the UNO Q at 100 and 400 kHz.
 - [ ] Run the section 5 tests and record results here.
+  - 2026-10-18, test 2 partly: mux `0x70` answers on `Wire2`; AS5600s found behind it on ch5
+    and ch6 (Y, Y-clone), angles read with 0 failed reads. Y-clone magnet reported too weak.
+    Hand-rotation and motor-driven tests not yet run. One unexplained board reboot at 08:50
+    while this bench was wired (suspected power).

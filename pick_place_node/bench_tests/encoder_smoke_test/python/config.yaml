@@ -1,0 +1,37 @@
+# encoder_smoke_test bench app configuration.
+# All tunables live here so the code never hardcodes values
+# (see .claude/CLAUDE.md Development Rule 2).
+
+bridge:
+  # The sketch is reached through the App Lab Bridge (arduino-router), same as
+  # io_smoke_test. Names must match the sketch's Bridge.provide() calls.
+  poll_interval_s: 0.15
+  call_timeout_s: 2
+
+encoder:
+  # Degrees the ENCODER should turn when the motor makes one full revolution.
+  # 360 if the AS5600 magnet is on the motor shaft; use the pulley/gear ratio
+  # if the encoder sits on the driven axis instead.
+  deg_per_motor_rev: 360
+  # +/- window for the out-leg angle and for the return-to-start error.
+  tolerance_deg: 5
+  # Display names for mux channels 0..3 (sketch channel order).
+  channel_names: ["X", "Y", "Y' (clone)", "Z"]
+
+# Index in this list == the axis number sent to the sketch (enc_move).
+# Y and its clone share one STEP/DIR pair, so one move checks two encoders.
+axes:
+  - name: "X"
+    channels: [0]
+  - name: "Y + A (clone)"
+    channels: [1, 2]
+  - name: "Z"
+    channels: [3]
+
+dashboard:
+  # 0.0.0.0 so the GUI is reachable from a browser on the same network.
+  host: "0.0.0.0"
+  # Distinct from camera (5000), twin (5050) and io_smoke_test (5070). Avoid
+  # browser-restricted ports (5060/5061 -> ERR_UNSAFE_PORT).
+  port: 5071
+  poll_interval_s: 0.2

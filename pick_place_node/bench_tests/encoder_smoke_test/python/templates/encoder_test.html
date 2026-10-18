@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pick &amp; Place Node — Encoder Smoke Test</title>
+<style>
+  html, body { margin: 0; }
+  body { font-family: system-ui, sans-serif; padding: 1.5rem; background: #111; color: #eee; }
+  h1 { font-size: 1.3rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1rem; margin: 1.5rem 0 0.6rem; color: #aaa; }
+  .notice { color: #f0c93d; font-size: 0.8rem; margin: 0 0 1rem; max-width: 50rem; line-height: 1.4; }
+  #banner { display: none; background: #5c2020; color: #fff; padding: 0.6rem 1rem; border-radius: 4px; margin: 0 0 1rem; font-size: 0.85rem; }
+  #banner.show { display: block; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; max-width: 56rem; }
+  .card { background: #1b1b1b; border: 1px solid #333; border-radius: 6px; padding: 0.8rem; text-align: center; }
+  .card.moving { border-color: #5cc8ff; }
+  .card .name { color: #aaa; font-size: 0.85rem; margin-bottom: 0.3rem; }
+  .card svg { width: 110px; height: 110px; }
+  .dial-ring { fill: #222; stroke: #444; stroke-width: 2; }
+  .needle { stroke: #f0c93d; stroke-width: 3; stroke-linecap: round; transition: transform 0.1s linear; transform-origin: 50px 50px; }
+  .big { font-family: ui-monospace, monospace; font-size: 1.15rem; font-weight: bold; }
+  .small { font-family: ui-monospace, monospace; font-size: 0.78rem; color: #aaa; margin-top: 0.2rem; }
+  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; margin-top: 0.4rem; }
+  .ok { background: #2f6b2f; color: #fff; }
+  .bad { background: #7a2a2a; color: #fff; }
+  .idle { background: #333; color: #aaa; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 0.6rem; max-width: 56rem; }
+  button { padding: 0.7rem 1rem; font-size: 0.95rem; border-radius: 6px; border: 1px solid #444; background: #222; color: #eee; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.stop { background: #8a2020; border-color: #b33; font-weight: bold; }
+  button.go { background: #234a6b; border-color: #3a7ab0; }
+
+  table { border-collapse: collapse; width: 100%; max-width: 56rem; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid #2a2a2a; }
+  th { color: #aaa; font-weight: normal; }
+  td.mono { font-family: ui-monospace, monospace; }
+  .pass { color: #6fdc6f; font-weight: bold; }
+  .fail { color: #ff7b7b; font-weight: bold; }
+  .scan { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #ccc; }
+</style>
+</head>
+<body>
+  <h1>Pick &amp; Place Node — Encoder Smoke Test</h1>
+  <p class="notice">
+    Each test turns one motor one revolution forward and one back, and compares the AS5600 reading
+    with the expected {{ cfg.expected_deg }}° (±{{ cfg.tolerance_deg }}°). <strong>Motors must be free to turn</strong>
+    (clamped on the bench, nothing on the gantry), 12&nbsp;V present. To check wiring without moving
+    anything, turn a shaft by hand and watch the right dial follow while the others stay still.
+    Written from documentation — not yet confirmed on the board.
+  </p>
+  <div id="banner"></div>
+
+  <div class="grid" id="cards"></div>
+
+  <h2>Tests</h2>
+  <div class="controls" id="controls"></div>
+
+  <h2>Results (newest first)</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Axis</th><th>Encoder</th><th>Out-leg</th><th>Net</th><th>Dir</th><th>Result</th></tr></thead>
+    <tbody id="results"><tr><td colspan="7" style="color:#666">No moves yet.</td></tr></tbody>
+  </table>
+
+  <h2>I2C scan</h2>
+  <div class="controls"><button id="btn-scan">Scan mux channels</button><button id="btn-reset">Reset mux</button><button id="btn-zero">Zero positions</button><button id="btn-clear">Clear results</button></div>
+  <p class="scan" id="scan">not scanned</p>
+
+<script>
+  const CFG = {{ cfg|tojson }};
+  const ST_MOVING = 1;
+  const MAG_LABEL = (s) => s < 0 ? 'read error' : !(s & 0x20) ? 'no magnet' : (s & 0x10) ? 'too weak' : (s & 0x08) ? 'too strong' : 'ok';
+  let last = null;          // last /api/status payload
+  let allRunning = false;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json()).catch(err => ({ ok: false, error: String(err) }));
+  function banner(msg) { const b = document.getElementById('banner'); b.textContent = msg || ''; b.classList.toggle('show', !!msg); }
+
+  // --- build the static parts -------------------------------------------------
+  const cards = document.getElementById('cards');
+  const cardEls = CFG.channels.map((name, i) => {
+    const card = el('div', 'card');
+    card.appendChild(el('div', 'name', `Encoder ${i} · ${name}`));
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.innerHTML = '<circle class="dial-ring" cx="50" cy="50" r="44"/><line class="needle" x1="50" y1="50" x2="50" y2="12"/><circle cx="50" cy="50" r="3" fill="#aaa"/>';
+    card.appendChild(svg);
+    const raw = el('div', 'big', '—'); const pos = el('div', 'small', ''); const err = el('div', 'small', ''); const badge = el('span', 'badge idle', 'no data');
+    card.append(raw, pos, err, badge);
+    cards.appendChild(card);
+    return { card, needle: svg.querySelector('.needle'), raw, pos, err, badge };
+  });
+
+  const controls = document.getElementById('controls');
+  const axisButtons = CFG.axes.map((ax, i) => {
+    const b = el('button', 'go', `Test ${ax.name}`);
+    b.onclick = () => runAxis(i, false);
+    controls.appendChild(b);
+    return b;
+  });
+  const btnAll = el('button', 'go', 'Test all'); btnAll.onclick = testAll; controls.appendChild(btnAll);
+  const btnStop = el('button', 'stop', 'STOP'); btnStop.onclick = stopAll; controls.appendChild(btnStop);
+
+  // --- actions ----------------------------------------------------------------
+  async function runAxis(i, quiet) {
+    const r = await post('/api/move', { axis: i });
+    if (!r.ok) { banner('Move refused: ' + r.error); return false; }
+    banner('');
+    // Wait for the sketch to report "moving" (the request is picked up in its next loop pass)...
+    let sawMoving = false;
+    for (let t = 0; t < 30 && !sawMoving; t++) { await sleep(150); sawMoving = last && last.status && last.status.state === ST_MOVING; }
+    if (!sawMoving) { banner('The sketch never started the move — is it running and connected?'); return false; }
+    // ...then for it to finish or be stopped.
+    while (last && last.status && last.status.state === ST_MOVING) { await sleep(200); }
+    return !!(last && last.status && last.status.state === 2);
+  }
+  async function testAll() {
+    allRunning = true;
+    for (let i = 0; i < CFG.axes.length && allRunning; i++) { if (!await runAxis(i, true)) break; await sleep(500); }
+    allRunning = false;
+  }
+  async function stopAll() { allRunning = false; await post('/api/stop'); }
+  document.getElementById('btn-scan').onclick = () => post('/api/scan');
+  document.getElementById('btn-reset').onclick = () => post('/api/mux_reset');
+  document.getElementById('btn-zero').onclick = () => post('/api/zero');
+  document.getElementById('btn-clear').onclick = () => post('/api/clear_history');
+
+  // --- render -----------------------------------------------------------------
+  function render(data) {
+    const s = data.status;
+    if (!data.connected || data.stale) banner(data.connected ? 'No fresh status from the board for over a second.' : 'Not connected to the board yet (Bridge).');
+    else if (!s.mux_ok && s.state !== ST_MOVING) banner('Mux not answering on I2C (0x70) — check wiring, then Reset mux / Scan.');
+    else if (document.getElementById('banner').textContent.startsWith('Not connected') || document.getElementById('banner').textContent.startsWith('No fresh') || document.getElementById('banner').textContent.startsWith('Mux')) banner('');
+
+    const moving = s && s.state === ST_MOVING;
+    const active = moving ? (CFG.axes[s.axis] || { channels: [] }).channels : [];
+    cardEls.forEach((c, i) => {
+      c.card.classList.toggle('moving', active.includes(i));
+      if (!s) return;
+      const raw = s.raw[i];
+      c.raw.textContent = raw < 0 ? 'read failed' : `${(raw * 360 / 4096).toFixed(1)}°`;
+      c.needle.style.transform = `rotate(${raw < 0 ? 0 : raw * 360 / 4096}deg)`;
+      c.pos.textContent = `position ${s.pos_deg[i].toFixed(1)}° · raw ${raw}`;
+      c.err.textContent = `failed reads: ${s.errors[i]}`;
+      const m = MAG_LABEL(s.mag[i]);
+      c.badge.textContent = 'magnet: ' + m;
+      c.badge.className = 'badge ' + (m === 'ok' ? 'ok' : 'bad');
+    });
+
+    const busy = !data.connected || moving;
+    axisButtons.forEach(b => b.disabled = busy);
+    btnAll.disabled = busy;
+    ['btn-scan', 'btn-reset', 'btn-zero'].forEach(id => document.getElementById(id).disabled = busy);
+
+    // scan
+    const scanEl = document.getElementById('scan');
+    if (s && s.scan) {
+      scanEl.textContent = s.scan.map((f, ch) => `ch${ch}: ` + (f < 0 ? 'select failed' : f === 0 ? '—' : [(f & 1) ? 'AS5600 0x36' : '', (f & 2) ? 'ToF 0x29' : ''].filter(Boolean).join(' + '))).join('   |   ');
+    } else scanEl.textContent = 'not scanned';
+
+    // results
+    const tb = document.getElementById('results');
+    tb.replaceChildren();
+    if (!data.history.length) { const tr = el('tr'); const td = el('td', '', 'No moves yet.'); td.colSpan = 7; td.style.color = '#666'; tr.appendChild(td); tb.appendChild(tr); return; }
+    data.history.forEach(r => {
+      r.channels.forEach((c, k) => {
+        const tr = el('tr');
+        tr.append(el('td', 'mono', k === 0 ? r.time : ''), el('td', '', k === 0 ? r.axis : ''), el('td', '', c.name),
+          el('td', 'mono', `${c.fwd_deg.toFixed(1)}°`), el('td', 'mono', `${c.net_deg.toFixed(1)}°`),
+          el('td', 'mono', c.direction > 0 ? '+' : c.direction < 0 ? '−' : '0'),
+          el('td', c.verdict === 'PASS' ? 'pass' : 'fail', c.verdict + (c.reason ? ' — ' + c.reason : '')));
+        tb.appendChild(tr);
+      });
+      if (r.stray.length) {
+        const tr = el('tr'); const td = el('td', 'fail', `FAIL — these encoders moved but were not driven: ${r.stray.join(', ')} (crossed mux channels?)`); td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr);
+      }
+    });
+  }
+
+  async function poll() {
+    try { last = await (await fetch('/api/status')).json(); render(last); }
+    catch (err) { banner('Lost contact with the dashboard server: ' + err); }
+  }
+  poll(); setInterval(poll, CFG.poll_ms);
+</script>
+</body>
+</html>

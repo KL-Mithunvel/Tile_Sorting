@@ -1,0 +1,12 @@
+# Reference copy only — NOT pushed to the board.
+#
+# The authoritative app.yaml is the one `arduino-app-cli app new encoder_smoke_test`
+# generates on the board. push-encoder-test.bat deliberately pushes only sketch/ and
+# python/, leaving the board's generated manifest alone. After creating the app,
+# edit the board's app.yaml so `ports` lists 5071 (the generated one has `ports: []`,
+# which leaves the GUI unreachable from the network).
+name: encoder_smoke_test
+icon: 🧭
+ports:
+  - 5071
+bricks: []

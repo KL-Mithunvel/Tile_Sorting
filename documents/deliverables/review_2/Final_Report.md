@@ -528,7 +528,7 @@ is not built.*
 | Arduino UNO Q | STM32U585 MCU (Zephyr) + Linux MPU | Pick-and-place | Lab board; bench apps only |
 | Arduino Nano | ATmega328P | Striker + belt PWM + watchdog | Planned |
 | Stepper gantry | CNC Shield V3.10, 4 × TMC2208, 4 × 42HM48-1684 (NEMA 17), Mean Well LRS-150-12 | Cartesian axes | In hand, not driven by final firmware |
-| Sensors (planned) | 3 × VL53L1X ToF, 4 × AS5600 encoders, TCA9548A I²C mux | Presence, closed-loop axes | Planned; address clash found (§5.6) |
+| Sensors (planned) | 3 × VL53L1X ToF, 4 × AS5600 encoders, TCA9548A I²C mux | Presence, closed-loop axes | Planned; address clash found (§5.6). Bench 2026-10-18: mux and two Y encoders read on the UNO Q (A4/A5 = `Wire2`); no motor test yet |
 | Network | D-Link DIR-825, isolated 192.168.1.0/24, no uplink | Control LAN | Plan written, partly set up |
 | Belt / vision rig | Lab conveyor with green/teal mat; room light | Test belt | Used for the five videos |
 | Tiles | 9 × 9 in terracotta; ~380 intact photos; 5 belt videos incl. real broken tiles | Data | Available |

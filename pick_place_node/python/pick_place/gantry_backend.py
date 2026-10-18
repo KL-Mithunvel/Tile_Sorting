@@ -8,6 +8,8 @@ The Flask dashboard and TwinWorker only ever talk to a `GantryBackend`
               LoopbackLink                (the whole real path, no hardware)
     "serial"  SerialGantryBackend over  the real UNO Q MCU over USB serial
               SerialGantryLink            (never run against the board yet)
+    "bridge"  SerialGantryBackend over  the UNO Q MCU through the App Lab Bridge
+              BridgeGantryLink            (g_cmd / g_poll; the path that fits the board)
 
 `create_job_driver()` picks the matching executor of queued tiles: the mock
 driver for "mock", the real `JobRunner` for the other two.
@@ -112,7 +114,13 @@ def create_backend(config: dict) -> GantryBackend:
         ser = (config.get("gantry") or {}).get("serial") or {}
         link = SerialGantryLink(ser.get("port", "/dev/ttyACM0"), int(ser.get("baud", 115200))).open()
         return SerialGantryBackend(GantrySession(link), jog_feed_mm_min=_jog_feed(config))
-    raise ValueError(f"unknown backend {kind!r} (expected 'mock', 'sim' or 'serial')")
+    if kind == "bridge":
+        from pick_place.bridge_link import BridgeGantryLink
+
+        br = (config.get("gantry") or {}).get("bridge") or {}
+        link = BridgeGantryLink(float(br.get("poll_interval_s", 0.02)), int(br.get("fail_limit", 5))).open()
+        return SerialGantryBackend(GantrySession(link), jog_feed_mm_min=_jog_feed(config))
+    raise ValueError(f"unknown backend {kind!r} (expected 'mock', 'sim', 'serial' or 'bridge')")
 
 
 def _jog_feed(config: dict) -> float:

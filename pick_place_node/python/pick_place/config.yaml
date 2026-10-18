@@ -8,7 +8,9 @@
 # — those are blocked on SMTW tile size/weight data (.claude/CLAUDE.md Known Technical
 # Debt). Re-derive once real gantry dimensions are known.
 
-# 'mock' = MockGantrySimulator; 'serial' (real gantry) is not implemented yet.
+# 'mock' = MockGantrySimulator; 'sim' = real protocol + job runner on a simulated MCU;
+# 'bridge' = the real gantry MCU through the App Lab Bridge (what runs on the UNO Q);
+# 'serial' = a pyserial port (not usable on the UNO Q: Serial there is the router monitor).
 backend: mock
 
 workspace:
@@ -67,6 +69,9 @@ gantry:
   tolerance_mm: {lost_steps: 1.0, skew: 0.5}
   link_timeout_ms: 500
   serial: {port: "/dev/ttyACM0", baud: 115200}   # re-verify on the board
+  # RouterBridge link (backend: bridge): the g_poll cadence and how many failed polls in a row
+  # mean the link is lost. Never run against the board.
+  bridge: {poll_interval_s: 0.02, fail_limit: 5}
   # This node on the station bus (pick_place.gantry_station / twin_prototype
   # --station-host). The Pi runs the broker (station_coordination.md).
   station:

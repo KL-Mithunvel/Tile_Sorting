@@ -56,9 +56,11 @@ printf '1 HOME ALL\n@tick 5000\n2 MOVE X100 F6000\n@tick 3000\n' | ./gantry_host
 8. **How Python reaches the MCU.** Decided and proven 2026-10-18: over the RouterBridge, not `Serial`
    (`Serial` is the router's monitor). The sketch provides `g_cmd(String line)` and `g_poll()` (returns
    queued reply lines, `
-`-separated); `bench_tests/gantry_fw_test/` checks it. **Still to write:** a
-   Bridge-backed link in `pick_place/` (the job runner / `gantry_station.py` still use `serial_link.py`),
-   polling `g_poll` fast enough for the firmware's 500 ms link watchdog.
+`-separated). The Python side is `pick_place/bridge_link.py`
+   (`BridgeGantryLink`, `backend: bridge` in `config.yaml` / `--backend bridge`; polls `g_poll` every 20 ms).
+   Checked on the board 2026-10-18 with `bench_tests/gantry_fw_test/` (PING / GETSTATE / GETPOS through a real
+   `GantrySession`, nothing moved). **Not yet run on the board:** the job runner and `gantry_station.py`
+   over this link, homing and any motion.
 
 ## Differences from `fake_mcu.py` worth knowing
 

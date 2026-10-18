@@ -126,7 +126,7 @@ def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(description="Gantry station service (UNO Q): finals in, outcomes out.")
     parser.add_argument("--host", default=None, help="the Pi's MQTT broker (default gantry.station.host)")
     parser.add_argument("--port", type=int, default=None)
-    parser.add_argument("--backend", choices=("mock", "sim", "serial"), default=None,
+    parser.add_argument("--backend", choices=("mock", "sim", "serial", "bridge"), default=None,
                         help="override config.yaml `backend`")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)

@@ -58,7 +58,7 @@ def main(argv=None) -> None:
                              "mock gantry then picks each tile from the conveyor end and places it on "
                              "the stack the Pi names.")
     parser.add_argument("--station-port", type=int, default=1883)
-    parser.add_argument("--backend", choices=("mock", "sim", "serial"), default=None,
+    parser.add_argument("--backend", choices=("mock", "sim", "serial", "bridge"), default=None,
                         help="mock = pure simulation (default, config.yaml `backend`); sim = the real line "
                              "protocol against a simulated MCU; serial = the real UNO Q MCU over "
                              "gantry.serial.port in config.yaml.")

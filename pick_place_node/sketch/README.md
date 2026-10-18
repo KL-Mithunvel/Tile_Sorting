@@ -5,7 +5,7 @@ Written 2026-10-12. **The logic is verified on a PC; the board glue is not.**
 | File | What it is | Verified |
 |---|---|---|
 | `gantry_core.h` | Everything that decides things: line-protocol parser, machine FSM, trapezoid step generator (integer maths, ISR-safe), homing (Z, then X, then Y), limit / e-stop handling, soft limits, vacuum confirm + timeout, closed-loop check, link watchdog. Portable C++11, header-only, no Arduino includes. | Compiled and run on a PC: `tests/test_gantry_firmware_conformance.py` (51 tests) |
-| `sketch.ino` | Board glue: pins, `k_timer` step ISR, serial line reader, vacuum sensor, AS5600 reads through the TCA9548A mux. | Syntax-checked against stub headers only. **Never compiled for the UNO Q, never run.** |
+| `sketch.ino` | Board glue: pins, `k_timer` step ISR, Bridge line transport (`g_cmd` / `g_poll`), vacuum sensor, AS5600 reads through the TCA9548A mux (`Wire2`). | **Compiled for the UNO Q and flashed 2026-10-18** (98 KB, 12% flash; 44 KB RAM). Over the Bridge it answers `PING`, `GETSTATE`, `GETPOS` and sends a heartbeat. **No motor, limit, e-stop, vacuum or encoder has been exercised from it.** |
 | `../firmware_host/` | `gantry_host.cpp` (the core behind a simulated machine, speaking the protocol on stdin / stdout) and `host_mcu.py` (drives it like a serial MCU). Test tooling, not shipped. | — |
 
 ## Run the checks
@@ -34,9 +34,10 @@ printf '1 HOME ALL\n@tick 5000\n2 MOVE X100 F6000\n@tick 3000\n' | ./gantry_host
 
 ## Before it touches a motor (open, in order)
 
-1. **Compile it for the board.** `arduino-app-cli app restart` builds it; expect errors the stub-header
-   check cannot find. Known risks: `<zephyr/irq.h>` / `irq_lock()` visibility from a sketch,
-   `k_timer` callback running `digitalWrite` + `delayMicroseconds`, `analogRead` resolution.
+1. ~~Compile it for the board.~~ Done 2026-10-18. It needed one change in the core: `llroundf` links to
+   `__aeabi_f2lz`, which this core does not provide, so `fmtMm` uses `lroundf` and clamps at +/-2e6 mm
+   (51 conformance tests re-run and pass). `irq_lock()` and `k_timer` compile. Still unverified at run time:
+   a `k_timer` callback running `digitalWrite` + `delayMicroseconds`, and `analogRead` resolution.
 2. **`stepper_lib_spike` (checklist 0.6)** — can a `k_timer` really deliver `tick_us = 50`? If the best
    period is coarser, raise `Config::tick_us`; the core caps speed at 0.8 step per tick on its own.
 3. **Limit / e-stop polarity.** `sketch.ino` assumes NC-to-GND + pull-up, i.e. *pressed or broken reads
@@ -48,13 +49,16 @@ printf '1 HOME ALL\n@tick 5000\n2 MOVE X100 F6000\n@tick 3000\n' | ./gantry_host
 5. **Direction.** `DIR_INVERT[]` in `sketch.ino`, per axis, after the first single-axis jog with the
    motor free.
 6. **Vacuum sensor** (`A3`): analog level vs a threshold, or a switch? `GANTRY_VAC_*`.
-7. **Encoders** (`GANTRY_ENCODERS_ENABLED`, off): TCA9548A channel map `{X:0, Y:1, Y':2, Z:3}` is from
-   `documents/electrical/i2c_bus_plan.md`; the read-back of the mux channel is there because four
+7. **Encoders** (`GANTRY_ENCODERS_ENABLED`, off): TCA9548A channel map `{X:7, Y:5, Z:3, Y':6}` is the bench
+   wiring of 2026-10-18 (ToF 1 on ch0), on **`Wire2`** (A4/A5 are not `Wire` on the UNO Q); the read-back of the mux channel is there because four
    identical `0x36` parts answer whatever is selected. Tolerances (`SETTOL`) are guesses — measure the
    dynamic error at speed before trusting `LOST_STEPS`.
-8. **How Python reaches the MCU.** The sketch speaks over `Serial`; whether that is what the App Lab
-   container sees as `gantry.serial.port` is unproven (`io_smoke_test/README.md`). The RouterBridge route
-   would need a `bridge_backend.py` and a `Bridge.provide()` wrapper around `Gantry::onLine`.
+8. **How Python reaches the MCU.** Decided and proven 2026-10-18: over the RouterBridge, not `Serial`
+   (`Serial` is the router's monitor). The sketch provides `g_cmd(String line)` and `g_poll()` (returns
+   queued reply lines, `
+`-separated); `bench_tests/gantry_fw_test/` checks it. **Still to write:** a
+   Bridge-backed link in `pick_place/` (the job runner / `gantry_station.py` still use `serial_link.py`),
+   polling `g_poll` fast enough for the firmware's 500 ms link watchdog.
 
 ## Differences from `fake_mcu.py` worth knowing
 

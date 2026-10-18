@@ -110,8 +110,9 @@ struct Config {
 
 // "500.0", "12.5", "0.125": up to 3 decimals, trailing zeros trimmed, one kept.
 inline int fmtMm(float v, char* out, int cap) {
-  if (!(v == v) || v > 1.0e9f || v < -1.0e9f) v = 0.0f;
-  long long milli = (long long)llroundf(v * 1000.0f);
+  // |v| <= 2e6 mm keeps v*1000 inside 32 bits: the board's libm has no float->int64 (llroundf).
+  if (!(v == v) || v > 2.0e6f || v < -2.0e6f) v = 0.0f;
+  long long milli = (long long)lroundf(v * 1000.0f);
   bool neg = milli < 0;
   if (neg) milli = -milli;
   long long ip = milli / 1000;

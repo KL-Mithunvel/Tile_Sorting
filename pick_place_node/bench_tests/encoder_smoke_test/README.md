@@ -31,6 +31,10 @@ problems: `documents/electrical/i2c_bus_plan.md`.
   running position, failed reads, magnet status), a Test button per axis plus Test all and
   STOP, a results table with PASS/FAIL and the reason, an I2C scan of the 8 mux channels,
   mux reset and zero-positions buttons.
+- **Manual jog** (added 2026-10-18): per axis, signed jogs of 1/16, 1 or 5 motor turns (200 / 3200 /
+  16000 steps). One int goes over the Bridge (`enc_jog`: `((axis*2 + dir) << 20) | steps`); the
+  drivers are on only while the jog runs. A finished jog ends in state "stopped" so the page builds
+  no pass/fail result for it. Not a substitute for homing: it ignores limit switches and soft limits.
 - Y and Y-clone share one STEP/DIR pair (clone jumpers), so the "Y + A" test turns both
   and checks encoders 1 and 2 together.
 - Pass/fail is decided in Python (`enc_protocol.py`, tolerance in `python/config.yaml`):

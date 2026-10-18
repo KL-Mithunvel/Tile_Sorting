@@ -33,6 +33,7 @@
 //  Bridge functions (Python side: Bridge.call(name, ...)):
 //    enc_status()   -> one "ENC ..." status line (see statusLine())
 //    enc_move(axis) -> request a 1-rev out-and-back move (0=X, 1=Y+A, 2=Z)
+//    enc_jog(code)  -> manual jog: code = ((axis*2 + dir) << 20) | steps (axis 0=X 1=Y+A 2=Z)
 //    enc_stop()     -> stop a move, drivers off
 //    enc_scan()     -> request an I2C scan of the 8 mux channels
 //    enc_mux_reset()-> pulse the mux RESET pin
@@ -82,7 +83,7 @@ const unsigned long SETTLE_MS = 500;   // let the rotor stop before reading a le
 const unsigned long IDLE_POLL_MS = 20;
 const unsigned long SERIAL_STATUS_MS = 500;
 
-enum Phase { PH_IDLE, PH_FWD, PH_SETTLE1, PH_REV, PH_SETTLE2 };
+enum Phase { PH_IDLE, PH_FWD, PH_SETTLE1, PH_REV, PH_SETTLE2, PH_JOG };
 enum MoveState { ST_IDLE = 0, ST_MOVING = 1, ST_DONE = 2, ST_STOPPED = 3 };
 
 // --- State -------------------------------------------------------------------
@@ -109,6 +110,7 @@ int scanResult[8] = { -2, -2, -2, -2, -2, -2, -2, -2 };  // bit0 AS5600, bit1 0x
 
 // Requests set from Bridge callbacks, served from loop().
 volatile int pendingAxis = -1;
+volatile long pendingJog = 0;   // 0 = none; else ((axis*2 + dir) << 20) | steps, dir 1 = HIGH on the DIR pin
 volatile bool pendingStop = false;
 volatile bool pendingScan = false;
 volatile bool pendingMuxReset = false;
@@ -223,6 +225,25 @@ void startMove(int axis) {
   phase = PH_FWD;
 }
 
+// Manual jog: `code` packs axis, direction and step count into one int (the Bridge call takes a
+// single int). Drivers are on only for the jog and off again when it ends or is stopped.
+void startJog(long code) {
+  if (phase != PH_IDLE) return;
+  long steps = code & 0xFFFFF;
+  int axis = (int)((code >> 20) >> 1);
+  int dir = (int)((code >> 20) & 1);
+  if (axis < 0 || axis >= NUM_AXES || steps < 1) return;
+  sampleAll();
+  for (uint8_t ch = 0; ch < NUM_ENC; ch++) { startCounts[ch] = posCounts[ch]; moveFails[ch] = 0; }
+  activeAxis = axis;
+  digitalWrite(DIR_PIN[axis], dir ? HIGH : LOW);
+  driversEnable(true);
+  delay(DIR_SETTLE_MS);
+  stepsLeft = steps;
+  moveState = ST_MOVING;
+  phase = PH_JOG;
+}
+
 void abortMove() {
   driversEnable(false);
   phase = PH_IDLE;
@@ -231,6 +252,18 @@ void abortMove() {
 
 void runMove() {
   switch (phase) {
+    case PH_JOG: {
+      int n = (stepsLeft < CHUNK_STEPS) ? (int)stepsLeft : CHUNK_STEPS;
+      pulseSteps(STEP_PIN[activeAxis], n);
+      stepsLeft -= n;
+      sampleAll();
+      if (stepsLeft <= 0) {
+        driversEnable(false);
+        phase = PH_IDLE;
+        moveState = ST_STOPPED;  // a jog is not a test result: the page builds none for "stopped"
+      }
+      break;
+    }
     case PH_FWD:
     case PH_REV: {
       int n = (stepsLeft < CHUNK_STEPS) ? (int)stepsLeft : CHUNK_STEPS;
@@ -277,6 +310,11 @@ void serviceRequests() {
   if (pendingZero) {
     pendingZero = false;
     for (uint8_t ch = 0; ch < NUM_ENC; ch++) posCounts[ch] = 0;
+  }
+  if (pendingJog != 0) {
+    long code = pendingJog;
+    pendingJog = 0;
+    startJog(code);
   }
   if (pendingAxis >= 0) {
     int axis = pendingAxis;
@@ -329,6 +367,7 @@ String statusLine() {
 // --- Bridge callbacks (set flags only; no I2C here) -----------------------------------
 String bridgeStatus() { return statusLine(); }
 void bridgeMove(int axis) { pendingAxis = axis; }
+void bridgeJog(int code) { pendingJog = code; }
 void bridgeStop() { pendingStop = true; }
 void bridgeScan() { pendingScan = true; }
 void bridgeMuxReset() { pendingMuxReset = true; }
@@ -351,6 +390,7 @@ void setup() {
   Bridge.begin();
   Bridge.provide("enc_status", bridgeStatus);
   Bridge.provide("enc_move", bridgeMove);
+  Bridge.provide("enc_jog", bridgeJog);
   Bridge.provide("enc_stop", bridgeStop);
   Bridge.provide("enc_scan", bridgeScan);
   Bridge.provide("enc_mux_reset", bridgeMuxReset);

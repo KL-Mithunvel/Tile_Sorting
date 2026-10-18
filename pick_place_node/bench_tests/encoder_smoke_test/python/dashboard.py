@@ -45,6 +45,15 @@ def create_app(state: SharedState, backend: BridgeEncBackend, config: dict) -> F
             return jsonify({"ok": False, "error": "axis must be an integer"}), 400
         return command(backend.move, axis)
 
+    @app.route("/api/jog", methods=["POST"])
+    def api_jog():
+        payload = request.get_json(silent=True) or {}
+        try:
+            axis, steps = int(payload.get("axis", -1)), int(payload.get("steps", 0))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "axis and steps must be integers"}), 400
+        return command(backend.jog, axis, steps)
+
     @app.route("/api/stop", methods=["POST"])
     def api_stop():
         return command(backend.halt)

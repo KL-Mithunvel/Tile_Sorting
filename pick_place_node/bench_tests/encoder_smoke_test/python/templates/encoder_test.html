@@ -58,6 +58,10 @@
   <h2>Tests</h2>
   <div class="controls" id="controls"></div>
 
+  <h2>Manual jog</h2>
+  <p class="scan">Drivers are on only while a jog runs. Steps are at 1/16 microstepping: 3200 = one motor turn. + / − are the DIR pin high / low.</p>
+  <div id="jog"></div>
+
   <h2>Results (newest first)</h2>
   <table>
     <thead><tr><th>Time</th><th>Axis</th><th>Encoder</th><th>Out-leg</th><th>Net</th><th>Dir</th><th>Result</th></tr></thead>
@@ -102,6 +106,17 @@
     b.onclick = () => runAxis(i, false);
     controls.appendChild(b);
     return b;
+  });
+  const jogBox = document.getElementById('jog');
+  const jogButtons = [];
+  CFG.axes.forEach((ax, i) => {
+    const row = el('div', 'controls'); row.appendChild(el('span', 'name', ax.name + ' '));
+    [[-16000, '−5 turns'], [-3200, '−1 turn'], [-200, '−1/16'], [200, '+1/16'], [3200, '+1 turn'], [16000, '+5 turns']].forEach(([steps, label]) => {
+      const b = el('button', 'go', label);
+      b.onclick = async () => { const r = await post('/api/jog', { axis: i, steps }); banner(r.ok ? '' : 'Jog refused: ' + r.error); };
+      row.appendChild(b); jogButtons.push(b);
+    });
+    jogBox.appendChild(row);
   });
   const btnAll = el('button', 'go', 'Test all'); btnAll.onclick = testAll; controls.appendChild(btnAll);
   const btnStop = el('button', 'stop', 'STOP'); btnStop.onclick = stopAll; controls.appendChild(btnStop);
@@ -154,6 +169,7 @@
 
     const busy = !data.connected || moving;
     axisButtons.forEach(b => b.disabled = busy);
+    jogButtons.forEach(b => b.disabled = busy);
     btnAll.disabled = busy;
     ['btn-scan', 'btn-reset', 'btn-zero'].forEach(id => document.getElementById(id).disabled = busy);
 

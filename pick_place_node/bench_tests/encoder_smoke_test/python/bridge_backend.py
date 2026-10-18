@@ -121,6 +121,16 @@ class BridgeEncBackend:
             raise ValueError(f"axis must be 0..{self._num_axes - 1}")
         self._call("enc_move", axis)
 
+    def jog(self, axis: int, steps: int) -> None:
+        """Manual jog: `steps` is signed (negative = the other direction). One int goes over the
+        Bridge: ((axis*2 + dir) << 20) | |steps|."""
+        if not 0 <= axis < self._num_axes:
+            raise ValueError(f"axis must be 0..{self._num_axes - 1}")
+        n = abs(int(steps))
+        if not 1 <= n <= 0xFFFFF:
+            raise ValueError("steps must be between 1 and 1048575 (either sign)")
+        self._call("enc_jog", ((axis * 2 + (1 if steps > 0 else 0)) << 20) | n)
+
     def halt(self) -> None:
         self._call("enc_stop")
 

@@ -63,13 +63,14 @@
 
 // AS5600 encoders behind the TCA9548A. On since 2026-10-18 (detect-only feedback: lost-step
 // alarms, and a homing seek must make its encoder move). GANTRY_ENCODER_MASK says which are
-// FITTED: bit0 X, bit1 Y, bit2 Z, bit3 A (the Y clone). 0x07 = one Y motor, no clone; an
+// FITTED: bit0 X, bit1 Y, bit2 Z, bit3 A (the Y clone). 0x06 = Y and Z only (one Y motor, no clone,
+// X encoder not fitted); an
 // encoder in the mask that does not answer is an ENCODER_<axis> alarm, so only list fitted ones.
 #ifndef GANTRY_ENCODERS_ENABLED
 #define GANTRY_ENCODERS_ENABLED 1
 #endif
 #ifndef GANTRY_ENCODER_MASK
-#define GANTRY_ENCODER_MASK 0x07
+#define GANTRY_ENCODER_MASK 0x06   // Y, Z. X reads nothing on mux ch7 (scan 2026-10-18): not fitted
 #endif
 
 // ---- pins (CNC Shield V3.10, GRBL pinout) ----------------------------------------------

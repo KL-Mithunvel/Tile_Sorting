@@ -119,7 +119,9 @@ If the session stops uncleanly (power cut, crash) the next start-up seals the fo
   `"video": null`.
 - **Trigger mode and clip pairing (2026-10-19).** `trigger.mode` now defaults to `hardware` (a Nano strike event starts every live-analysis capture); each clip is paired with its own strike event by a token, not by arrival order, and a tap the detector had to refuse is counted instead of mislabelling the next clip. This affects the live grading clips only; the session's continuous audio and its cut clips never depended on it. See `striker_sequence.md`.
 - **Microphone gain.** The tap mic (`USB PnP Audio Device`, ALSA card `Device`) was found at maximum gain, clipping, so the first sessions' audio is unusable. It is now **150/496** on the Pi (saved with `alsactl store`; idle rms about 0.008). Re-check with a real strike: peak should sit around 0.1-0.8, never at 1.0 (`amixer -c Device cset numid=3 <value>`, then `sudo alsactl store`). Do not change the gain in the middle of a set of recordings, and note it in the session note if you do.
-- **Auto-arm and the camera trigger** are laptop-tested only; the camera has not yet been seen raising the striker on the rig.
+- **The gain does not survive a reboot (found 2026-10-19).** After a power cycle the USB mic came back at 496/496; `alsactl store` is not restored for this USB card. A systemd drop-in on the Pi, `tile-acoustic.service.d/gain.conf` (reference copy: `acoustic_node/deploy/tile-acoustic-gain.conf`), now sets 150 before every start. If the card name or `numid` changes, the line fails silently (`ExecStartPre=-`): check `amixer -c Device cget numid=3`.
+- **The camera index moves after a reboot (found 2026-10-19).** The Logitech C930e was `device_index: 1` before the power cycle and `0` after (the Pi's other video nodes changed), so `tile-camera` reported "could not open device index 1". The Pi's camera config is now `0`. If the camera is not found, `ls /dev/video*`, `v4l2-ctl --list-devices`, or pick the camera on the camera dashboard (:5000).
+- **Auto-arm and the camera trigger** worked on the rig in the 2026-10-19 tile run (below), but only 22 tiles were seen; the transit time and coil temperature are still unmeasured.
   Strikes caused by a tile in AUTO are tile data; the `rest` lowerings and any `safety` strikes are not, and should be dropped
   when building a training set.
 - **Prototype striker numbers are placeholders:** `retract_hold_ms` (1500), `retract_max_ms` (8000), `strike_ms` (300). How long the
@@ -129,3 +131,22 @@ If the session stops uncleanly (power cut, crash) the next start-up seals the fo
   manual command with `ERR INHIBITED`, which shows as a `nano_error` alarm.
 - The sound analysis (`valid`, SNR, peak frequency) still runs on each strike's live clip but its thresholds are unvalidated
   and `station.reference` is null, so no sound grade exists. This feature records data; it grades nothing.
+
+## Datasets recorded (2026-10-19, first real runs on the Pi)
+
+All on the Pi with the USB PnP mic at gain 150, 48 kHz mono; pulled to the laptop with `master.session_pull` into
+`data/master/sessions/` (hashes verified; `data/` is not in git).
+
+| Session | What | Result |
+|---|---|---|
+| `2026-10-19_18-20-14` | Room noise, 90 s, striker resting down, coil off, `ambient` | no dropped blocks; one strike event was counted inside it and not investigated |
+| `2026-10-19_18-26-52` | Striker alone, coil powered, 25 manual retract + release cycles, 6 s apart, `no_tile` | 25 retract + 25 strike clips; strike peaks 0.28-0.96; **every retract peaks at 1.000 (clipped)** |
+| `2026-10-19_18-26-22` | One powered cycle (the check before the set) | valid |
+| `2026-10-19_18-44-39` | Tiles through the whole workflow (AUTO, auto-arm, camera raises the striker, ToF strike), 298 s | 22 tile strikes each paired with its camera tile id, 22 retracts, 6 `rest` lowerings (not tile data), 7 retracts with no strike of their own; strike peaks median 0.70, 3 of 22 clipped, 28 of 29 retracts clipped; video + audio complete, no dropped blocks |
+
+Earlier striker sessions made while the coil was unpowered recorded silence and were deleted (Pi and laptop).
+
+**Tile notes not added yet.** The session was started with only `condition: tile`. `data/master/tile_notes_2026-10-19_18-44-39.csv`
+lists the 22 tile strikes in time order (strike event, tile id, time) with empty `tile_ref`, `defect`, `tier`, `note` columns to be
+filled from the operator's own inspection, then written onto the events (relabel) and `clips.csv` re-cut. The order in the CSV is the
+camera's order, which differs from the belt order if the camera missed a tile.

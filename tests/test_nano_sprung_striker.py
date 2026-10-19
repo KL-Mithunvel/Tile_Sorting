@@ -312,7 +312,15 @@ def test_bridge_flags_a_blind_strike_as_unknown_presence(nano):
 
 @pytest.fixture
 def proto(exe):
-    n = host_nano.HostNano(exe, "--prototype")          # nano::prototypeConfig(): what the board glue runs
+    # prototypeConfig() with request_only back on: the rest-DOWN behaviour the tests below describe (kept as an option)
+    n = host_nano.HostNano(exe, "--prototype", "--request-only")
+    yield n
+    n.close()
+
+
+@pytest.fixture
+def up(exe):
+    n = host_nano.HostNano(exe, "--prototype")          # nano::prototypeConfig(): what the board glue runs (always up)
     yield n
     n.close()
 
@@ -724,3 +732,55 @@ def test_a_tiles_whole_life_arms_then_raises_then_strikes_then_lowers_then_disar
     assert taps == ["tof", "rest"]                                        # a quiet lowering to rest, not a second tile strike
     assert proto.pins["strike"] == 0 and proto.pins["arm"] == 0           # disarmed AND down: the coil is cool
     assert auto.commands == {"arm": 1, "disarm": 1}
+
+
+# ---- the shipped prototype: stays UP all the time, and only a steady tile releases it (owner, 2026-10-19) ----
+
+
+def test_shipped_prototype_goes_up_by_itself_and_stays_up(up):
+    enable(up)
+    out = keep_alive(up, 20000)
+    assert up.pins["arm"] == 1 and not [t for t in of(out, "tap") if t["src"] == "rest"]
+    assert up.rx(encode_up()) is not None                              # the Pi's UP is harmless, not an error
+    out = keep_alive(up, 20000)
+    assert up.pins["arm"] == 1 and not [e for e in of(out, "err") if e["code"] == "UNSUPPORTED"]
+
+
+def test_shipped_prototype_strikes_a_steady_tile_after_two_seconds_then_lifts_again(up):
+    enable(up)
+    keep_alive(up, 1000, step=25)
+    t0 = at_ms(up)
+    up.tof(1, 91)
+    out = keep_alive(up, 4000, step=25)
+    (tap,) = of(out, "tap")
+    assert tap["src"] == "tof" and 2000 <= tap["uptime_ms"] - t0 <= 2400
+    assert up.pins["arm"] == 1                                         # lifted again after the strike
+
+
+def test_a_wobbling_reading_never_counts_as_a_tile(up):
+    enable(up)
+    keep_alive(up, 1000, step=25)
+    out = []
+    for _ in range(200):                                               # 10 s of readings that are in range but unsteady
+        for mm in (70, 95):
+            up.tof(1, mm)
+            out += keep_alive(up, 50, step=25)
+    assert not of(out, "tap")
+
+
+def test_a_reading_closer_than_any_tile_is_not_a_tile(up):
+    enable(up)
+    keep_alive(up, 1000, step=25)
+    up.tof(1, 20)                                                      # a hand on the sensor
+    assert not of(keep_alive(up, 6000, step=25), "tap")
+
+
+def test_a_short_blip_is_ignored_but_a_steady_tile_still_counts(up):
+    enable(up)
+    keep_alive(up, 1000, step=25)
+    up.tof(1, 91)
+    assert not of(keep_alive(up, 150, step=25), "tap")                # shorter than the 250 ms debounce
+    up.tof(1, 150)
+    assert not of(keep_alive(up, 5000, step=25), "tap")
+    up.tof(1, 91)
+    assert of(keep_alive(up, 3000, step=25), "tap")

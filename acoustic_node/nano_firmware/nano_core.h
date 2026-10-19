@@ -99,6 +99,13 @@ struct Config {
   bool     request_only;
   uint16_t up_timeout_ms;      // an UP with no tile reaching the ToF this long is forgotten (then it rests down)
   uint16_t rest_delay_ms;      // raised, nothing under it, nothing requested, this long -> lower it to rest
+  // ---- stricter "a tile is really there" test for the striker ToF only (owner, 2026-10-19: it struck with no tile).
+  // 0 = off. A reading counts only inside [tof_min_mm, tof_trigger_mm], and the readings of one unbroken run must
+  // stay within tof_steady_mm of each other, else the run restarts. A tile reads rock steady (91 mm); a hand, a belt
+  // seam or sensor noise does not. Together with tof_debounce and release_delay_ms the tile must be seen steady for the
+  // whole time before the striker is released.
+  uint16_t tof_min_mm;
+  uint16_t tof_steady_mm;
 };
 
 enum { STRIKER_DUAL = 0, STRIKER_SPRUNG = 1 };
@@ -135,6 +142,8 @@ inline Config defaultConfig() {
   c.request_only = false;
   c.up_timeout_ms = 30000;
   c.rest_delay_ms = 3000;
+  c.tof_min_mm = 0;
+  c.tof_steady_mm = 0;
   return c;
 }
 
@@ -152,7 +161,11 @@ inline Config prototypeConfig() {
   c.settle_ms = 1500;           // (not used while parked)
   c.retract_hold_ms = 1500;     // (not used while parked)
   c.park_retracted = true;
-  c.request_only = true;        // rests DOWN; the camera's detection (UP) raises it
+  c.request_only = false;       // owner 2026-10-19: a fan now cools the coil and the CNC shield, so it stays UP all the time
+                                // (request_only = true, rest DOWN until the camera asks, is kept and tested: nano_host --request-only)
+  c.tof_debounce = 10;          // 250 ms of unbroken "tile" readings before it counts (was 5 = 125 ms)
+  c.tof_min_mm = 40;            // closer than any tile (91 mm): a hand or an object on the sensor, not a tile
+  c.tof_steady_mm = 10;         // a tile reads steady; readings of one run must stay within 10 mm of each other
   c.release_delay_ms = 2000;
   c.cooldown_ms = 1200;         // strike_ms 300 + this = it lifts again 1.5 s after the strike, after the ring has died
   c.hb_ms = 250;                // the GUI shows the phase and a countdown: twice as often as the 500 ms default
@@ -256,6 +269,7 @@ class Core {
     uint8_t fails = 0, streak = 0;
     uint8_t reads = 0;        // consecutive good readings (capped): "present" means nothing until it reaches the debounce
     uint16_t mm = 0xFFFF;
+    uint16_t lo = 0, hi = 0;  // spread of the current run of "near" readings (striker sensor's steadiness test)
     uint32_t next = 0;
     uint32_t last_err = 0;
     bool err_sent = false;
@@ -447,9 +461,11 @@ class Core {
       }
     } else if (vlen == 2 && memcmp(p, "UP", 2) == 0 && alen == 0) {
       markValid();
-      if (!sprung() || !c_.request_only) { sendErr("UNSUPPORTED", "UP needs the request-only striker"); return; }
-      up_wanted_ = true;
-      up_since_ = h_.nowMs();
+      if (!sprung() || !c_.park_retracted) { sendErr("UNSUPPORTED", "UP needs the parking striker"); return; }
+      if (c_.request_only) {   // always-up build: it is already up, so the Pi's UP is accepted and has nothing to do
+        up_wanted_ = true;
+        up_since_ = h_.nowMs();
+      }
     } else if (vlen == 4 && memcmp(p, "HOLD", 4) == 0 && parseUint(arg, alen, 100, &v)) {
       markValid();
       if (!sprung()) { sendErr("UNSUPPORTED", "HOLD needs the sprung striker"); return; }
@@ -504,8 +520,19 @@ class Core {
       t.ok = true;
       t.err_sent = false;
       t.mm = mm;
-      if (mm <= near_mm) {
-        if (t.streak < 255) t.streak++;
+      bool strict = (sensor == TOF_STRIKER);
+      if (mm <= near_mm && !(strict && mm < c_.tof_min_mm)) {
+        if (t.streak == 0) { t.lo = t.hi = mm; }
+        else {
+          if (mm < t.lo) t.lo = mm;
+          if (mm > t.hi) t.hi = mm;
+        }
+        if (strict && c_.tof_steady_mm && (uint16_t)(t.hi - t.lo) > c_.tof_steady_mm) {
+          t.streak = 1;           // not steady: a tile does not wobble. Start the run again from this reading.
+          t.lo = t.hi = mm;
+        } else if (t.streak < 255) {
+          t.streak++;
+        }
       } else {
         t.streak = 0;
       }

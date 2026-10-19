@@ -71,6 +71,7 @@ int main(int argc, char** argv) {
     if (a == "--no-tof-end") cfg.require_tof_end = false;
     else if (a == "--watchdog" && i + 1 < argc) cfg.watchdog_ms = (uint16_t)std::atol(argv[++i]);
     else if (a == "--prototype") cfg = nano::prototypeConfig();   // exactly what the board glue runs
+    else if (a == "--request-only") cfg.request_only = true;      // after --prototype: rest DOWN until the camera asks
     else if (a == "--no-tof3") cfg.tof_end_fitted = false;
     else if (a == "--sprung") cfg.striker_type = nano::STRIKER_SPRUNG;   // the single sprung striker (prototype)
     else if (a == "--retract-hold" && i + 1 < argc) cfg.retract_hold_ms = (uint16_t)std::atol(argv[++i]);

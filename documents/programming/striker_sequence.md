@@ -195,3 +195,15 @@ Flashing from the Pi (no internet there) is in `acoustic_node/nano_firmware/READ
 6. The **microphone gain** was at its maximum (496 of 496, +31 dB) and clipped; lowered to **150** on 2026-10-19 (idle level 0.24 -> 0.008 rms). The 2026-10-19 sessions recorded before that are clipped and not usable for acoustics. **Not yet checked: a real strike at the new gain** (it should peak around 0.1-0.8 and not clip; raise or lower with `amixer -c Device cset numid=3 <0-496>`, then `sudo alsactl store`).
 7. The ToF library calls have met the real module only briefly; a sensor that hangs after a brown-out is recovered today only by a reset.
 8. The AVR build's RAM headroom is ~660 bytes.
+
+## Update 2026-10-19 (later): stays UP all the time, stricter tile test
+
+- **Always up.** A fan now cools the coil and the CNC shield, so `nano::prototypeConfig()` has `request_only = false`: in AUTO the
+  striker goes up as soon as the ToF answers and stays up (hold duty `HOLD n`, default 30 %). The Pi's `UP` is still sent and is
+  accepted but does nothing. The rest-DOWN behaviour is kept and tested (`nano_host --prototype --request-only`). **Watch the coil
+  temperature**: the earlier overheating was at 60 % hold with no fan; 30 % + fan is untested.
+- **Fewer false triggers** (striker ToF only): a reading counts as "tile" only if it is within `tof_min_mm` 40 .. `tof_trigger_mm` 100,
+  the unbroken run of readings stays within `tof_steady_mm` 10 mm of itself, it lasts `tof_debounce` 10 reads (250 ms, was 125 ms),
+  and then the existing 2 s dwell must also stay unbroken. Release additionally needs the Pi to have armed it (a tile in the system).
+  All provisional; tuned from one measured tile (91 mm) and empty readings (112-142 mm).
+- Tests: `tests/test_nano_sprung_striker.py` (`up` fixture). Never run on the Nano.

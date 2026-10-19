@@ -47,7 +47,11 @@ printf '1 HOME ALL\n@tick 5000\n2 MOVE X100 F6000\n@tick 3000\n' | ./gantry_host
    T8 lead screw (8 mm/rev) on Z. Replace with measured values; `home_pos_mm`, `home_backoff_mm` and the
    homing speeds are placeholders as well.
 5. **Direction.** `DIR_INVERT[]` in `sketch.ino`, per axis, after the first single-axis jog with the
-   motor free.
+   motor free. **Observed on the rig 2026-10-19 (owner): on Y, negative movement goes toward home in
+   the frame**, i.e. the Y home switch is at the negative end. This matches `Config::defaults()`
+   (`home_dir = -1` for X and Y, +1 for Z) with `DIR_INVERT` all false. Not yet confirmed from a run of
+   `HOME Y`; X and Z directions not recorded. If a jog's direction on the real firmware turns out
+   opposite to the encoder test's, flip `DIR_INVERT[AX_Y]` rather than `home_dir`.
 6. **Vacuum sensor** (`A3`): analog level vs a threshold, or a switch? `GANTRY_VAC_*`.
 7. **Encoders** (`GANTRY_ENCODERS_ENABLED`, **on** since 2026-10-18, `GANTRY_ENCODER_MASK` 0x07 = X, Y, Z; one Y
    motor, no clone). Detect-only feedback: `LOST_STEPS_<axis>` once homed, `ENCODER_<axis>` if a masked-in

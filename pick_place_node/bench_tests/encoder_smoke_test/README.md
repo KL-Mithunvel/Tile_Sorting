@@ -92,6 +92,11 @@ line on USB serial twice a second.
 Run only one of this app, `io_smoke_test` and `stepper_smoke_test` at a time: they all
 drive the same board.
 
+**GUI loads but says "not connected" and the log shows `enc_status ... timed out`?** (seen 2026-10-19)
+Check no other app is running (`arduino-app-cli app list`), then on the board
+`sudo systemctl restart arduino-router` and restart this app. See
+`documents/programming/gantry_bench_bringup_2026-10-19.md`.
+
 ## Known unverified
 
 - (Resolved 2026-10-18) The sketch compiles, and the mux is on `Wire2` (A4/A5), not `Wire`.

@@ -83,12 +83,13 @@
     <div id="phase">…</div>
     <div id="cd"><i></i></div>
     <div class="steps" id="steps">
-      <span id="stp0"><b>1</b> UP · armed · ready</span>
-      <span id="stp1"><b>2</b> tile seen · 2 s countdown</span>
-      <span id="stp2"><b>3</b> STRIKE</span>
-      <span id="stp3"><b>4</b> lifts · tile moves out</span>
+      <span id="stp0"><b>1</b> resting DOWN · cool</span>
+      <span id="stp1"><b>2</b> camera saw a tile · raised</span>
+      <span id="stp2"><b>3</b> tile at the sensor · 2 s</span>
+      <span id="stp3"><b>4</b> STRIKE</span>
+      <span id="stp4"><b>5</b> lifts · tile out · lowers to rest</span>
     </div>
-    <div class="muted" style="margin-bottom:6px">…then back to 1: once the tile has crossed, the next one is struck. One strike per tile.</div>
+    <div class="muted" style="margin-bottom:6px">…then back to 1: it rests down so the coil stays cool; the camera raises it for the next tile. One strike per tile.</div>
     <div class="row"><button id="stMode">Mode: …</button><button id="stArm">Armed: …</button>
       <span class="muted" id="stNote"></span></div>
     <div class="row"><button id="stRetract" class="big">Retract</button>
@@ -208,21 +209,26 @@ const STATE = {WAIT_TILE: 0, COOLDOWN: 5, FAULT: 6, RETRACTED: 7, STRUCK: 8};
 let maxLeft = 2000, lastStrike = null;
 
 // What the striker is doing, from what the Nano reports (armed and state are read back, not assumed).
+// It RESTS DOWN (cool). The camera's detection raises it; a tile at the ToF starts a 2 s countdown; it strikes,
+// lifts so the tile can leave, and lowers itself again when nothing more is coming.
 function phase(n) {
   if (n.link !== true) return {t: "NANO NOT CONNECTED", c: "fail", step: -1};
   if (n.nano_state === STATE.FAULT) return {t: "FAULT — e-stop latched on the Nano", c: "fail", step: -1};
-  if (n.tof1_ok === false) return {t: "ToF SENSOR NOT ANSWERING — no strikes", c: "fail", step: -1};
+  if (n.tof1_ok === false) return {t: "ToF SENSOR NOT ANSWERING — raising/striking is unsafe", c: "fail", step: -1};
   const tile = n.tof1_mm != null && n.tof1_mm <= TILE_MM;
   if (n.manual) return {t: "MANUAL — striker " + (n.retracted ? "UP, held" : "DOWN"), c: "warn", step: -1};
-  if (n.retracted) {
-    if (!n.armed) return {t: "UP · NOT ARMED — a tile will not be struck", c: "warn", step: 0};
-    if (n.left_ms > 0) return {t: "TILE SEEN — striking in " + (n.left_ms / 1000).toFixed(1) + " s", c: "go", step: 1};
-    if (n.must_leave && tile) return {t: "LIFTED — move the tile out", c: "go", step: 3};
-    if (n.must_leave) return {t: "TILE LEAVING…", c: "go", step: 3};
-    return {t: "READY — armed, waiting for a tile", c: "ok", step: 0};
+  if (!n.retracted) {
+    if (n.nano_state === STATE.STRUCK || n.nano_state === STATE.COOLDOWN) return {t: "STRUCK — lifting in a moment", c: "go", step: 3};
+    if (!n.armed) return {t: "RESTING DOWN · NOT ARMED — press Armed", c: "warn", step: 0};
+    return {t: n.up_wanted ? "RAISING — the camera saw a tile" : "RESTING DOWN (cool) — waiting for the camera to see a tile", c: n.up_wanted ? "go" : "ok", step: n.up_wanted ? 1 : 0};
   }
-  if (n.nano_state === STATE.STRUCK || n.nano_state === STATE.COOLDOWN) return {t: "STRUCK — lifting in a moment", c: "go", step: 2};
-  return {t: "DOWN", c: "warn", step: -1};
+  if (!n.armed) return {t: "UP · NOT ARMED — will lower itself", c: "warn", step: -1};
+  if (n.left_ms > 0) return {t: "TILE AT THE SENSOR — striking in " + (n.left_ms / 1000).toFixed(1) + " s", c: "go", step: 2};
+  if (n.must_leave && tile) return {t: "LIFTED — move the tile out", c: "go", step: 4};
+  if (n.must_leave) return {t: "TILE LEAVING…", c: "go", step: 4};
+  if (n.up_wanted) return {t: "RAISED by the camera — waiting for the tile to reach the sensor", c: "go", step: 1};
+  if (tile) return {t: "TILE AT THE SENSOR (camera missed it) — striking soon", c: "go", step: 2};
+  return {t: "NOTHING COMING — lowering to rest", c: "ok", step: 4};
 }
 async function strikerRefresh() {
   let j;
@@ -230,7 +236,7 @@ async function strikerRefresh() {
   const n = j.nano || {}, ph = phase(n);
   manualOn = !!n.manual; armedOn = !!n.armed;
   $("phase").textContent = ph.t; $("phase").className = ph.c;
-  for (let i = 0; i < 4; i++) $("stp" + i).className = (i === ph.step) ? "on" : "";
+  for (let i = 0; i < 5; i++) $("stp" + i).className = (i === ph.step) ? "on" : "";
   if (n.left_ms > 0) maxLeft = Math.max(maxLeft, n.left_ms);
   $("cd").firstElementChild.style.width = (n.left_ms > 0 ? 100 * (1 - n.left_ms / maxLeft) : 0) + "%";
   if (n.hold_pct != null) { $("holdVal").textContent = n.hold_pct + " %"; if (document.activeElement !== $("holdPct")) $("holdPct").value = n.hold_pct; }
@@ -242,7 +248,7 @@ async function strikerRefresh() {
   if (strikes.length) lastStrike = strikes[strikes.length - 1];
   const mm = n.tof1_ok === false ? "sensor not answering" : (n.tof1_mm == null ? "nothing in range" : n.tof1_mm + " mm  →  " + (n.tof1_mm <= TILE_MM ? "TILE" : "no tile"));
   fill($("stTbl"), [td("ToF distance (tile ≤ " + TILE_MM + " mm)", mm, n.tof1_ok === false ? "lv-fail" : ""),
-    td("striker", n.retracted ? "UP (retracted)" : "DOWN"), td("armed (read back from the Nano)", n.armed == null ? "—" : (n.armed ? "yes" : "no"), n.armed ? "lv-ok" : "lv-warn"),
+    td("striker", n.retracted ? "UP (retracted)" : "DOWN (resting)"), td("camera asked for it up", n.up_wanted == null ? "—" : (n.up_wanted ? "yes" : "no")), td("armed (read back from the Nano)", n.armed == null ? "—" : (n.armed ? "yes" : "no"), n.armed ? "lv-ok" : "lv-warn"),
     td("this tile already struck", n.must_leave == null ? "—" : (n.must_leave ? "yes — must leave before the next" : "no")),
     td("last strike", lastStrike ? lastStrike.id + " (" + lastStrike.source + ") at " + new Date(lastStrike.t * 1000).toLocaleTimeString() : (j.session && j.session.active ? "none yet this session" : "(events are listed while a session runs)")),
     td("Nano link / firmware", (n.link ? "up" : "DOWN") + " · " + (n.fw || "?"), n.link ? "lv-ok" : "lv-fail")]);

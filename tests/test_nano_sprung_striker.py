@@ -20,7 +20,7 @@ import host_nano  # noqa: E402
 
 from acoustic.tap_bridge import TapBridge  # noqa: E402
 from acoustic.tap_protocol import (  # noqa: E402
-    encode_belt, encode_hold, encode_mode, encode_ping, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
+    encode_belt, encode_hold, encode_mode, encode_up, encode_ping, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
 )
 from fusion.transport import InMemoryBus  # noqa: E402
 
@@ -321,145 +321,14 @@ def at_ms(nano):
     return nano.pins["now"]
 
 
-def test_prototype_rests_retracted_with_nothing_under_it_armed_or_not(proto):
-    # Owner, 2026-10-19: with no tile the striker must be UP -- without anyone pressing Armed.
-    assert proto.pins["arm"] == 0                       # before the first pass of the loop
-    out = keep_alive(proto, 1000, step=25)              # never armed
-    (ret,) = of(out, "ret")
-    assert ret["src"] == "tof" and proto.pins["arm"] == 1 and proto.pins["retracted"] == 1
-    assert proto.pins["strike"] == 0                    # still inhibited: parked, but no strike is allowed
-    out = keep_alive(proto, 30000)                      # parked for as long as the line idles: no 8 s timeout
-    assert not of(out, "tap") and not of(out, "ret") and proto.pins["arm"] == 1
 
 
-def test_prototype_releases_two_seconds_after_the_tile_is_recognised(proto):
-    enable(proto)
-    keep_alive(proto, 1000, step=25)                    # parked up
-    t0 = at_ms(proto)
-    proto.tof(1, 50)                                    # a tile arrives
-    out = keep_alive(proto, 4000, step=25)
-    (tap,) = of(out, "tap")
-    assert tap["src"] == "tof" and tap["tile_present"] is True and tap["tof_mm"] == 50
-    # 5 debounce samples (~125 ms) to recognise it, then the 2 s countdown.
-    assert 2000 <= tap["uptime_ms"] - t0 <= 2300
-    assert proto.pins["arm"] == 0 or tap["uptime_ms"] > 0
 
 
-def test_prototype_tile_that_leaves_in_time_costs_nothing(proto):
-    enable(proto)
-    keep_alive(proto, 1000, step=25)
-    proto.tof(1, 50)
-    keep_alive(proto, 1200, step=25)                    # not yet 2 s
-    proto.tof(1, 150)                                   # it moved on
-    out = keep_alive(proto, 5000, step=25)
-    assert not of(out, "tap") and proto.pins["arm"] == 1
-    proto.tof(1, 50)                                    # the next tile still gets its full 2 s
-    out = keep_alive(proto, 1500, step=25)
-    assert not of(out, "tap")
-    assert of(keep_alive(proto, 1500, step=25), "tap")
 
 
-def test_prototype_lifts_again_after_the_strike_so_the_tile_can_leave_and_does_not_strike_it_twice(proto):
-    # Owner, 2026-10-19: strike, then let it go -- only then can the tile move out.
-    enable(proto)
-    keep_alive(proto, 1000, step=25)
-    proto.tof(1, 50)
-    out = keep_alive(proto, 2600, step=25)
-    (tap,) = of(out, "tap")
-    assert proto.pins["arm"] == 0 or of(out, "ret")                # struck
-    out = keep_alive(proto, 3000, step=25)                          # the tile is STILL there
-    (ret,) = of(out, "ret")
-    assert 1400 <= ret["uptime_ms"] - tap["uptime_ms"] <= 1700     # lifted ~1.5 s after the strike
-    assert proto.pins["arm"] == 1 and proto.pins["retracted"] == 1
-    out = keep_alive(proto, 20000)                                  # and it is not struck again while it sits there
-    assert not of(out, "tap") and proto.pins["arm"] == 1
-    proto.tof(1, 150)                                               # the tile moves out ...
-    keep_alive(proto, 500, step=25)
-    proto.tof(1, 50)                                                # ... the next one comes in
-    assert len(of(keep_alive(proto, 3000, step=25), "tap")) == 1
 
 
-def test_prototype_boot_with_a_tile_already_there_lifts_but_does_not_strike_it(proto):
-    proto.tof(1, 50)
-    enable(proto)
-    out = keep_alive(proto, 6000, step=25)
-    assert not of(out, "tap") and proto.pins["arm"] == 1            # up (the tile can leave), no strike
-    proto.tof(1, 150)
-    keep_alive(proto, 500, step=25)
-    proto.tof(1, 50)
-    assert of(keep_alive(proto, 3000, step=25), "tap")              # a tile that arrives afterwards is struck
-
-
-def test_prototype_does_not_park_when_the_tof_cannot_be_read(proto):
-    proto.tof(1, None)
-    enable(proto)
-    out = keep_alive(proto, 3000, step=25)
-    assert not of(out, "ret") and proto.pins["arm"] == 0
-    proto.tof(1, 150)                                   # the sensor comes back
-    assert of(keep_alive(proto, 1500, step=25), "ret")
-
-
-def test_prototype_disarmed_it_stays_up_and_a_tile_does_not_release_it(proto):
-    keep_alive(proto, 1000, step=25)                    # parked, never armed
-    proto.tof(1, 50)
-    out = keep_alive(proto, 6000, step=25)
-    assert not of(out, "tap") and proto.pins["arm"] == 1
-    t0 = at_ms(proto)
-    out = proto.rx(encode_strike(True)) + keep_alive(proto, 3000, step=25)      # arming starts a fresh 2 s
-    (tap,) = of(out, "tap")
-    assert 2000 <= tap["uptime_ms"] - t0 <= 2300 and tap["src"] == "tof"
-
-
-def test_prototype_disarming_while_parked_keeps_it_up(proto):
-    enable(proto)
-    keep_alive(proto, 1000, step=25)
-    out = proto.rx(encode_strike(False)) + keep_alive(proto, 3000, step=25)
-    assert not of(out, "tap") and proto.pins["arm"] == 1
-
-
-def test_prototype_losing_the_pi_while_parked_keeps_it_up_but_inhibited(proto):
-    enable(proto)
-    keep_alive(proto, 1000, step=25)
-    out = proto.advance(3000)                           # no pings: the watchdog trips
-    assert [e for e in of(out, "err") if e["code"] == "WATCHDOG"]
-    assert proto.pins["arm"] == 1 and proto.pins["strike"] == 0 and not of(out, "tap")
-    proto.tof(1, 50)
-    assert not of(proto.advance(5000), "tap")           # a tile cannot release it with the Pi gone
-
-
-def test_prototype_manual_mode_takes_over_a_parked_striker(proto):
-    enable(proto)
-    keep_alive(proto, 1000, step=25)
-    proto.rx(encode_mode(True))
-    proto.tof(1, 50)
-    out = keep_alive(proto, 5000, step=25)
-    assert not of(out, "tap") and proto.pins["arm"] == 1          # a tile does nothing in MANUAL
-    (tap,) = of(proto.rx(encode_release()), "tap")                # the operator's RELEASE
-    assert tap["src"] == "manual" and proto.pins["arm"] == 0
-
-
-def test_prototype_back_to_auto_parks_it_again(proto):
-    proto.rx(encode_mode(True))                         # MANUAL before arming: it stays down
-    proto.rx(encode_strike(True))
-    proto.tof(1, 150)
-    assert not of(keep_alive(proto, 2000, step=25), "ret")        # manual: stays down
-    proto.rx(encode_mode(False))
-    assert of(keep_alive(proto, 1500, step=25), "ret")
-
-
-def test_prototype_threshold_is_100_mm_and_the_measured_tile_counts(proto):
-    enable(proto)
-    keep_alive(proto, 1000, step=25)
-    proto.tof(1, 112)                                              # the nearest empty-surface reading seen on the rig
-    assert not of(keep_alive(proto, 4000, step=25), "tap")
-    proto.tof(1, 101)
-    assert not of(keep_alive(proto, 3000, step=25), "tap")        # just too far: no tile
-    proto.tof(1, 91)                                               # the tile on the rig, 2026-10-19
-    assert of(keep_alive(proto, 4000, step=25), "tap")            # a tile
-    proto.tof(1, 150)
-    keep_alive(proto, 2000, step=25)
-    proto.tof(1, 100)
-    assert of(keep_alive(proto, 4000, step=25), "tap")            # at 75 mm: a tile
 
 
 def test_prototype_has_no_belt_end_sensor_to_complain_about(proto):
@@ -505,18 +374,6 @@ def test_seven_field_heartbeat_parses_and_old_ones_still_do():
     assert parse_line(encode("HB 5 0 1 0 1"))["type"] == "bad"
 
 
-def test_prototype_switching_to_manual_after_a_long_park_does_not_drop_it(proto):
-    # Found on the real rig 2026-10-19: parked for 18 s, then MODE 1 released it as a "held too long"
-    # safety strike, because the hold-time limit was still counting from when it went up.
-    enable(proto)
-    keep_alive(proto, 10000)                            # parked well past retract_max_ms (8 s)
-    assert proto.pins["arm"] == 1
-    proto.rx(encode_mode(True))
-    out = keep_alive(proto, 2000)
-    assert not of(out, "tap") and not [e for e in of(out, "err") if e["code"] == "RETRACT"]
-    assert proto.pins["arm"] == 1
-    (tap,) = of(proto.rx(encode_release()), "tap")
-    assert tap["src"] == "manual" and proto.pins["arm"] == 0
 
 
 # ---- the sequence status in the heartbeat (for the Striker panel) ---------------------------------------------------
@@ -526,24 +383,6 @@ def last_hb(lines):
     return of(lines, "hb")[-1]
 
 
-def test_heartbeat_reports_armed_state_countdown_and_must_leave(proto):
-    hb = last_hb(keep_alive(proto, 1000, step=25))
-    assert hb["armed"] is False and hb["retracted"] is True and hb["left_ms"] == 0
-    assert hb["must_leave"] is True or hb["must_leave"] is False
-    out = proto.rx(encode_strike(True)) + keep_alive(proto, 600, step=25)
-    hb = last_hb(out)
-    assert hb["armed"] is True and hb["must_leave"] is False and hb["state"] == 7          # RETRACTED
-    proto.tof(1, 50)
-    left = [h["left_ms"] for h in of(keep_alive(proto, 1500, step=25), "hb")]
-    assert any(0 < v <= 2000 for v in left) and left == sorted(left, reverse=True) or left[-1] > 0
-    out = keep_alive(proto, 1500, step=25)                                                  # the strike, then STRUCK
-    assert any(h["state"] in (5, 8) and h["retracted"] is False for h in of(out, "hb"))
-    out = keep_alive(proto, 3000, step=25)                                                  # lifted, tile still there
-    hb = last_hb(out)
-    assert hb["retracted"] is True and hb["must_leave"] is True and hb["left_ms"] == 0 and hb["armed"] is True
-    proto.tof(1, 150)
-    hb = last_hb(keep_alive(proto, 800, step=25))
-    assert hb["must_leave"] is False and hb["armed"] is True        # crossed: armed and ready for the next tile
 
 
 def test_prototype_heartbeat_is_four_times_a_second(proto):
@@ -557,16 +396,6 @@ def test_eleven_field_heartbeat_parses():
     assert parse_line(encode("HB 5 0 1 0 0 1 91 1 7 1500"))["type"] == "bad"
 
 
-def test_bridge_publishes_the_sequence_status(proto):
-    bus = InMemoryBus()
-    bridge = TapBridge(_Serial(), bus, clock=lambda: 100.0)
-    proto.rx(encode_strike(True))
-    for line in keep_alive(proto, 1000, step=50):
-        bridge.handle_line(line, 100.0)
-    bridge.tick(100.0)
-    s = bus.messages("station/nano/status")[-1]
-    assert s["armed"] is True and s["nano_state"] == 7 and s["left_ms"] == 0 and s["must_leave"] is False
-    assert s["state"] == "online"          # the bridge's own field is not overwritten by the Nano's state number
 
 
 # ---- the settable hold power (the coil overheated parked at 60 %) ----------------------------------------------------
@@ -606,3 +435,243 @@ def test_hold_command_round_trips_through_the_bridge_and_status(proto):
         bridge.handle_line(line, 100.0)
     bridge.tick(100.0)
     assert bus.messages("station/nano/status")[-1]["hold_pct"] == 35
+
+
+# ---- the prototype: RESTS DOWN, the camera's detection raises it (owner, 2026-10-19: the coil overheated when held up all the time) ---
+
+
+def camera_says_tile(nano):
+    """What the Pi sends when the camera grades a live tile."""
+    return nano.rx(encode_up())
+
+
+def test_prototype_rests_down_and_cool_until_the_camera_asks(proto):
+    enable(proto)
+    out = keep_alive(proto, 10000)
+    assert not of(out, "ret") and proto.pins["arm"] == 0              # armed, a tile-free surface: still DOWN
+    hb = last_hb(out)
+    assert hb["armed"] is True and hb["retracted"] is False and hb["up_wanted"] is False
+    out = camera_says_tile(proto) + keep_alive(proto, 1000, step=25)
+    (ret,) = of(out, "ret")
+    assert ret["src"] == "tof" and proto.pins["arm"] == 1
+    assert last_hb(out)["up_wanted"] is True
+
+
+def test_camera_raises_it_then_the_tile_is_struck_two_seconds_after_the_sensor_sees_it(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)                                   # up, waiting for the tile to arrive
+    assert proto.pins["arm"] == 1
+    t0 = at_ms(proto)
+    proto.tof(1, 50)
+    (tap,) = of(keep_alive(proto, 4000, step=25), "tap")
+    assert tap["src"] == "tof" and tap["tile_present"] is True and tap["tof_mm"] == 50
+    assert 2000 <= tap["uptime_ms"] - t0 <= 2300                      # ~125 ms debounce + the 2 s countdown
+
+
+def test_a_request_for_a_tile_that_never_arrives_is_forgotten_and_it_lowers_itself(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    out = keep_alive(proto, 30000 + 3000 + 2000, step=250)             # up_timeout 30 s, then rest_delay 3 s
+    (ret,) = of(out, "ret")
+    (tap,) = of(out, "tap")
+    assert tap["src"] == "rest" and proto.pins["arm"] == 0
+    assert tap["uptime_ms"] - ret["uptime_ms"] >= 32000
+
+
+def test_camera_missed_the_tile_so_the_tof_raises_it_and_it_is_still_struck(proto):
+    enable(proto)                                                      # NO camera request
+    keep_alive(proto, 1000, step=25)
+    assert proto.pins["arm"] == 0
+    t0 = at_ms(proto)
+    proto.tof(1, 50)
+    out = keep_alive(proto, 4000, step=25)
+    rets = of(out, "ret")                                              # raised for the tile, then lifted again after the strike
+    (tap,) = of(out, "tap")
+    assert len(rets) == 2 and rets[0]["uptime_ms"] < tap["uptime_ms"] < rets[1]["uptime_ms"]
+    assert rets[0]["src"] == "tof" and tap["src"] == "tof"
+    assert 2000 <= tap["uptime_ms"] - t0 <= 2400
+
+
+def test_a_tile_that_leaves_in_time_costs_nothing(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)
+    proto.tof(1, 50)
+    out = keep_alive(proto, 1200, step=25)                             # not yet 2 s
+    proto.tof(1, 150)
+    out += keep_alive(proto, 5000, step=25)
+    assert not of(out, "tap") and proto.pins["arm"] == 1               # still waiting (the request has not expired)
+    proto.tof(1, 50)                                                   # the next tile gets its full 2 s
+    assert not of(keep_alive(proto, 1500, step=25), "tap")
+    assert of(keep_alive(proto, 1500, step=25), "tap")
+
+
+def test_strike_then_lift_then_the_tile_leaves_then_it_rests_down(proto):
+    # Owner: strike, let it go so the tile can move out, and only then is it done with that tile.
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)
+    proto.tof(1, 50)
+    out = keep_alive(proto, 2600, step=25)
+    (tap,) = of(out, "tap")
+    out = keep_alive(proto, 3000, step=25)                             # the tile is STILL there
+    (ret,) = of(out, "ret")
+    assert 1400 <= ret["uptime_ms"] - tap["uptime_ms"] <= 1700         # lifted ~1.5 s after the strike
+    out = keep_alive(proto, 20000)
+    assert not of(out, "tap") and proto.pins["arm"] == 1               # not struck twice, and NOT lowered onto the tile
+    proto.tof(1, 150)                                                  # the tile moves out
+    out = keep_alive(proto, 4500, step=25)
+    (rest,) = of(out, "tap")
+    assert rest["src"] == "rest" and proto.pins["arm"] == 0            # 3 s later it rests down: the coil is off
+    last = last_hb(keep_alive(proto, 500, step=25))
+    assert last["armed"] is True and last["retracted"] is False and last["must_leave"] is False
+
+
+def test_boot_with_a_tile_already_there_lifts_it_clear_but_does_not_strike_it(proto):
+    proto.tof(1, 50)
+    enable(proto)
+    out = keep_alive(proto, 6000, step=25)
+    assert not of(out, "tap") and proto.pins["arm"] == 1
+    proto.tof(1, 150)
+    out = keep_alive(proto, 4500, step=25)
+    assert [t["src"] for t in of(out, "tap")] == ["rest"] and proto.pins["arm"] == 0
+    proto.tof(1, 50)                                                   # a tile that arrives afterwards is struck
+    assert of(keep_alive(proto, 4000, step=25), "tap")
+
+
+def test_it_is_never_lowered_onto_a_tile_that_is_under_it(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)
+    proto.rx(encode_strike(False))                                     # disarmed with a tile under the sensor
+    proto.tof(1, 50)
+    out = keep_alive(proto, 10000, step=25)
+    assert not of(out, "tap") and proto.pins["arm"] == 1
+
+
+def test_not_armed_it_does_not_rise_and_arming_makes_a_pending_request_count(proto):
+    proto.rx(encode_belt(0))
+    camera_says_tile(proto)
+    out = keep_alive(proto, 3000, step=25)
+    assert not of(out, "ret") and proto.pins["arm"] == 0
+    out = proto.rx(encode_strike(True)) + keep_alive(proto, 1000, step=25)
+    assert of(out, "ret")                                              # the request was remembered
+
+
+def test_disarming_while_up_lowers_it_after_the_rest_delay(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)
+    out = proto.rx(encode_strike(False)) + keep_alive(proto, 4500, step=25)
+    (tap,) = of(out, "tap")
+    assert tap["src"] == "rest" and proto.pins["arm"] == 0
+
+
+def test_losing_the_pi_while_up_lowers_it_and_leaves_it_inhibited(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)
+    out = proto.advance(6000)                                          # no pings: the watchdog trips at 2 s
+    assert [e for e in of(out, "err") if e["code"] == "WATCHDOG"]
+    assert [t["src"] for t in of(out, "tap")] == ["rest"] and proto.pins["arm"] == 0 and proto.pins["strike"] == 0
+
+
+def test_a_dead_sensor_never_raises_it_and_lowers_it_if_it_dies_while_up(proto):
+    proto.tof(1, None)
+    enable(proto)
+    camera_says_tile(proto)
+    assert not of(keep_alive(proto, 3000, step=25), "ret") and proto.pins["arm"] == 0
+    proto.tof(1, 150)                                                  # it comes back: the request is still good
+    assert of(keep_alive(proto, 1500, step=25), "ret")
+    proto.tof(1, None)                                                 # and dies again while up
+    out = keep_alive(proto, 4500, step=25)
+    assert [t["src"] for t in of(out, "tap")] == ["rest"]
+
+
+def test_manual_mode_takes_over_a_raised_striker(proto):
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 1500, step=25)
+    proto.rx(encode_mode(True))
+    proto.tof(1, 50)
+    out = keep_alive(proto, 5000, step=25)
+    assert not of(out, "tap") and proto.pins["arm"] == 1
+    (tap,) = of(proto.rx(encode_release()), "tap")
+    assert tap["src"] == "manual" and proto.pins["arm"] == 0
+
+
+def test_back_to_auto_it_stays_down_until_asked(proto):
+    proto.rx(encode_mode(True))
+    proto.rx(encode_strike(True))
+    camera_says_tile(proto)
+    assert not of(keep_alive(proto, 2000, step=25), "ret")             # manual: ignores the camera
+    proto.rx(encode_mode(False))
+    assert of(keep_alive(proto, 1500, step=25), "ret")                 # the request (still fresh) now counts
+
+
+def test_threshold_is_100_mm_and_the_measured_tile_counts(proto):
+    enable(proto)
+    proto.tof(1, 112)                                                  # the nearest empty-surface reading seen on the rig
+    assert not of(keep_alive(proto, 4000, step=25), "ret")
+    proto.tof(1, 101)
+    assert not of(keep_alive(proto, 3000, step=25), "ret")
+    proto.tof(1, 91)                                                   # the tile on the rig
+    assert of(keep_alive(proto, 4000, step=25), "tap")
+
+
+def test_switching_to_manual_after_a_long_raise_does_not_drop_it(proto):
+    # Found on the rig 2026-10-19: parked 18 s, then MODE 1 released it as a "held too long" safety strike.
+    enable(proto)
+    camera_says_tile(proto)
+    keep_alive(proto, 10000)
+    assert proto.pins["arm"] == 1
+    proto.rx(encode_mode(True))
+    out = keep_alive(proto, 2000)
+    assert not of(out, "tap") and not [e for e in of(out, "err") if e["code"] == "RETRACT"]
+    (tap,) = of(proto.rx(encode_release()), "tap")
+    assert tap["src"] == "manual" and proto.pins["arm"] == 0
+
+
+def test_heartbeat_reports_the_sequence_for_the_gui(proto):
+    hb = last_hb(keep_alive(proto, 1000, step=50))
+    assert hb["armed"] is False and hb["retracted"] is False and hb["state"] == 0 and hb["up_wanted"] is False
+    proto.rx(encode_strike(True))
+    camera_says_tile(proto)
+    hb = last_hb(keep_alive(proto, 600, step=25))
+    assert hb["armed"] is True and hb["retracted"] is True and hb["state"] == 7 and hb["up_wanted"] is True
+    proto.tof(1, 50)
+    left = [h["left_ms"] for h in of(keep_alive(proto, 1500, step=25), "hb")]
+    assert any(0 < v <= 2000 for v in left)
+    out = keep_alive(proto, 1500, step=25)
+    assert any(h["state"] in (5, 8) and h["retracted"] is False for h in of(out, "hb"))
+
+
+def test_bridge_publishes_the_sequence_status(proto):
+    bus = InMemoryBus()
+    bridge = TapBridge(_Serial(), bus, clock=lambda: 100.0)
+    proto.rx(encode_strike(True))
+    proto.rx(encode_up())
+    for line in keep_alive(proto, 1000, step=50):
+        bridge.handle_line(line, 100.0)
+    bridge.tick(100.0)
+    s = bus.messages("station/nano/status")[-1]
+    assert s["armed"] is True and s["nano_state"] == 7 and s["up_wanted"] is True and s["must_leave"] is False
+    assert s["state"] == "online"          # the bridge's own field is not overwritten by the Nano's state number
+
+
+def test_the_camera_detection_raises_the_striker_end_to_end(proto):
+    from acoustic.striker_arming import CameraArming
+
+    bus = InMemoryBus()
+    ser = _Serial()
+    bridge = TapBridge(ser, bus, clock=lambda: 100.0)
+    bus.subscribe("station/striker/cmd", bridge._on_striker_cmd)
+    CameraArming(bus).attach()
+    proto.rx(encode_strike(True))
+    keep_alive(proto, 1000, step=50)
+    assert proto.pins["arm"] == 0                                      # resting down
+    bus.publish("tile/T1/camera/result", {"tile_id": "T1", "grade": "Grade A", "seq": 1})
+    for data in ser.written:
+        proto.rx(data)
+    assert of(keep_alive(proto, 1000, step=25), "ret") and proto.pins["arm"] == 1

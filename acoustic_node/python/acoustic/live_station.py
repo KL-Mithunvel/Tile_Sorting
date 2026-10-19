@@ -29,6 +29,7 @@ from pathlib import Path
 from acoustic.dashboard import create_app
 from acoustic.session_control import SessionController
 from acoustic.station import StationService
+from acoustic.striker_arming import CameraArming
 from fusion.session import SessionRecorder
 from fusion.blobs import BlobStore
 from fusion.store import TileStore
@@ -128,6 +129,10 @@ def main(argv=None) -> None:
 
     budget = float((st_cfg.get("store") or {}).get("blob_budget_gb", 20.0))
     blobs = BlobStore(blob_root, store, budget_bytes=int(budget * 1024 ** 3))
+
+    # The striker rests down (the coil overheated held up all the time); the camera's detection raises it.
+    if (st_cfg.get("striker") or {}).get("arm_on_camera", True):
+        CameraArming(bus).attach()
 
     session = None
     sess_cfg = st_cfg.get("session") or {}

@@ -228,7 +228,7 @@ class StationService:
             return None
         event = self.coordinator.pop_tap_event()
         source = (event or {}).get("source") or "tof"
-        if source in ("manual", "safety"):
+        if source in ("manual", "safety", "rest"):
             # A strike somebody asked for (or a safety release): data to keep, not a tile in the line.
             # It must not use up a tile's tap slot, or every later tile is paired with the wrong sound.
             self.coordinator.note_manual_strike(source)

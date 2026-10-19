@@ -93,11 +93,19 @@ struct Config {
                                //   tile is gone. NO retract_max_ms limit while parked: the coil is on for as long as
                                //   the line idles (heat: the hold duty in nano_firmware.ino is the only mitigation).
   uint16_t release_delay_ms;   // parked: a tile must be recognised this long before the release (the strike)
+  // ---- request-only (owner, 2026-10-19: the coil overheated parked all the time): the striker RESTS DOWN and is
+  // raised only when the Pi says a tile is coming (UP, from the camera's detection) or when a tile is already under
+  // the ToF (the camera missed it). With nothing to do it is lowered again rest_delay_ms later.
+  bool     request_only;
+  uint16_t up_timeout_ms;      // an UP with no tile reaching the ToF this long is forgotten (then it rests down)
+  uint16_t rest_delay_ms;      // raised, nothing under it, nothing requested, this long -> lower it to rest
 };
 
 enum { STRIKER_DUAL = 0, STRIKER_SPRUNG = 1 };
 // Why a strike happened (the 5th field of TAP / the 2nd of RET).
-enum { SRC_TOF = 0, SRC_MANUAL = 1, SRC_SAFETY = 2, SRC_TOF_BLIND = 3 };
+enum { SRC_TOF = 0, SRC_MANUAL = 1, SRC_SAFETY = 2, SRC_TOF_BLIND = 3, SRC_REST = 4 };
+// SRC_REST: the striker was lowered back to its resting position with nothing to strike (a quiet drop onto the
+// empty surface), so the coil is not left energised. Not a measurement; never paired with a tile.
 
 inline Config defaultConfig() {
   Config c;
@@ -124,6 +132,9 @@ inline Config defaultConfig() {
   c.hold_pct = 60;
   c.park_retracted = false;
   c.release_delay_ms = 2000;
+  c.request_only = false;
+  c.up_timeout_ms = 30000;
+  c.rest_delay_ms = 3000;
   return c;
 }
 
@@ -141,6 +152,7 @@ inline Config prototypeConfig() {
   c.settle_ms = 1500;           // (not used while parked)
   c.retract_hold_ms = 1500;     // (not used while parked)
   c.park_retracted = true;
+  c.request_only = true;        // rests DOWN; the camera's detection (UP) raises it
   c.release_delay_ms = 2000;
   c.cooldown_ms = 1200;         // strike_ms 300 + this = it lifts again 1.5 s after the strike, after the ring has died
   c.hb_ms = 250;                // the GUI shows the phase and a countdown: twice as often as the 500 ms default
@@ -330,6 +342,8 @@ class Core {
       p[n++] = tile_must_leave_ ? '1' : '0';                   // the tile under it was struck / was there at power-up
       p[n++] = ' ';
       n = putUint(p, n, hold_pct_);                            // coil duty while held up (settable: HOLD n)
+      p[n++] = ' ';
+      p[n++] = up_wanted_ ? '1' : '0';                         // the Pi asked for the striker up (a tile is coming)
     }
     send(p, n);
   }
@@ -431,6 +445,11 @@ class Core {
         if (manual_mode_) { hold_for_release_ = true; parked_ = false; }
         else if (c_.park_retracted) { hold_for_release_ = false; parked_ = true; tile_timing_ = false; }
       }
+    } else if (vlen == 2 && memcmp(p, "UP", 2) == 0 && alen == 0) {
+      markValid();
+      if (!sprung() || !c_.request_only) { sendErr("UNSUPPORTED", "UP needs the request-only striker"); return; }
+      up_wanted_ = true;
+      up_since_ = h_.nowMs();
     } else if (vlen == 4 && memcmp(p, "HOLD", 4) == 0 && parseUint(arg, alen, 100, &v)) {
       markValid();
       if (!sprung()) { sendErr("UNSUPPORTED", "HOLD needs the sprung striker"); return; }
@@ -517,6 +536,22 @@ class Core {
   void runSequence(uint32_t now) {
     switch (state_) {
       case WAIT_TILE:
+        if (sprung() && c_.park_retracted && c_.request_only) {
+          // Rests DOWN. Raised only when armed and (the Pi asked: a tile is coming) or (a tile is already under
+          // the sensor: the camera missed it, or the previous tile has to be freed after its strike).
+          if (up_wanted_ && (uint32_t)(now - up_since_) >= c_.up_timeout_ms) up_wanted_ = false;   // never came
+          // An empty sensor seen while resting down also clears "the tile under it must leave" (power-up flag),
+          // otherwise a tile the camera missed would be raised for but never struck.
+          if (striker_.ok && striker_.reads >= c_.tof_debounce && !striker_.present) tile_must_leave_ = false;
+          if (!manual_mode_ && strike_enabled_ && striker_.ok && striker_.reads >= c_.tof_debounce &&
+              (up_wanted_ || striker_.present)) {
+            beginRetract(now, SRC_TOF, false);
+            parked_ = true;
+            tile_timing_ = false;
+            idle_timing_ = false;
+          }
+          break;
+        }
         if (sprung() && c_.park_retracted) {
           // Rest position is UP: go up whenever it is in AUTO and the sensor answers -- armed or not, even
           // before the Pi has said a word. ARMING (STRIKE 1) only allows the release. After a strike it
@@ -598,6 +633,21 @@ class Core {
           } else if ((uint32_t)(now - tile_since_) >= c_.release_delay_ms) {
             releaseNow(now, SRC_TOF);
           }
+          if (c_.request_only && state_ == RETRACTED) {
+            // Raised with nothing to do (no tile, none requested, not armed, or a dead sensor): do not stay
+            // energised -- lower it again after rest_delay_ms. This is what keeps the coil cool.
+            if (up_wanted_ && (uint32_t)(now - up_since_) >= c_.up_timeout_ms) up_wanted_ = false;
+            bool settled = striker_.ok && striker_.reads >= c_.tof_debounce;
+            // Never lowered onto a tile that is under it (that would be a strike nobody asked for): it stays up
+            // until the tile has gone, unless the sensor is dead (then it lowers: cool beats blind).
+            bool idle = !striker_.ok || (settled && !striker_.present && (!up_wanted_ || !strike_enabled_));
+            if (idle) {
+              if (!idle_timing_) { idle_timing_ = true; idle_since_ = now; }
+              else if ((uint32_t)(now - idle_since_) >= c_.rest_delay_ms) releaseNow(now, SRC_REST);
+            } else {
+              idle_timing_ = false;
+            }
+          }
         } else if (!strike_enabled_) {
           sendErr("INHIBITED", "released: striker inhibited while retracted");
           releaseNow(now, SRC_SAFETY);
@@ -641,7 +691,9 @@ class Core {
     h_.setArm(false);
     h_.setTapLed(true);
     seq_++;
-    if (c_.park_retracted) tile_must_leave_ = true;   // whatever is under it now must leave before it can be struck again
+    if (c_.park_retracted) tile_must_leave_ = (src != SRC_REST);   // whatever is under it now must leave before it can be struck again
+    if (src == SRC_TOF) up_wanted_ = false;                         // the requested tile has been dealt with
+    idle_timing_ = false;
     if (ok) {
       sendTap(now, mm <= c_.tof_trigger_mm, mm, src);
     } else {
@@ -695,6 +747,10 @@ class Core {
   bool hold_for_release_ = false;   // RETRACTED by RETRACT: wait for RELEASE instead of releasing by itself
   bool parked_ = false;             // RETRACTED as the rest position (AUTO, park_retracted): a tile releases it
   bool tile_timing_ = false;        // parked: a tile is being timed toward release_delay_ms
+  bool up_wanted_ = false;          // request-only: the Pi said a tile is coming (UP)
+  uint32_t up_since_ = 0;
+  bool idle_timing_ = false;        // request-only: raised with nothing to do, counting toward rest_delay_ms
+  uint32_t idle_since_ = 0;
   bool tile_must_leave_ = true;     // parked: the tile under it (struck already, or there at power-up) is not struck (again)
   uint32_t tile_since_ = 0;
   uint8_t strike_src_ = SRC_TOF;

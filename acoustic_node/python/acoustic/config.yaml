@@ -165,6 +165,13 @@ station:
     clip_pre_s: 0.3            # each event's clip: this much before it ...
     clip_post_s: 1.2           # ... and this much after (the decay of a tile can be long)
 
+  # The striker RESTS DOWN (the coil overheated when it was held up all the time). When the camera grades a
+  # live tile this station sends the Nano `UP`; the Nano raises the striker, waits for the ToF to see the tile,
+  # strikes 2 s later and lowers itself when nothing more is coming. Needs the request-only firmware
+  # (nano_core.h prototypeConfig); on older firmware the Nano answers ERR UNSUPPORTED to every UP.
+  striker:
+    arm_on_camera: true
+
   # The Arduino Nano (striker + belt PWM) on USB serial, through
   # acoustic/tap_bridge.py. Protocol: documents/programming/nano_serial_protocol.md.
   # Off until the Nano exists: taps then come from the rms trigger or the

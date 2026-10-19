@@ -9,7 +9,7 @@ this prevents.
 
 Nano -> Pi
     HELLO <fw>                                  once at boot
-    HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok> [<manual> <retracted> <tof1_mm> <armed> <state> <left_ms> <must_leave> <hold_pct>]
+    HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok> [<manual> <retracted> <tof1_mm> <armed> <state> <left_ms> <must_leave> <hold_pct> <up_wanted>]
                         every 500 ms (250 ms for the prototype striker)
     TAP <seq> <tile_present> <tof_mm> <uptime_ms> [<src>]   the instant LOCK opens
                         (single sprung striker: the instant the coil is RELEASED)
@@ -28,6 +28,7 @@ Pi -> Nano
     MODE <0|1>          single sprung striker: 0 = the ToF starts cycles, 1 = manual
     RETRACT             manual mode: energise the coil and hold it
     RELEASE             manual mode: de-energise it (the strike)
+    UP                  request-only striker: a tile is coming (the camera saw it) -> raise now
     HOLD <0-100>        coil duty % while the striker is held up (heat vs holding force; too low drops it)
     TAP                 manual mode: RETRACT, wait the hold time, RELEASE
 
@@ -70,12 +71,17 @@ def encode_strike(enabled: bool) -> bytes:
     return encode(f"STRIKE {1 if enabled else 0}")
 
 
-SRC_TOF, SRC_MANUAL, SRC_SAFETY, SRC_TOF_BLIND = 0, 1, 2, 3
-SRC_NAMES = {SRC_TOF: "tof", SRC_MANUAL: "manual", SRC_SAFETY: "safety", SRC_TOF_BLIND: "tof_blind"}
+SRC_TOF, SRC_MANUAL, SRC_SAFETY, SRC_TOF_BLIND, SRC_REST = 0, 1, 2, 3, 4
+SRC_NAMES = {SRC_TOF: "tof", SRC_MANUAL: "manual", SRC_SAFETY: "safety", SRC_TOF_BLIND: "tof_blind", SRC_REST: "rest"}
 
 
 def encode_mode(manual: bool) -> bytes:
     return encode(f"MODE {1 if manual else 0}")
+
+
+def encode_up() -> bytes:
+    """A tile is coming (the camera saw it): raise the striker now. Request-only striker."""
+    return encode("UP")
 
 
 def encode_hold(percent: float) -> bytes:
@@ -134,9 +140,9 @@ def parse_line(raw) -> Optional[dict]:
     if kind == "HELLO":
         return {"type": "hello", "fw": " ".join(args) or "?"}
     if kind == "HB":
-        v = _ints(args, len(args)) if len(args) in (4, 6, 7, 11, 12) else None
+        v = _ints(args, len(args)) if len(args) in (4, 6, 7, 11, 12, 13) else None
         if v is None:
-            return bad("HB needs 4 (or 6, 7, 11 or 12) integers")
+            return bad("HB needs 4 (or 6, 7, 11, 12 or 13) integers")
         msg = {"type": "hb", "uptime_ms": v[0], "belt_pct": v[1], "tof1_ok": bool(v[2]), "tof3_ok": bool(v[3])}
         if len(v) >= 6:  # the single sprung striker also reports its mode and whether it is held up
             msg.update(manual=bool(v[4]), retracted=bool(v[5]))
@@ -144,8 +150,10 @@ def parse_line(raw) -> Optional[dict]:
             msg["tof1_mm"] = None if v[6] == 65535 else v[6]
         if len(v) >= 11:  # ... and the sequence: armed (read back from the Nano), nano::State, ms to the strike, tile-must-leave
             msg.update(armed=bool(v[7]), state=v[8], left_ms=v[9], must_leave=bool(v[10]))
-        if len(v) == 12:
+        if len(v) >= 12:
             msg["hold_pct"] = v[11]
+        if len(v) == 13:
+            msg["up_wanted"] = bool(v[12])
         return msg
     if kind == "TAP":
         v = _ints(args, 5) if len(args) == 5 else _ints(args, 4)

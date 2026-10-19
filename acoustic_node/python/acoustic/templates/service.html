@@ -89,8 +89,9 @@
       <span id="stp3"><b>4</b> STRIKE</span>
       <span id="stp4"><b>5</b> lifts · tile out · lowers to rest</span>
     </div>
+    <div id="autoWhy" class="muted" style="margin-bottom:6px"></div>
     <div class="muted" style="margin-bottom:6px">…then back to 1: it rests down so the coil stays cool; the camera raises it for the next tile. One strike per tile.</div>
-    <div class="row"><button id="stMode">Mode: …</button><button id="stArm">Armed: …</button>
+    <div class="row"><button id="stMode">Mode: …</button><button id="stAuto">Auto-arm: …</button><button id="stArm">Armed: …</button>
       <span class="muted" id="stNote"></span></div>
     <div class="row"><button id="stRetract" class="big">Retract</button>
       <button id="stRelease" class="big go">Release (strike)</button>
@@ -206,7 +207,7 @@ async function loadDevices() {
 let manualOn = false, armedOn = false, recording = false;
 const TILE_MM = 100;   // display only: the Nano's own threshold is nano::prototypeConfig().tof_trigger_mm
 const STATE = {WAIT_TILE: 0, COOLDOWN: 5, FAULT: 6, RETRACTED: 7, STRUCK: 8};
-let maxLeft = 2000, lastStrike = null;
+let maxLeft = 2000, lastStrike = null, autoOn = false;
 
 // What the striker is doing, from what the Nano reports (armed and state are read back, not assumed).
 // It RESTS DOWN (cool). The camera's detection raises it; a tile at the ToF starts a 2 s countdown; it strikes,
@@ -219,7 +220,8 @@ function phase(n) {
   if (n.manual) return {t: "MANUAL — striker " + (n.retracted ? "UP, held" : "DOWN"), c: "warn", step: -1};
   if (!n.retracted) {
     if (n.nano_state === STATE.STRUCK || n.nano_state === STATE.COOLDOWN) return {t: "STRUCK — lifting in a moment", c: "go", step: 3};
-    if (!n.armed) return {t: "RESTING DOWN · NOT ARMED — press Armed", c: "warn", step: 0};
+    if (!n.armed) return autoOn ? {t: "RESTING DOWN · disarmed — arms itself when a tile appears", c: "ok", step: 0}
+                                : {t: "RESTING DOWN · NOT ARMED — press Armed", c: "warn", step: 0};
     return {t: n.up_wanted ? "RAISING — the camera saw a tile" : "RESTING DOWN (cool) — waiting for the camera to see a tile", c: n.up_wanted ? "go" : "ok", step: n.up_wanted ? 1 : 0};
   }
   if (!n.armed) return {t: "UP · NOT ARMED — will lower itself", c: "warn", step: -1};
@@ -235,6 +237,10 @@ async function strikerRefresh() {
   try { j = await (await fetch("/api/striker", {cache: "no-store"})).json(); } catch (e) { return; }
   const n = j.nano || {}, ph = phase(n);
   manualOn = !!n.manual; armedOn = !!n.armed;
+  const aa = j.auto_arm || null; autoOn = !!(aa && aa.enabled);
+  $("stAuto").textContent = "Auto-arm: " + (aa ? (aa.enabled ? "ON" : "OFF") : "n/a"); $("stAuto").classList.toggle("on", autoOn);
+  $("autoWhy").textContent = aa ? (aa.enabled ? "Armed only while a tile is in the system — now: " + (aa.in_system ? "YES — " : "no — ") + aa.reason
+                                                : "Auto-arm is OFF: the Armed button is in control.") : "";
   $("phase").textContent = ph.t; $("phase").className = ph.c;
   for (let i = 0; i < 5; i++) $("stp" + i).className = (i === ph.step) ? "on" : "";
   if (n.left_ms > 0) maxLeft = Math.max(maxLeft, n.left_ms);
@@ -243,7 +249,8 @@ async function strikerRefresh() {
   $("holdApply").disabled = !j.controls; $("holdPct").disabled = !j.controls;
   $("stMode").textContent = "Mode: " + (n.manual ? "MANUAL" : "AUTO (ToF)"); $("stMode").classList.toggle("on", !!n.manual);
   $("stArm").textContent = "Armed: " + (n.armed ? "YES" : "NO"); $("stArm").classList.toggle("on", !!n.armed);
-  for (const id of ["stMode", "stArm", "stRetract", "stRelease", "stCycle"]) $(id).disabled = !j.controls;
+  for (const id of ["stMode", "stAuto", "stRetract", "stRelease", "stCycle"]) $(id).disabled = !j.controls;
+  $("stArm").disabled = !j.controls || autoOn;          // with auto-arm on the Pi decides; the button would be overridden
   const strikes = (j.events || []).filter(e => e.kind === "strike");
   if (strikes.length) lastStrike = strikes[strikes.length - 1];
   const mm = n.tof1_ok === false ? "sensor not answering" : (n.tof1_mm == null ? "nothing in range" : n.tof1_mm + " mm  →  " + (n.tof1_mm <= TILE_MM ? "TILE" : "no tile"));
@@ -286,6 +293,7 @@ async function sessionRefresh() {
   if (j.interrupted.length) $("msg").textContent = "Sessions that did not stop cleanly were sealed as interrupted: " + j.interrupted.join(", ");
 }
 $("stMode").onclick = () => post("/api/striker/mode", {manual: !manualOn}).then(strikerRefresh);
+$("stAuto").onclick = () => post("/api/striker/auto_arm", {enabled: !autoOn}).then(strikerRefresh);
 $("stArm").onclick = () => post("/api/striker/arm", {enabled: !armedOn}).then(strikerRefresh);
 $("holdPct").oninput = () => { $("holdVal").textContent = $("holdPct").value + " % (not yet set)"; };
 $("holdApply").onclick = () => post("/api/striker/hold", {percent: Number($("holdPct").value)}).then(strikerRefresh);

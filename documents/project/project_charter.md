@@ -363,6 +363,7 @@ remains the target; it is not what the prototype uses.
      `documents/programming/nano_serial_protocol.md` (**not implemented**; the Pi side can
      expose it as a dashboard button and a `station/tap_now` command). It must obey the same
      inhibits as an automatic strike: e-stop, `STRIKE 0`, watchdog trip, and cooldown.
+* **Operating sequence (updated 2026-10-19, later):** because the coil overheated when held up all the time, the striker **rests down** and is raised only when needed: the camera's tile detection arms it and asks for it up; 2 s after the ToF (<= 100 mm, measured) recognises the tile it releases (the strike); it lifts again after 1.5 s so the tile can be moved out; once the tile is gone it lowers itself to rest and is disarmed. **Armed only while a tile is in the system.** The coil is driven by a Cytron MDD10A (PWM + DIR) at a settable hold power (default 30 %). Reference: `documents/programming/striker_sequence.md`.
 * **Acoustic risk: the retraction is also a sound.** Pulling the striker up against the
   spring makes its own noise (plunger hitting the solenoid stop, spring), which the
   microphone will record as well as the strike. It must be **removed from the analysis**

@@ -675,3 +675,52 @@ def test_the_camera_detection_raises_the_striker_end_to_end(proto):
     for data in ser.written:
         proto.rx(data)
     assert of(keep_alive(proto, 1000, step=25), "ret") and proto.pins["arm"] == 1
+
+
+def test_a_tiles_whole_life_arms_then_raises_then_strikes_then_lowers_then_disarms(proto):
+    """Camera sees a tile -> Pi arms + asks UP -> Nano raises -> ToF sees it -> strike -> lift -> tile leaves ->
+    Pi disarms -> Nano lowers. The Pi side is the real CameraArming + AutoArm + TapBridge; the Nano is the real core."""
+    from acoustic.striker_arming import AutoArm, CameraArming
+
+    now = [100.0]
+    bus = InMemoryBus()
+    ser = _Serial()
+    bridge = TapBridge(ser, bus, clock=lambda: now[0], ping_s=0.2, status_s=0.2)
+    bus.subscribe("station/strike", bridge._on_strike)
+    bus.subscribe("station/striker/cmd", bridge._on_striker_cmd)
+    waiting = [0]
+    auto = AutoArm(bus, awaiting=lambda: waiting[0], clock=lambda: now[0], grace_s=2.0)
+    auto.attach()
+    CameraArming(bus, clock=lambda: now[0]).attach()
+    taps, log = [], []
+
+    def run(seconds, step_ms=50):
+        for _ in range(int(seconds * 1000 / step_ms)):
+            for line in proto.advance(step_ms):
+                msg = bridge.handle_line(line, now[0])
+                if msg and msg["type"] == "tap":
+                    taps.append(msg["src"])
+                    waiting[0] = 0                         # the coordinator binds the tap and the tile is done
+            now[0] += step_ms / 1000.0
+            bridge.tick(now[0])
+            auto.tick()
+            for data in ser.written:
+                proto.rx(data)
+            ser.written.clear()
+
+    run(3)
+    assert proto.pins["strike"] == 0 and proto.pins["arm"] == 0           # idle: disarmed and DOWN
+    waiting[0] = 1
+    bus.publish("tile/T1/camera/result", {"tile_id": "T1", "grade": "Grade A", "seq": 1})
+    run(1.5)
+    assert proto.pins["strike"] == 1 and proto.pins["arm"] == 1           # armed because a tile is in the system, and up
+    proto.tof(1, 50)                                                      # the tile reaches the sensor
+    run(2.6)
+    assert taps == ["tof"]                                                # struck once
+    run(2.5)
+    assert proto.pins["arm"] == 1 and proto.pins["strike"] == 1           # lifted so the tile can leave; still armed (tile under it)
+    proto.tof(1, 150)                                                     # the tile moves out
+    run(8)
+    assert taps == ["tof", "rest"]                                        # a quiet lowering to rest, not a second tile strike
+    assert proto.pins["strike"] == 0 and proto.pins["arm"] == 0           # disarmed AND down: the coil is cool
+    assert auto.commands == {"arm": 1, "disarm": 1}

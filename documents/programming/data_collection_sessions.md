@@ -39,7 +39,7 @@ gravity + spring strike**. Both edges make noise, so each cycle gives two events
 | event | when | `source` |
 |---|---|---|
 | `R0001` **retract** | the Nano energised the coil (striker goes up) | `tof` or `manual` |
-| `S0001` **strike** | the Nano released the coil (the tile is hit) | `tof`, `manual`, `safety` (held too long / inhibited / watchdog / e-stop while up), `tof_blind` |
+| `S0001` **strike** | the Nano released the coil (the tile is hit) | `tof`, `manual`, `safety` (held too long / inhibited / watchdog / e-stop while up), `tof_blind`, `rest` (the quiet lowering to rest with nothing to strike: labelled data, but not a tile strike) |
 
 A retract and the strike that ends it share a `cycle` and carry `retract_to_strike_ms` (from the
 Nano's own clock, so it is exact). The retract clip is **labelled data, not a thing to throw away**:
@@ -69,8 +69,11 @@ crack and corner checks are unvalidated; training the sound on them would copy t
    recorded; the Session panel says "no answer"). The Nano plugged in with `station.nano.enabled: true` in
    `acoustic/config.yaml`. Start the station with `--collect` (hardware trigger, no UNO Q needed, controls on):
    `python -m acoustic.live_station --collect`.
-2. Open `http://<pi>:5001/service`. In **Striker**: set the mode (**AUTO** = the ToF starts every cycle; **MANUAL** =
-   you do), press **Armed** (sends `STRIKE 1`; without it the Nano refuses everything). The Nano link row must be green.
+2. Open `http://<pi>:5001/service`. In **Striker**: set the mode (**AUTO** = the camera and the ToF drive every cycle;
+   **MANUAL** = you do). In AUTO the station **arms and disarms itself**: armed only while a tile is in the system (graded
+   by the camera, or under the ToF); otherwise the striker rests down with the coil off (`striker_sequence.md`). For MANUAL,
+   switch **Auto-arm** off and press **Armed** (`STRIKE 1`; without it the Nano refuses every manual command). The Nano link
+   row must be green.
 3. **Data session** panel: pick the run type, add a note, set the labels for what is under the striker, **Start session**.
    `● REC` shows the elapsed time; the table shows audio seconds, strike/retract counts, dropped audio blocks and
    whether the camera's video is `recording`.
@@ -114,6 +117,9 @@ If the session stops uncleanly (power cut, crash) the next start-up seals the fo
 - **The camera's video** is raw frames as the camera delivered them; it is written by a *separate process* and the two only
   agree through the bus. If the camera service is down the audio and events are still recorded and the manifest says
   `"video": null`.
+- **Auto-arm and the camera trigger** are laptop-tested only; the camera has not yet been seen raising the striker on the rig.
+  Strikes caused by a tile in AUTO are tile data; the `rest` lowerings and any `safety` strikes are not, and should be dropped
+  when building a training set.
 - **Prototype striker numbers are placeholders:** `retract_hold_ms` (1500), `retract_max_ms` (8000), `strike_ms` (300). How long the
   retraction rings, the coil's duty rating and the real strike time are unmeasured. Hand-turned belt: tile arrival timing from
   these runs says nothing about belt timing.

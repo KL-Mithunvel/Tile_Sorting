@@ -29,7 +29,7 @@ from pathlib import Path
 from acoustic.dashboard import create_app
 from acoustic.session_control import SessionController
 from acoustic.station import StationService
-from acoustic.striker_arming import CameraArming
+from acoustic.striker_arming import AutoArm, CameraArming
 from fusion.session import SessionRecorder
 from fusion.blobs import BlobStore
 from fusion.store import TileStore
@@ -131,8 +131,13 @@ def main(argv=None) -> None:
     blobs = BlobStore(blob_root, store, budget_bytes=int(budget * 1024 ** 3))
 
     # The striker rests down (the coil overheated held up all the time); the camera's detection raises it.
-    if (st_cfg.get("striker") or {}).get("arm_on_camera", True):
+    striker_cfg = st_cfg.get("striker") or {}
+    if striker_cfg.get("arm_on_camera", True):
         CameraArming(bus).attach()
+    # ... and it is ARMED only while a tile is in the system (the coil is energised when armed and wanted).
+    auto_arm = AutoArm(bus, enabled=bool(striker_cfg.get("auto_arm", True)),
+                       tile_mm=int(striker_cfg.get("tile_mm", 100)),
+                       grace_s=float(striker_cfg.get("disarm_grace_s", 2.0)))
 
     session = None
     sess_cfg = st_cfg.get("session") or {}
@@ -159,9 +164,10 @@ def main(argv=None) -> None:
         )
     try:
         service = (
-            StationService(config, bus, store, capture_factory=capture_factory, blobs=blobs, session=session)
+            StationService(config, bus, store, capture_factory=capture_factory, blobs=blobs, session=session,
+                           auto_arm=auto_arm)
             if capture_factory
-            else StationService(config, bus, store, blobs=blobs, session=session)
+            else StationService(config, bus, store, blobs=blobs, session=session, auto_arm=auto_arm)
         )
         service.start()
     except Exception as exc:  # noqa: BLE001

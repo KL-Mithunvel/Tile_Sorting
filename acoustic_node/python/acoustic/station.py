@@ -55,6 +55,7 @@ class StationService:
         monotonic: Callable[[], float] = time.monotonic,
         blobs: Optional[BlobStore] = None,
         session=None,
+        auto_arm=None,
     ):
         self._config = config
         self._station_cfg = config.get("station") or {}
@@ -80,6 +81,10 @@ class StationService:
 
         # Optional data-collection sessions (acoustic.session_control.SessionController).
         self.session = session
+        # Optional: arms the striker only while a tile is in the system (acoustic.striker_arming.AutoArm).
+        self.auto_arm = auto_arm
+        if auto_arm is not None and getattr(auto_arm, "awaiting", None) is not None:
+            auto_arm.awaiting = self.coordinator_awaiting
         self._capture = None
         self._mic_error: Optional[str] = "not started"
         self._next_mic_attempt = 0.0
@@ -92,6 +97,8 @@ class StationService:
 
     def start(self) -> None:
         self.coordinator.start()
+        if self.auto_arm is not None:
+            self.auto_arm.attach()
         if self.session is not None:
             self.session.attach()
         self.coordinator.set_health("mic", FAIL, "not started")
@@ -253,6 +260,8 @@ class StationService:
             try:
                 self._check_mic()
                 self.coordinator.tick()
+                if self.auto_arm is not None:
+                    self.auto_arm.tick()
             except Exception:  # noqa: BLE001
                 log.exception("station tick failed")
             time.sleep(0.25)
@@ -285,6 +294,9 @@ class StationService:
             "open": cap is not None,
             "error": self._mic_error,
         }
+
+    def coordinator_awaiting(self) -> int:
+        return self.coordinator.awaiting_tiles()
 
     @property
     def store(self) -> TileStore:

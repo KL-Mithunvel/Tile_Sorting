@@ -81,6 +81,8 @@ The microphone should be fixed in position. The tile must be struck at the same 
 
 ## 3.1 Impact Mechanism
 
+> **Prototype behaviour, updated 2026-10-19 (later):** the striker **rests down** (an energised coil overheated), the camera's tile detection arms it and raises it, the ToF triggers the strike 2 s after it sees the tile, it lifts again so the tile can leave, and it is **armed only while a tile is in the system**. See `documents/programming/striker_sequence.md`.
+>
 > **Prototype build (2026-10-19):** the prototype does not use the ball drop below. It
 > uses a **single solenoid striker mounted directly above the tile**: energised = striker
 > retracted (held against a spring); released = gravity plus spring force strike the tile.

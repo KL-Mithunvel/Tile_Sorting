@@ -415,6 +415,11 @@ class StationCoordinator:
         self._finalize(entry, decision, now, timed_out=False)
         return tile_id
 
+    def awaiting_tiles(self) -> int:
+        """How many camera-graded tiles are still waiting for their tap."""
+        with self._lock:
+            return len(self.ledger.awaiting())
+
     def note_manual_strike(self, source: str) -> None:
         """A strike an operator asked for (or a safety release): counted and shown, never paired with a tile."""
         with self._lock:

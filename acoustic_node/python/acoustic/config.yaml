@@ -171,6 +171,12 @@ station:
   # (nano_core.h prototypeConfig); on older firmware the Nano answers ERR UNSUPPORTED to every UP.
   striker:
     arm_on_camera: true
+    # ARMED (STRIKE 1) only while a tile is in the system (owner, 2026-10-19). The Pi arms the striker when a tile is
+    # graded / under the sensor / mid-strike and disarms it `disarm_grace_s` after the last one is dealt with; the
+    # Nano then lowers itself. false = the Armed button on the Service view is in control instead.
+    auto_arm: true
+    tile_mm: 100          # a ToF reading at or under this counts as a tile (keep equal to the Nano's tof_trigger_mm)
+    disarm_grace_s: 2.0
 
   # The Arduino Nano (striker + belt PWM) on USB serial, through
   # acoustic/tap_bridge.py. Protocol: documents/programming/nano_serial_protocol.md.

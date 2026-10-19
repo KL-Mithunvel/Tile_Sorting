@@ -161,7 +161,8 @@ def create_app(
         if no:
             return no
         st = service.session.status()
-        return jsonify(nano=st["nano"], session={"active": st.get("active"), "id": st.get("id"),
+        aa = service.auto_arm
+        return jsonify(nano=st["nano"], auto_arm=(aa.status() if aa is not None else None), session={"active": st.get("active"), "id": st.get("id"),
                                                  "counts": st.get("counts")},
                        events=service.session.recorder.events(5), controls=controls_enabled)
 
@@ -211,6 +212,15 @@ def create_app(
     @app.route("/api/striker/arm", methods=["POST"])
     def striker_arm():
         return _session_call(lambda b: service.session.striker_arm(bool(b.get("enabled"))))
+
+    @app.route("/api/striker/auto_arm", methods=["POST"])
+    def striker_auto_arm():
+        def go(b):
+            if service.auto_arm is None:
+                raise ValueError("auto-arm is not configured on this station")
+            service.auto_arm.set_enabled(bool(b.get("enabled")))
+            return {"auto_arm": service.auto_arm.status()}
+        return _session_call(go)
 
     @app.route("/api/striker/hold", methods=["POST"])
     def striker_hold():

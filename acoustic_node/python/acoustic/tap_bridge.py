@@ -29,7 +29,7 @@ import time
 from typing import Callable, Optional
 
 from acoustic.tap_protocol import (
-    encode_belt, encode_mode, encode_ping, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
+    encode_belt, encode_hold, encode_mode, encode_ping, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
 )
 from fusion.transport import (
     TOPIC_ALARM,
@@ -117,7 +117,7 @@ class TapBridge:
                     self._tof_mm = msg["tof1_mm"]
                 if "armed" in msg:
                     # "nano_state", not "state": the status body already has state = online/offline
-                    self._seq_state = {"armed": msg["armed"], "nano_state": msg["state"],
+                    self._seq_state = {"hold_pct": msg.get("hold_pct"), "armed": msg["armed"], "nano_state": msg["state"],
                                        "left_ms": msg["left_ms"], "must_leave": msg["must_leave"]}
             elif kind == "err":
                 self.counters["errors_from_nano"] += 1
@@ -241,6 +241,8 @@ class TapBridge:
                 self._write(encode_release())
             elif action == "cycle":
                 self._write(encode_tap_cycle())
+            elif action == "hold":
+                self._write(encode_hold(float(cmd["percent"])))
             else:
                 raise KeyError(action)
         except (ValueError, KeyError, TypeError):

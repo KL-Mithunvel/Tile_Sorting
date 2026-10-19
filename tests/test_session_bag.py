@@ -526,3 +526,18 @@ def test_the_two_session_topics_agree_across_the_nodes():
     from fusion.transport import TOPIC_SESSION_STATUS
 
     assert TOPIC_SESSION_CAMERA == CAM and TOPIC_SESSION_STATUS == CAM_STATUS
+
+
+def test_api_striker_hold_power_needs_controls_and_a_number(tmp_path):
+    svc, bus, ctl = station(tmp_path)
+    try:
+        ro = create_app(svc, controls_enabled=False).test_client()
+        assert ro.post("/api/striker/hold", json={"percent": 40}).status_code == 403
+        rw = create_app(svc, controls_enabled=True).test_client()
+        assert rw.post("/api/striker/hold", json={"percent": 40}).status_code == 200
+        assert bus.messages("station/striker/cmd")[-1] == {"action": "hold", "percent": 40.0}
+        assert rw.post("/api/striker/hold", json={"percent": 140}).status_code == 409
+        assert rw.post("/api/striker/hold", json={"percent": "hot"}).status_code == 409
+        assert rw.post("/api/striker/hold", json={}).status_code == 409
+    finally:
+        svc.shutdown()

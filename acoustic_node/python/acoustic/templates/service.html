@@ -94,6 +94,11 @@
     <div class="row"><button id="stRetract" class="big">Retract</button>
       <button id="stRelease" class="big go">Release (strike)</button>
       <button id="stCycle">Retract + release</button></div>
+    <div class="row"><label for="holdPct">Hold power</label>
+      <input type="range" id="holdPct" min="0" max="100" step="5" value="30" style="flex:1;min-width:140px">
+      <b id="holdVal">–</b><button id="holdApply">Set</button></div>
+    <div class="muted" style="margin-bottom:6px">Coil power while the striker is held up. The coil heats the whole time it is parked: lower it until the
+    coil stays cool, but <b>too low and the striker drops by itself</b> (a strike nobody asked for). Applies at once, no reflash. Pull-in is always full power for the first 150 ms.</div>
     <div class="muted">Energised = retracted (a sound of its own). <b>Release</b> de-energises it: gravity + spring
     strike. Manual needs <b>MANUAL</b> mode and <b>Armed</b>; in AUTO the ToF starts every cycle.</div>
     <table id="stTbl"></table>
@@ -228,6 +233,8 @@ async function strikerRefresh() {
   for (let i = 0; i < 4; i++) $("stp" + i).className = (i === ph.step) ? "on" : "";
   if (n.left_ms > 0) maxLeft = Math.max(maxLeft, n.left_ms);
   $("cd").firstElementChild.style.width = (n.left_ms > 0 ? 100 * (1 - n.left_ms / maxLeft) : 0) + "%";
+  if (n.hold_pct != null) { $("holdVal").textContent = n.hold_pct + " %"; if (document.activeElement !== $("holdPct")) $("holdPct").value = n.hold_pct; }
+  $("holdApply").disabled = !j.controls; $("holdPct").disabled = !j.controls;
   $("stMode").textContent = "Mode: " + (n.manual ? "MANUAL" : "AUTO (ToF)"); $("stMode").classList.toggle("on", !!n.manual);
   $("stArm").textContent = "Armed: " + (n.armed ? "YES" : "NO"); $("stArm").classList.toggle("on", !!n.armed);
   for (const id of ["stMode", "stArm", "stRetract", "stRelease", "stCycle"]) $(id).disabled = !j.controls;
@@ -274,6 +281,8 @@ async function sessionRefresh() {
 }
 $("stMode").onclick = () => post("/api/striker/mode", {manual: !manualOn}).then(strikerRefresh);
 $("stArm").onclick = () => post("/api/striker/arm", {enabled: !armedOn}).then(strikerRefresh);
+$("holdPct").oninput = () => { $("holdVal").textContent = $("holdPct").value + " % (not yet set)"; };
+$("holdApply").onclick = () => post("/api/striker/hold", {percent: Number($("holdPct").value)}).then(strikerRefresh);
 $("stRetract").onclick = () => post("/api/striker/action", {action: "retract"});
 $("stRelease").onclick = () => post("/api/striker/action", {action: "release"});
 $("stCycle").onclick = () => post("/api/striker/action", {action: "cycle"});

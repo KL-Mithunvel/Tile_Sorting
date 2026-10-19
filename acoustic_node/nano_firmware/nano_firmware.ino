@@ -69,7 +69,7 @@ const uint8_t PIN_STRIKER_DIR       = 8;   // MDD10A DIR input         owner-con
 // the whole of retract_hold_ms and retract_max_ms with margin, then check the coil is not hot.
 const uint8_t  STRIKER_PULL_PCT = 100;     // duty while the striker is being pulled up
 const uint16_t STRIKER_PULL_MS  = 150;     // how long that lasts
-const uint8_t  STRIKER_HOLD_PCT = 60;      // duty once it is up
+// (the hold duty is set by nano::Config::hold_pct and the Pi's HOLD n command, not here)
 
 // Two VL53L1X boot at 0x29. ToF 1 is moved to 0x30 at every boot while ToF 3 is
 // held in reset (documents/electrical/i2c_bus_plan.md 3.1); ToF 3 keeps 0x29.
@@ -112,8 +112,12 @@ class NanoHal : public nano::Hal {
   void service() {
     if (strikerUp_ && !strikerHeld_ && (uint32_t)(millis() - strikerAt_) >= STRIKER_PULL_MS) {
       strikerHeld_ = true;
-      analogWrite(PIN_STRIKER_PWM, (uint16_t)STRIKER_HOLD_PCT * 255 / 100);
+      analogWrite(PIN_STRIKER_PWM, (uint16_t)holdPct_ * 255 / 100);
     }
+  }
+  void setHoldPercent(uint8_t percent) override {
+    holdPct_ = percent;
+    if (strikerUp_ && strikerHeld_) analogWrite(PIN_STRIKER_PWM, (uint16_t)holdPct_ * 255 / 100);   // applies live
   }
 #else
   void setArm(bool on) override { digitalWrite(PIN_SOLENOID_ARM, on ? HIGH : LOW); }
@@ -163,6 +167,7 @@ class NanoHal : public nano::Hal {
 
  private:
   bool strikerUp_ = false, strikerHeld_ = false;
+  uint8_t holdPct_ = 30;
   uint32_t strikerAt_ = 0;
 };
 

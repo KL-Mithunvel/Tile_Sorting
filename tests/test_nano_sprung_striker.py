@@ -20,7 +20,7 @@ import host_nano  # noqa: E402
 
 from acoustic.tap_bridge import TapBridge  # noqa: E402
 from acoustic.tap_protocol import (  # noqa: E402
-    encode_belt, encode_mode, encode_ping, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
+    encode_belt, encode_hold, encode_mode, encode_ping, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
 )
 from fusion.transport import InMemoryBus  # noqa: E402
 
@@ -567,3 +567,42 @@ def test_bridge_publishes_the_sequence_status(proto):
     s = bus.messages("station/nano/status")[-1]
     assert s["armed"] is True and s["nano_state"] == 7 and s["left_ms"] == 0 and s["must_leave"] is False
     assert s["state"] == "online"          # the bridge's own field is not overwritten by the Nano's state number
+
+
+# ---- the settable hold power (the coil overheated parked at 60 %) ----------------------------------------------------
+
+
+def test_hold_power_defaults_low_and_is_settable_from_the_pi(proto):
+    assert proto.pins["hold"] == 30                                  # the prototype default, applied at boot
+    hb = last_hb(keep_alive(proto, 600, step=50))
+    assert hb["hold_pct"] == 30
+    proto.rx(encode_hold(45))
+    assert proto.pins["hold"] == 45
+    assert last_hb(keep_alive(proto, 600, step=50))["hold_pct"] == 45
+    proto.rx(encode_hold(0))
+    assert proto.pins["hold"] == 0                                   # allowed (the GUI warns it will drop)
+
+
+def test_hold_power_out_of_range_or_on_the_old_striker_is_refused(proto, exe):
+    proto.rx("HOLD 101*00")                                          # bad checksum anyway
+    assert proto.pins["hold"] == 30
+    nano_old = host_nano.HostNano(exe)                               # the dual-solenoid core
+    try:
+        assert [e["code"] for e in of(nano_old.rx(encode_hold(40)), "err")] == ["UNSUPPORTED"]
+    finally:
+        nano_old.close()
+
+
+def test_hold_command_round_trips_through_the_bridge_and_status(proto):
+    bus = InMemoryBus()
+    ser = _Serial()
+    bridge = TapBridge(ser, bus, clock=lambda: 100.0)
+    bus.subscribe("station/striker/cmd", bridge._on_striker_cmd)
+    bus.publish("station/striker/cmd", {"action": "hold", "percent": 35})
+    for data in ser.written:
+        proto.rx(data)
+    assert proto.pins["hold"] == 35
+    for line in keep_alive(proto, 600, step=50):
+        bridge.handle_line(line, 100.0)
+    bridge.tick(100.0)
+    assert bus.messages("station/nano/status")[-1]["hold_pct"] == 35

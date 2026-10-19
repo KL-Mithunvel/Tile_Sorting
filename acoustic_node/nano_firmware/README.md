@@ -30,7 +30,7 @@ spring strike**. LOCK is unused. Both edges are reported so both sounds can be l
 - `HB` gains two fields (`manual`, `retracted`) in this mode only; the dual-solenoid wire format is
   unchanged. 16 tests in `tests/test_nano_sprung_striker.py`.
 - **Driver (owner, 2026-10-19):** the coil is driven by a **Cytron MDD10A**, not a bare MOSFET: **D10 = PWM, D8 = DIR** (DIR held high; only the PWM energises it). The glue pulls in at
-  `STRIKER_PULL_PCT` 100 % for `STRIKER_PULL_MS` 150 ms, then holds at `STRIKER_HOLD_PCT` 60 %. Timer1 is set to ~31 kHz so the coil does not hum at the hold duty (that hum would be in every
+  `STRIKER_PULL_PCT` 100 % for `STRIKER_PULL_MS` 150 ms, then holds at the **settable hold power** (`HOLD n`, Striker panel slider, default **30 %**, reported in `HB`; applies live with no reflash). **The coil overheated parked at 60 % (owner switched its power off, 2026-10-19):** lower it until the coil stays cool, but too low drops the striker by itself. Timer1 is set to ~31 kHz so the coil does not hum at the hold duty (that hum would be in every
   recording). **A hold duty too low drops the striker by itself: a strike the Nano never reports** -- raise it until it holds for the whole `retract_max_ms`, then check the coil is not hot.
 - **Unmeasured:** the hold time (how long the retraction rings), the coil's duty rating, the strike
   duration, the pull/hold duty. The `Config` and duty values are placeholders.

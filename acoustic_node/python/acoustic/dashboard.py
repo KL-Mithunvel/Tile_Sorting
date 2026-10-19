@@ -212,6 +212,15 @@ def create_app(
     def striker_arm():
         return _session_call(lambda b: service.session.striker_arm(bool(b.get("enabled"))))
 
+    @app.route("/api/striker/hold", methods=["POST"])
+    def striker_hold():
+        def go(b):
+            try:
+                service.session.striker_hold(float(b.get("percent")))
+            except (TypeError, ValueError):
+                raise ValueError("send percent: a number from 0 to 100")
+        return _session_call(go)
+
     @app.route("/api/striker/action", methods=["POST"])
     def striker_action():
         return _session_call(lambda b: service.session.striker_action(str(b.get("action"))))

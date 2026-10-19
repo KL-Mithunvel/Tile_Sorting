@@ -9,7 +9,7 @@ this prevents.
 
 Nano -> Pi
     HELLO <fw>                                  once at boot
-    HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok> [<manual> <retracted> <tof1_mm> <armed> <state> <left_ms> <must_leave>]
+    HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok> [<manual> <retracted> <tof1_mm> <armed> <state> <left_ms> <must_leave> <hold_pct>]
                         every 500 ms (250 ms for the prototype striker)
     TAP <seq> <tile_present> <tof_mm> <uptime_ms> [<src>]   the instant LOCK opens
                         (single sprung striker: the instant the coil is RELEASED)
@@ -28,6 +28,7 @@ Pi -> Nano
     MODE <0|1>          single sprung striker: 0 = the ToF starts cycles, 1 = manual
     RETRACT             manual mode: energise the coil and hold it
     RELEASE             manual mode: de-energise it (the strike)
+    HOLD <0-100>        coil duty % while the striker is held up (heat vs holding force; too low drops it)
     TAP                 manual mode: RETRACT, wait the hold time, RELEASE
 
 `src` says why: 0 ToF, 1 manual, 2 safety release (timeout / inhibit / e-stop),
@@ -75,6 +76,10 @@ SRC_NAMES = {SRC_TOF: "tof", SRC_MANUAL: "manual", SRC_SAFETY: "safety", SRC_TOF
 
 def encode_mode(manual: bool) -> bytes:
     return encode(f"MODE {1 if manual else 0}")
+
+
+def encode_hold(percent: float) -> bytes:
+    return encode(f"HOLD {max(0, min(100, int(round(percent))))}")
 
 
 def encode_retract() -> bytes:
@@ -129,16 +134,18 @@ def parse_line(raw) -> Optional[dict]:
     if kind == "HELLO":
         return {"type": "hello", "fw": " ".join(args) or "?"}
     if kind == "HB":
-        v = _ints(args, len(args)) if len(args) in (4, 6, 7, 11) else None
+        v = _ints(args, len(args)) if len(args) in (4, 6, 7, 11, 12) else None
         if v is None:
-            return bad("HB needs 4 (or 6, 7 or 11) integers")
+            return bad("HB needs 4 (or 6, 7, 11 or 12) integers")
         msg = {"type": "hb", "uptime_ms": v[0], "belt_pct": v[1], "tof1_ok": bool(v[2]), "tof3_ok": bool(v[3])}
         if len(v) >= 6:  # the single sprung striker also reports its mode and whether it is held up
             msg.update(manual=bool(v[4]), retracted=bool(v[5]))
         if len(v) >= 7:  # ... and the striker ToF's latest distance (65535 = no reading / nothing in range)
             msg["tof1_mm"] = None if v[6] == 65535 else v[6]
-        if len(v) == 11:  # ... and the sequence: armed (read back from the Nano), nano::State, ms to the strike, tile-must-leave
+        if len(v) >= 11:  # ... and the sequence: armed (read back from the Nano), nano::State, ms to the strike, tile-must-leave
             msg.update(armed=bool(v[7]), state=v[8], left_ms=v[9], must_leave=bool(v[10]))
+        if len(v) == 12:
+            msg["hold_pct"] = v[11]
         return msg
     if kind == "TAP":
         v = _ints(args, 5) if len(args) == 5 else _ints(args, 4)

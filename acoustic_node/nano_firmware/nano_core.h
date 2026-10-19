@@ -57,6 +57,7 @@ struct Hal {
   virtual void setBelt(uint8_t percent) = 0;   // applied belt speed 0..100
   virtual void setArm(bool on) = 0;            // ARM solenoid MOSFET (SPRUNG: THE striker coil, on = retracted)
   virtual void setLock(bool on) = 0;           // LOCK solenoid MOSFET (on = latch OPEN = ball drops); unused when SPRUNG
+  virtual void setHoldPercent(uint8_t percent) { (void)percent; }   // SPRUNG: coil duty while the striker is held up
   virtual void setTapLed(bool on) = 0;
   virtual void setStatusLed(bool on) = 0;      // on = running, off = FAULT
   virtual bool estopAsserted() = 0;            // already polarity-corrected
@@ -86,6 +87,7 @@ struct Config {
   uint16_t retract_max_ms;     // longest the coil may stay energised (heating); then released
   uint16_t strike_ms;          // release -> back to cooldown (the strike has landed)
   // ---- parked-retracted (owner, 2026-10-19): the REST position is UP.
+  uint8_t  hold_pct;           // SPRUNG: coil duty (0-100) once the striker is up; the Pi can change it (HOLD n)
   bool     park_retracted;     // AUTO: with nobody under the sensor and the striker armed, the coil is energised
                                //   and the striker waits retracted; a tile releases it, the striker re-parks once the
                                //   tile is gone. NO retract_max_ms limit while parked: the coil is on for as long as
@@ -119,6 +121,7 @@ inline Config defaultConfig() {
   c.retract_hold_ms = 1500;        // PROVISIONAL: the retraction noise decay is unmeasured
   c.retract_max_ms = 8000;         // PROVISIONAL: the coil's duty rating is unmeasured
   c.strike_ms = 300;
+  c.hold_pct = 60;
   c.park_retracted = false;
   c.release_delay_ms = 2000;
   return c;
@@ -141,6 +144,7 @@ inline Config prototypeConfig() {
   c.release_delay_ms = 2000;
   c.cooldown_ms = 1200;         // strike_ms 300 + this = it lifts again 1.5 s after the strike, after the ring has died
   c.hb_ms = 250;                // the GUI shows the phase and a countdown: twice as often as the 500 ms default
+  c.hold_pct = 30;              // the coil overheated parked at 60 %; 30 is a starting point to tune with HOLD n. TOO LOW DROPS THE STRIKER.
   return c;
 }
 
@@ -161,6 +165,8 @@ class Core {
     h_.setLock(false);
     h_.setTapLed(false);
     h_.setBelt(0);
+    hold_pct_ = c_.hold_pct;
+    h_.setHoldPercent(hold_pct_);
     h_.setStatusLed(true);
     state_ = WAIT_TILE;
     entered_ = now;
@@ -322,6 +328,8 @@ class Core {
       n = putUint(p, n, left);
       p[n++] = ' ';
       p[n++] = tile_must_leave_ ? '1' : '0';                   // the tile under it was struck / was there at power-up
+      p[n++] = ' ';
+      n = putUint(p, n, hold_pct_);                            // coil duty while held up (settable: HOLD n)
     }
     send(p, n);
   }
@@ -423,6 +431,11 @@ class Core {
         if (manual_mode_) { hold_for_release_ = true; parked_ = false; }
         else if (c_.park_retracted) { hold_for_release_ = false; parked_ = true; tile_timing_ = false; }
       }
+    } else if (vlen == 4 && memcmp(p, "HOLD", 4) == 0 && parseUint(arg, alen, 100, &v)) {
+      markValid();
+      if (!sprung()) { sendErr("UNSUPPORTED", "HOLD needs the sprung striker"); return; }
+      hold_pct_ = (uint8_t)v;
+      h_.setHoldPercent(hold_pct_);
     } else if (vlen == 7 && memcmp(p, "RETRACT", 7) == 0 && alen == 0) {
       markValid();
       manualStart(true);
@@ -677,6 +690,7 @@ class Core {
   uint8_t belt_cmd_ = 0;
   uint8_t belt_applied_ = 0;
   bool strike_enabled_ = false;
+  uint8_t hold_pct_ = 60;
   bool manual_mode_ = false;        // SPRUNG: the Pi, not the ToF, starts cycles
   bool hold_for_release_ = false;   // RETRACTED by RETRACT: wait for RELEASE instead of releasing by itself
   bool parked_ = false;             // RETRACTED as the rest position (AUTO, park_retracted): a tile releases it

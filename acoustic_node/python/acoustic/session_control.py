@@ -168,7 +168,7 @@ class SessionController:
         st = self.recorder.status()
         st["camera"] = dict(self.camera) if st.get("active") else {}
         st["nano"] = {k: self.nano.get(k) for k in ("link", "manual", "retracted", "fw", "tof1_ok", "tof1_mm",
-                                                       "armed", "nano_state", "left_ms", "must_leave")}
+                                                       "armed", "nano_state", "left_ms", "must_leave", "hold_pct")}
         return st
 
     # ---- the striker, by hand -------------------------------------------------------------
@@ -179,6 +179,13 @@ class SessionController:
     def striker_arm(self, enabled: bool) -> None:
         """Allow / inhibit the striker (STRIKE 1/0): every strike, manual or not, needs it."""
         self._bus.publish(TOPIC_STRIKE, {"enabled": bool(enabled)}, qos=1)
+
+    def striker_hold(self, percent: float) -> None:
+        """Coil duty (%) while the striker is held up. Lower = cooler coil, weaker hold (too low drops it)."""
+        percent = float(percent)
+        if not 0 <= percent <= 100:
+            raise ValueError("hold percent must be 0-100")
+        self._bus.publish(TOPIC_STRIKER_CMD, {"action": "hold", "percent": percent}, qos=1)
 
     def striker_action(self, action: str) -> None:
         if action not in ("retract", "release", "cycle"):

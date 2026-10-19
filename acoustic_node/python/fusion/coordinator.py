@@ -415,6 +415,13 @@ class StationCoordinator:
         self._finalize(entry, decision, now, timed_out=False)
         return tile_id
 
+    def note_manual_strike(self, source: str) -> None:
+        """A strike an operator asked for (or a safety release): counted and shown, never paired with a tile."""
+        with self._lock:
+            key = "manual_strikes" if source == "manual" else "safety_strikes"
+            self._counters[key] = self._counters.get(key, 0) + 1
+            self._event(f"{source} strike recorded (not paired with a tile)")
+
     def note_ignored_tap(self, reason: str) -> None:
         """A sound that triggered a capture but was not a plausible strike. It
         is counted and shown, but uses up no tile's tap slot."""

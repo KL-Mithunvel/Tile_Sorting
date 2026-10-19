@@ -148,6 +148,9 @@ class AudioCapture:
         # When the audio callback last ran (time.monotonic()). The station uses
         # it to tell a live microphone from one that has gone silent/unplugged.
         self.last_block_monotonic: Optional[float] = None
+        # Optional: called with every raw mono block, on the audio thread, before any
+        # triggering -- the session recorder's continuous recording. Must be quick.
+        self.block_sink = None
 
     def _callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         if status:
@@ -156,6 +159,12 @@ class AudioCapture:
         block = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
         self.last_rms = compute_rms(block)
         self.last_block_monotonic = time.monotonic()
+        sink = self.block_sink
+        if sink is not None:
+            try:
+                sink(block)
+            except Exception:  # noqa: BLE001 - recording must never cost the station its trigger
+                pass
 
         clip = self._detector.process_block(block)
         if clip is not None:

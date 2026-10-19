@@ -175,6 +175,21 @@ class TilePublisher:
         self._halt = threading.Event()
         self.published = 0
         self.dropped = 0
+        self._extra_subs: list = []
+
+    def subscribe(self, topic: str, callback) -> None:
+        """Listen to one more (exact) topic, e.g. the data-collection session announcements.
+        Safe before or after start()."""
+        self._extra_subs.append((topic, callback))
+        if self._bus is not None and hasattr(self._bus, "subscribe"):
+            self._bus.subscribe(topic, callback)
+
+    def publish_json(self, topic: str, payload: dict, qos: int = 1, retain: bool = False) -> bool:
+        try:
+            return bool(self._bus is not None and self._bus.publish(topic, payload, qos=qos, retain=retain))
+        except Exception:  # noqa: BLE001
+            log.exception("could not publish %s", topic)
+            return False
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -207,6 +222,8 @@ class TilePublisher:
             )
         if hasattr(self._bus, "subscribe"):
             self._bus.subscribe(DIAG_PING_TOPIC, self._on_ping)
+            for topic, callback in self._extra_subs:
+                self._bus.subscribe(topic, callback)
         try:
             self._bus.start()
         except Exception:  # noqa: BLE001 - e.g. paho not installed: keep inspecting

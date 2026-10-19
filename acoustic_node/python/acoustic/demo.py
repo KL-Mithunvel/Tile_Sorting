@@ -35,6 +35,8 @@ class SyntheticCapture:
         self.trigger_mode = "simulated"
         self._q: "queue.Queue[np.ndarray]" = queue.Queue()
         self._started = False
+        self.block_sink = None
+        self._pump = None
 
     @property
     def last_block_monotonic(self):
@@ -46,9 +48,23 @@ class SyntheticCapture:
 
     def start(self) -> None:
         self._started = True
+        self._pump = threading.Thread(target=self._pump_blocks, daemon=True, name="synthetic-mic")
+        self._pump.start()
 
     def stop(self) -> None:
         self._started = False
+        if self._pump is not None:
+            self._pump.join(timeout=1.0)
+
+    def _pump_blocks(self) -> None:
+        """Feeds the block sink (the session's continuous recording) with quiet noise in real time."""
+        block = int(0.03 * self.sample_rate)
+        rng = np.random.default_rng(0)
+        while self._started:
+            sink = self.block_sink
+            if sink is not None:
+                sink((rng.normal(0, 0.001, block)).astype(np.float32))
+            time.sleep(0.03)
 
     def notify_tap(self) -> None:
         freq = random.choice([2800.0, 2800.0, 2800.0, 1700.0])  # now and then a "dull" one

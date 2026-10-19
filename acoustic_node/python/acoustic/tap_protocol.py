@@ -9,8 +9,12 @@ this prevents.
 
 Nano -> Pi
     HELLO <fw>                                  once at boot
-    HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok>   every 500 ms
-    TAP <seq> <tile_present> <tof_mm> <uptime_ms>   the instant LOCK opens
+    HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok> [<manual> <retracted> <tof1_mm> <armed> <state> <left_ms> <must_leave>]
+                        every 500 ms (250 ms for the prototype striker)
+    TAP <seq> <tile_present> <tof_mm> <uptime_ms> [<src>]   the instant LOCK opens
+                        (single sprung striker: the instant the coil is RELEASED)
+    RET <seq> <src> <uptime_ms>                 single sprung striker: the coil was
+                        just ENERGISED (striker retracted) - a sound of its own
     PONG <n>                                    answer to PING
     ERR <code> <text...>
 
@@ -21,6 +25,13 @@ Pi -> Nano
                         belt running.
     BELT <pct>          belt speed 0-100
     STRIKE <0|1>        allow / inhibit the striker
+    MODE <0|1>          single sprung striker: 0 = the ToF starts cycles, 1 = manual
+    RETRACT             manual mode: energise the coil and hold it
+    RELEASE             manual mode: de-energise it (the strike)
+    TAP                 manual mode: RETRACT, wait the hold time, RELEASE
+
+`src` says why: 0 ToF, 1 manual, 2 safety release (timeout / inhibit / e-stop),
+3 ToF-started but the ToF could not be read at the strike.
 
 `seq` is a 16-bit counter that wraps; the bridge uses it to count lost TAP
 lines. `tile_present` is the striker-station ToF reading at the strike.
@@ -56,6 +67,26 @@ def encode_ping(n: int) -> bytes:
 
 def encode_strike(enabled: bool) -> bytes:
     return encode(f"STRIKE {1 if enabled else 0}")
+
+
+SRC_TOF, SRC_MANUAL, SRC_SAFETY, SRC_TOF_BLIND = 0, 1, 2, 3
+SRC_NAMES = {SRC_TOF: "tof", SRC_MANUAL: "manual", SRC_SAFETY: "safety", SRC_TOF_BLIND: "tof_blind"}
+
+
+def encode_mode(manual: bool) -> bytes:
+    return encode(f"MODE {1 if manual else 0}")
+
+
+def encode_retract() -> bytes:
+    return encode("RETRACT")
+
+
+def encode_release() -> bytes:
+    return encode("RELEASE")
+
+
+def encode_tap_cycle() -> bytes:
+    return encode("TAP")
 
 
 def _ints(parts: list[str], n: int) -> Optional[list[int]]:
@@ -98,15 +129,30 @@ def parse_line(raw) -> Optional[dict]:
     if kind == "HELLO":
         return {"type": "hello", "fw": " ".join(args) or "?"}
     if kind == "HB":
-        v = _ints(args, 4)
+        v = _ints(args, len(args)) if len(args) in (4, 6, 7, 11) else None
         if v is None:
-            return bad("HB needs 4 integers")
-        return {"type": "hb", "uptime_ms": v[0], "belt_pct": v[1], "tof1_ok": bool(v[2]), "tof3_ok": bool(v[3])}
+            return bad("HB needs 4 (or 6, 7 or 11) integers")
+        msg = {"type": "hb", "uptime_ms": v[0], "belt_pct": v[1], "tof1_ok": bool(v[2]), "tof3_ok": bool(v[3])}
+        if len(v) >= 6:  # the single sprung striker also reports its mode and whether it is held up
+            msg.update(manual=bool(v[4]), retracted=bool(v[5]))
+        if len(v) >= 7:  # ... and the striker ToF's latest distance (65535 = no reading / nothing in range)
+            msg["tof1_mm"] = None if v[6] == 65535 else v[6]
+        if len(v) == 11:  # ... and the sequence: armed (read back from the Nano), nano::State, ms to the strike, tile-must-leave
+            msg.update(armed=bool(v[7]), state=v[8], left_ms=v[9], must_leave=bool(v[10]))
+        return msg
     if kind == "TAP":
-        v = _ints(args, 4)
-        if v is None or v[1] not in (0, 1):
-            return bad("TAP needs seq, 0|1, tof_mm, uptime_ms")
-        return {"type": "tap", "seq": v[0], "tile_present": bool(v[1]), "tof_mm": v[2], "uptime_ms": v[3]}
+        v = _ints(args, 5) if len(args) == 5 else _ints(args, 4)
+        if v is None or v[1] not in (0, 1) or (len(v) == 5 and v[4] not in SRC_NAMES):
+            return bad("TAP needs seq, 0|1, tof_mm, uptime_ms [, src 0-3]")
+        msg = {"type": "tap", "seq": v[0], "tile_present": bool(v[1]), "tof_mm": v[2], "uptime_ms": v[3]}
+        if len(v) == 5:                      # only the single sprung striker says why it struck
+            msg["src"] = SRC_NAMES[v[4]]
+        return msg
+    if kind == "RET":
+        v = _ints(args, 3)
+        if v is None or v[1] not in SRC_NAMES:
+            return bad("RET needs seq, src 0-3, uptime_ms")
+        return {"type": "ret", "seq": v[0], "src": SRC_NAMES[v[1]], "uptime_ms": v[2]}
     if kind == "PONG":
         v = _ints(args, 1)
         return {"type": "pong", "n": v[0]} if v else bad("PONG needs 1 integer")

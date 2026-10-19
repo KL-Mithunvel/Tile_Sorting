@@ -148,6 +148,14 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Bad configuration: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    if publisher is not None:
+        # Data-collection sessions started on the Pi's station GUI: record the raw video into
+        # the session's folder (nothing happens unless a session is announced).
+        from camera.session_follower import SessionFollower
+        from camera.sources import REPO_ROOT
+
+        SessionFollower(controller, publisher, REPO_ROOT, config).attach()
+
     try:
         controller.start(device=args.device, video=args.video, loop=args.loop)
     except (RuntimeError, ValueError) as exc:

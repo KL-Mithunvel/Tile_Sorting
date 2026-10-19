@@ -620,8 +620,10 @@ releasing it lets gravity and the spring drive the striker onto the tile. There 
 strike can be started by the ToF sensor or by a manual command sent from the Pi to the Nano. The retraction itself makes a
 noise that the microphone also records; it has to be removed from the analysed clip, for example by analysing only after the
 release edge with a settle gap before it. This is not yet tested on the rig, striker mass, spring rate and drop height are
-not measured, and the code (`TapSequencer`, `sketch.ino`, Nano core) has not been changed for this configuration.
+not measured, and `TapSequencer` and the UNO Q `sketch.ino` have not been changed for this configuration (the Nano core has: see below).
 Source: `documents/project/project_charter.md` §6.2 "Prototype Configuration".
+
+**Data collection (2026-10-19).** For the first dataset the station can record a *session*: one folder holding the continuous microphone, the camera's raw video with a frame-time log, every message the station sent with a timestamp, and each striker event labelled by the operator. Because energising the coil is a sound of its own, the retraction and the strike are recorded as two separate labelled events, so the retraction noise is available both as something to remove and as training data. Clips are cut from the continuous audio after the run (so the window can be changed later) and a manifest stores the SHA-256 of every file. This was tested only with a synthetic microphone and in-memory message bus on the development laptop (`tests/test_session_bag.py`, `tests/test_nano_sprung_striker.py`); it has not run on the Pi, with the real microphone or camera, or on a Nano, and the time alignment between audio, video and events is not measured. Source: `documents/programming/data_collection_sessions.md`.
 
 **Measurement.** The clip is captured with a pre-trigger buffer, Hann-windowed, and reduced to peak frequency $f_p$, spectral
 centroid, SNR and decay time $T_{20}$ from the Schroeder integral [18]:

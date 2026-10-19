@@ -32,8 +32,9 @@ exists so a byte flipped by motor noise on a long USB run can never turn `BELT 0
 | Message | When | Meaning |
 |---|---|---|
 | `HELLO <fw>` | once at boot | firmware id; resets the Pi's `seq` tracking |
-| `HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok>` | every 500 ms | alive; current belt %, ToF sensors responding (0/1) |
-| `TAP <seq> <tile_present> <tof_mm> <uptime_ms>` | the instant the LOCK solenoid opens | one strike. `seq`: 16-bit counter, wraps. `tile_present`: 0/1, the striker-station ToF reading *at the strike* |
+| `HB <uptime_ms> <belt_pct> <tof1_ok> <tof3_ok> [<manual> <retracted> <tof1_mm> <armed> <state> <left_ms> <must_leave>]` | every 500 ms | alive; current belt %, ToF sensors responding (0/1). The prototype striker adds `manual` (0 ToF / 1 manual mode), `retracted` (coil energised) and `tof1_mm` (the striker ToF's latest distance, 65535 = no reading / nothing in range; then `armed` = STRIKE 1 read back, `state` = `nano::State` (7 RETRACTED, 8 STRUCK, 5 COOLDOWN, 6 FAULT), `left_ms` = ms until the strike while a tile is being timed, `must_leave` = the tile under it was already struck / was there at power-up; the prototype sends HB every 250 ms; published as `tof1_mm` in `station/nano/status` and shown on the Service view) |
+| `TAP <seq> <tile_present> <tof_mm> <uptime_ms> [<src>]` | the instant the LOCK solenoid opens (prototype striker: the instant the coil is **released**) | one strike. `seq`: 16-bit counter, wraps. `tile_present`: 0/1, the striker-station ToF reading *at the strike*. `src` (prototype striker only, 5th field): `0` ToF-started, `1` manual, `2` safety release (held too long, `STRIKE 0`, watchdog or e-stop while retracted), `3` ToF-started but the ToF could not be read at the strike |
+| `RET <seq> <src> <uptime_ms>` | **prototype striker:** the instant the coil is energised | the striker was just retracted. This is a sound of its own (plunger stop, spring), reported so it can be labelled and removed from the analysed clip. `src` as for `TAP` below |
 | `PONG <n>` | after `PING <n>` | optional echo |
 | `ERR <code> <text…>` | on a fault | e.g. `ERR TOF1 timeout`; becomes an alarm. Codes sent: `WATCHDOG` (belt stopped, Pi silent), `WDOGRESET` (first valid line after a trip: belt and striker need a fresh command), `TOF1` / `TOF3` (sensor not answering), `ESTOP`, `BADLINE` (rate limited) |
 
@@ -44,7 +45,12 @@ exists so a byte flipped by motor noise on a long USB run can never turn `BELT 0
 | `PING <n>` | keep-alive, every 500 ms (`station.nano.ping_s`) |
 | `BELT <pct>` | belt speed 0–100 (clamped by the Pi) |
 | `STRIKE <0\|1>` | allow / inhibit the striker (e.g. the master pausing tapping) |
-| `TAP` | **Proposed 2026-10-19, not implemented.** Manual trigger: run one strike sequence now, as if the ToF had seen a tile (prototype bench use, hand-placed tiles). Must obey the same inhibits as an automatic strike (e-stop, `STRIKE 0`, watchdog trip, cooldown) and be answered like any tap event. |
+| `MODE <0\|1>` | **Implemented 2026-10-19 (prototype striker).** 0 = the ToF starts cycles, 1 = manual: the ToF is ignored and the Pi starts them. Switching to 1 cancels an auto cycle that has not yet energised the coil |
+| `RETRACT` | manual mode: energise the coil and **hold** it (reports `RET`) until `RELEASE` |
+| `RELEASE` | manual mode: de-energise it; the strike (reports `TAP … 1`) |
+| `TAP` | manual mode: `RETRACT`, wait `retract_hold_ms`, `RELEASE` in one command (hand-placed tiles, repeated runs). Answered like any tap |
+
+All three manual commands obey the same inhibits as an automatic strike (`STRIKE 1` needed, e-stop, watchdog trip, cooldown) and are refused with `ERR NOTMANUAL`, `INHIBITED`, `BUSY`, `NOTRETRACTED` or `FAULT` -- never silently. On the full-system (dual solenoid) core they answer `ERR UNSUPPORTED`.
 
 ## Requirements on the Nano firmware (not optional)
 
@@ -61,11 +67,21 @@ exists so a byte flipped by motor noise on a long USB run can never turn `BELT 0
 4. `tile_present` must come from a ToF reading taken at the strike, not a stale one. If
    the ToF is not responding, do **not** send `TAP … 0 …` (that claims the position is
    empty) — send `ERR TOF1 timeout` and do not strike, so the Pi never records a strike
-   it cannot place.
+   it cannot place. *Exception, prototype striker:* once the coil is energised the
+   strike cannot be withheld (it must come down), so a blind release is sent as
+   `TAP … src=3` plus `ERR TOF1`, and the Pi treats `tile_present` as unknown.
 5. Never block the main loop on serial output: step/PWM and the solenoid timing come
    first (the AVR has 2 KB RAM and two external interrupts).
 
 ## What the Pi does with it
+
+- `RET` → publishes `station/retract` `{seq, source, nano_ms, ts}`. `TAP` gains `source`
+  (`tof` | `manual` | `safety` | `tof_blind`; a 4-field `TAP` is `tof`). **Only a `tof` strike
+  is paired with a tile.** `manual` and `safety` strikes are counted and recorded (data
+  collection sessions, `data_collection_sessions.md`) but use up no tile's tap slot; `tof_blind`
+  has `tile_present: null`.
+- The Pi side sends these through `station/striker/cmd`
+  `{"action": "mode"|"retract"|"release"|"cycle", "manual": bool}` (the Service view's Striker panel).
 
 - `TAP` → publishes `station/tap` `{seq, tile_present, tof_mm, nano_ms, ts}` and the
   audio capture window starts (its pre-trigger buffer absorbs the few ms of serial

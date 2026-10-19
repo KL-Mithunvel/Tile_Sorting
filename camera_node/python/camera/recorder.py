@@ -71,7 +71,13 @@ class Recorder:
         fallback_fps: float = 15.0,
         now_fn: Callable[[], datetime] = datetime.now,
         clock: Callable[[], float] = time.monotonic,
+        folder: Optional[Path] = None,
+        frame_log: bool = False,
+        wall: Callable[[], float] = time.time,
     ):
+        """`folder`: write into exactly this folder (a data-collection session's video/) instead
+        of a new date-time one under `root`. `frame_log`: also write frames.csv -- the wall-clock
+        time each frame arrived -- so the video can be lined up with audio and events."""
         if warmup_frames < 2:
             raise ValueError(f"Recorder: warmup_frames must be >= 2 to measure a rate, got {warmup_frames}")
         self.root = Path(root)
@@ -80,6 +86,10 @@ class Recorder:
         self.fallback_fps = float(fallback_fps)
         self._now_fn = now_fn
         self._clock = clock
+        self._fixed_folder = Path(folder) if folder else None
+        self._frame_log = bool(frame_log)
+        self._wall = wall
+        self._frame_f = None
 
         self.folder: Optional[Path] = None
         self._writer: Optional[cv2.VideoWriter] = None
@@ -113,7 +123,14 @@ class Recorder:
         if self.folder is not None:
             raise RuntimeError("Recorder: already started")
         self._started_at = self._now_fn()
-        self.folder = new_recording_dir(self.root, self._started_at)
+        if self._fixed_folder is not None:
+            self._fixed_folder.mkdir(parents=True, exist_ok=True)
+            self.folder = self._fixed_folder
+        else:
+            self.folder = new_recording_dir(self.root, self._started_at)
+        if self._frame_log:
+            self._frame_f = open(self.folder / "frames.csv", "w", encoding="utf-8", newline="")
+            self._frame_f.write("frame,t_wall,t_mono\n")
         self._t0 = self._clock()
         self._write_meta({"status": "recording"})
         return self.folder
@@ -124,6 +141,10 @@ class Recorder:
         now = self._clock()
         self._t_last = now
         self._frames += 1
+        if self._frame_f is not None:
+            self._frame_f.write(f"{self._frames - 1},{self._wall():.4f},{now:.4f}\n")
+            if self._frames % 30 == 0:
+                self._frame_f.flush()
 
         if self._writer is None:
             self._buffer.append((now, frame))
@@ -145,6 +166,9 @@ class Recorder:
                 self._writer = None
         finally:
             self._finished = True
+            if self._frame_f is not None:
+                self._frame_f.close()
+                self._frame_f = None
 
         if self._frames == 0:
             self._discard_empty()
@@ -207,6 +231,7 @@ class Recorder:
             "codec": self._codec,
             "video": self._video_path.name if self._video_path else None,
             "frames_resized": self._resized,
+            "frame_log": "frames.csv" if self._frame_log else None,
         }
 
     def _write_meta(self, meta: dict) -> None:

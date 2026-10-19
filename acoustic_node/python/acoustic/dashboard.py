@@ -42,7 +42,9 @@ def create_app(
     # Read-only record API for the master PC (see acoustic/sync_api.py).
     from acoustic.sync_api import make_blueprint
 
-    app.register_blueprint(make_blueprint(service.store, service.blobs, sync_token))
+    sess = service.session
+    app.register_blueprint(make_blueprint(service.store, service.blobs, sync_token,
+                                          sessions_root=sess.recorder.root if sess is not None else None))
     data_root = ((repo_root or _REPO_ROOT) / "data").resolve()
 
     @app.route("/")
@@ -132,6 +134,87 @@ def create_app(
             return denied
         service.coordinator.clear_alarms()
         return jsonify(ok=True)
+
+    # ---- data-collection sessions + the striker by hand ----------------------------
+
+    def _need_session():
+        if service.session is None:
+            return jsonify(ok=False, error="sessions are disabled (station.session.enabled)"), 409
+        return None
+
+    @app.route("/api/session")
+    def api_session():
+        no = _need_session()
+        if no:
+            return no
+        from fusion.session import list_sessions
+
+        st = service.session.status()
+        return jsonify(session=st, events=service.session.recorder.events(30),
+                       sessions=list_sessions(service.session.recorder.root)[:20],
+                       interrupted=service.session.interrupted, controls=controls_enabled)
+
+    @app.route("/api/striker")
+    def api_striker():
+        """Small and cheap, polled several times a second by the Striker panel."""
+        no = _need_session()
+        if no:
+            return no
+        st = service.session.status()
+        return jsonify(nano=st["nano"], session={"active": st.get("active"), "id": st.get("id"),
+                                                 "counts": st.get("counts")},
+                       events=service.session.recorder.events(5), controls=controls_enabled)
+
+    def _session_call(fn):
+        denied = _json_guard()
+        if denied:
+            return denied
+        no = _need_session()
+        if no:
+            return no
+        try:
+            return jsonify(ok=True, **(fn(_body()) or {}))
+        except (RuntimeError, ValueError) as exc:
+            return jsonify(ok=False, error=str(exc)), 409
+
+    @app.route("/api/session/start", methods=["POST"])
+    def session_start():
+        return _session_call(lambda b: {"session": service.session.start(
+            run_type=str(b.get("run_type") or "tile"), note=str(b.get("note") or ""),
+            labels=b.get("labels") if isinstance(b.get("labels"), dict) else None,
+            mic_ok=bool(service.level()["open"]), allow_no_audio=bool(b.get("allow_no_audio")))})
+
+    @app.route("/api/session/stop", methods=["POST"])
+    def session_stop():
+        return _session_call(lambda b: {"manifest": {k: v for k, v in service.session.stop().items()
+                                                     if k not in ("files", "config")}})
+
+    @app.route("/api/session/labels", methods=["POST"])
+    def session_labels():
+        return _session_call(lambda b: {"labels": service.session.recorder.set_labels(**b)})
+
+    @app.route("/api/session/relabel", methods=["POST"])
+    def session_relabel():
+        def go(b):
+            fields = b.get("fields") if isinstance(b.get("fields"), dict) else {}
+            return {"event": service.session.recorder.relabel(str(b.get("id")), **fields)}
+        return _session_call(go)
+
+    @app.route("/api/session/mark", methods=["POST"])
+    def session_mark():
+        return _session_call(lambda b: {"event": service.session.recorder.mark(str(b.get("kind") or "ambient"))})
+
+    @app.route("/api/striker/mode", methods=["POST"])
+    def striker_mode():
+        return _session_call(lambda b: service.session.striker_mode(bool(b.get("manual"))))
+
+    @app.route("/api/striker/arm", methods=["POST"])
+    def striker_arm():
+        return _session_call(lambda b: service.session.striker_arm(bool(b.get("enabled"))))
+
+    @app.route("/api/striker/action", methods=["POST"])
+    def striker_action():
+        return _session_call(lambda b: service.session.striker_action(str(b.get("action"))))
 
     @app.route("/api/audio/device", methods=["POST"])
     def audio_device():

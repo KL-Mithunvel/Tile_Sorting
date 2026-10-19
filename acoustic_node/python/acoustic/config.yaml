@@ -152,6 +152,19 @@ station:
 
   heartbeat_s: 2.0
 
+  # Data-collection sessions ("the bag"): the Service view's Session panel records ONE run into
+  # data/sessions/<date_time>/ -- the continuous microphone, the camera's raw video, every bus
+  # message with a timestamp, the labelled retract/strike events and a labelled WAV clip of each.
+  # Layout and rules: fusion/session.py. Nothing is recorded unless someone presses Start.
+  session:
+    enabled: true
+    root: "data/sessions"      # relative to the repo root; gitignored with data/
+    chunk_s: 30                # the microphone is written in files this long (a crash loses one)
+    min_free_gb: 2             # a session will not start with less free disk than this
+    stop_free_gb: 0.5          # below this the Service view shows LOW DISK (it does not stop by itself)
+    clip_pre_s: 0.3            # each event's clip: this much before it ...
+    clip_post_s: 1.2           # ... and this much after (the decay of a tile can be long)
+
   # The Arduino Nano (striker + belt PWM) on USB serial, through
   # acoustic/tap_bridge.py. Protocol: documents/programming/nano_serial_protocol.md.
   # Off until the Nano exists: taps then come from the rms trigger or the

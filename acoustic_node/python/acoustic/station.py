@@ -54,6 +54,7 @@ class StationService:
         clock: Callable[[], float] = time.time,
         monotonic: Callable[[], float] = time.monotonic,
         blobs: Optional[BlobStore] = None,
+        session=None,
     ):
         self._config = config
         self._station_cfg = config.get("station") or {}
@@ -77,6 +78,8 @@ class StationService:
             evidence=self._evidence,
         )
 
+        # Optional data-collection sessions (acoustic.session_control.SessionController).
+        self.session = session
         self._capture = None
         self._mic_error: Optional[str] = "not started"
         self._next_mic_attempt = 0.0
@@ -89,6 +92,8 @@ class StationService:
 
     def start(self) -> None:
         self.coordinator.start()
+        if self.session is not None:
+            self.session.attach()
         self.coordinator.set_health("mic", FAIL, "not started")
         self._bus.start()
         self._open_capture()
@@ -120,6 +125,8 @@ class StationService:
             self.coordinator.set_health("mic", FAIL, self._mic_error)
             log.error("microphone could not be opened: %s", self._mic_error)
             return False
+        if self.session is not None:
+            cap.block_sink = self.session.audio_sink   # the session's continuous recording
         with self._lock:
             self._capture = cap
         self._mic_error = None
@@ -220,8 +227,20 @@ class StationService:
                 self._last_tap = preview
             return None
         event = self.coordinator.pop_tap_event()
+        source = (event or {}).get("source") or "tof"
+        if source in ("manual", "safety"):
+            # A strike somebody asked for (or a safety release): data to keep, not a tile in the line.
+            # It must not use up a tile's tap slot, or every later tile is paired with the wrong sound.
+            self.coordinator.note_manual_strike(source)
+            preview["tile_id"] = None
+            preview["source"] = source
+            with self._lock:
+                self._last_tap = preview
+            return None
         tile_present = event.get("tile_present") if event else None
         tile_id = self.coordinator.on_tap(result, tile_present=tile_present)
+        if self.session is not None:
+            self.session.bind_tile(tile_id)
         preview["tile_id"] = tile_id
         with self._lock:
             self._last_tap = preview
@@ -282,6 +301,8 @@ class StationService:
     def status(self, recent: int = 15) -> dict:
         snap = self.coordinator.snapshot(recent=recent)
         snap["mic"] = self.level()
+        if self.session is not None:
+            snap["session"] = self.session.status()
         tap = self.last_tap()
         snap["last_tap"] = (
             {"ts": tap["ts"], "tile_id": tap["tile_id"], "valid": tap["features"].get("valid"),

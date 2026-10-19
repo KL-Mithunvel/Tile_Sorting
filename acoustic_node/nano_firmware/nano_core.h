@@ -27,6 +27,14 @@
 //      sitting at the belt end, holds the belt at 0 (the commanded speed is kept
 //      and resumes when the sensor sees an empty end).
 //   6. E-stop latches FAULT: both solenoids off, belt off, until reset/power cycle.
+//   7. (striker_type SPRUNG, the 2026-10-19 prototype) ONE solenoid above the tile:
+//      energised = striker retracted, de-energised = gravity + spring STRIKE. Both
+//      edges make noise, so both are reported: `RET` when it is energised, `TAP`
+//      when it is released. The release is the strike. MODE 0|1 chooses who starts
+//      a cycle: the ToF (auto) or the Pi (manual: RETRACT, RELEASE, TAP). A coil
+//      held energised longer than `retract_max_ms`, or an inhibit / watchdog trip
+//      while retracted, releases it (a strike, reported with src SAFETY): the
+//      striker is never left hanging on a coil.
 //
 //  STATUS: logic verified on the laptop. NOT compiled for AVR, NOT run on a
 //  Nano: pin numbers, the ToF library calls, PWM frequency and the flash/RAM
@@ -47,8 +55,8 @@ struct Hal {
   virtual ~Hal() {}
   virtual uint32_t nowMs() = 0;
   virtual void setBelt(uint8_t percent) = 0;   // applied belt speed 0..100
-  virtual void setArm(bool on) = 0;            // ARM solenoid MOSFET
-  virtual void setLock(bool on) = 0;           // LOCK solenoid MOSFET (on = latch OPEN = ball drops)
+  virtual void setArm(bool on) = 0;            // ARM solenoid MOSFET (SPRUNG: THE striker coil, on = retracted)
+  virtual void setLock(bool on) = 0;           // LOCK solenoid MOSFET (on = latch OPEN = ball drops); unused when SPRUNG
   virtual void setTapLed(bool on) = 0;
   virtual void setStatusLed(bool on) = 0;      // on = running, off = FAULT
   virtual bool estopAsserted() = 0;            // already polarity-corrected
@@ -69,9 +77,25 @@ struct Config {
   uint8_t  tof_end_debounce;
   uint8_t  tof_fail_samples;   // consecutive failed reads before a sensor is "not ok"
   bool     require_tof_end;    // false only for a bench with no belt-end sensor fitted
+  bool     tof_end_fitted;     // false: the belt-end ToF (sensor 3) does not exist; it is not polled, no ERR TOF3
   uint16_t settle_ms, arm_ms, arm_settle_ms, lock_pulse_ms, cooldown_ms;
   uint16_t err_repeat_ms;      // re-send a persisting ERR no more often than this
+  // ---- single sprung striker (prototype). Ignored unless striker_type == STRIKER_SPRUNG.
+  uint8_t  striker_type;       // STRIKER_DUAL (ARM+LOCK ball drop) or STRIKER_SPRUNG
+  uint16_t retract_hold_ms;    // energised -> release: lets the retraction noise die away before the strike
+  uint16_t retract_max_ms;     // longest the coil may stay energised (heating); then released
+  uint16_t strike_ms;          // release -> back to cooldown (the strike has landed)
+  // ---- parked-retracted (owner, 2026-10-19): the REST position is UP.
+  bool     park_retracted;     // AUTO: with nobody under the sensor and the striker armed, the coil is energised
+                               //   and the striker waits retracted; a tile releases it, the striker re-parks once the
+                               //   tile is gone. NO retract_max_ms limit while parked: the coil is on for as long as
+                               //   the line idles (heat: the hold duty in nano_firmware.ino is the only mitigation).
+  uint16_t release_delay_ms;   // parked: a tile must be recognised this long before the release (the strike)
 };
+
+enum { STRIKER_DUAL = 0, STRIKER_SPRUNG = 1 };
+// Why a strike happened (the 5th field of TAP / the 2nd of RET).
+enum { SRC_TOF = 0, SRC_MANUAL = 1, SRC_SAFETY = 2, SRC_TOF_BLIND = 3 };
 
 inline Config defaultConfig() {
   Config c;
@@ -84,18 +108,46 @@ inline Config defaultConfig() {
   c.tof_end_debounce = 3;
   c.tof_fail_samples = 3;
   c.require_tof_end = true;
+  c.tof_end_fitted = true;
   c.settle_ms = 200;
   c.arm_ms = 300;
   c.arm_settle_ms = 150;
   c.lock_pulse_ms = 100;
   c.cooldown_ms = 1000;
   c.err_repeat_ms = 5000;
+  c.striker_type = STRIKER_DUAL;   // the prototype sets STRIKER_SPRUNG (nano_firmware.ino)
+  c.retract_hold_ms = 1500;        // PROVISIONAL: the retraction noise decay is unmeasured
+  c.retract_max_ms = 8000;         // PROVISIONAL: the coil's duty rating is unmeasured
+  c.strike_ms = 300;
+  c.park_retracted = false;
+  c.release_delay_ms = 2000;
   return c;
 }
 
-enum State : uint8_t { WAIT_TILE = 0, SETTLE, ARM, ARM_SETTLE, RELEASE, COOLDOWN, FAULT };
+// The 2026-10-19 prototype, in one place so the board glue and the laptop tests use the SAME numbers:
+// one sprung striker, ONE ToF (the striker station's; hand-turned belt, no belt-end sensor), a tile
+// is "there" at <= 100 mm (measured: tile 91, empty surface 112-142; the owner expected 75 / 150), and the strike (the release) comes
+// 2 s after the tile is first recognised, from a striker that rests RETRACTED (parked up while nothing
+// is under it, re-parked when the tile leaves). PROVISIONAL: the 2 s is the owner's.
+inline Config prototypeConfig() {
+  Config c = defaultConfig();
+  c.striker_type = STRIKER_SPRUNG;
+  c.require_tof_end = false;
+  c.tof_end_fitted = false;
+  c.tof_trigger_mm = 100;       // MEASURED 2026-10-19 on the rig: tile 91 mm (rock steady), empty surface 112-142 mm
+  c.settle_ms = 1500;           // (not used while parked)
+  c.retract_hold_ms = 1500;     // (not used while parked)
+  c.park_retracted = true;
+  c.release_delay_ms = 2000;
+  c.cooldown_ms = 1200;         // strike_ms 300 + this = it lifts again 1.5 s after the strike, after the ring has died
+  c.hb_ms = 250;                // the GUI shows the phase and a countdown: twice as often as the 500 ms default
+  return c;
+}
 
-static const char* const FW_ID = "nano-fw-0.1";
+enum State : uint8_t { WAIT_TILE = 0, SETTLE, ARM, ARM_SETTLE, RELEASE, COOLDOWN, FAULT,
+                       RETRACTED, STRUCK };  // the last two: SPRUNG only
+
+static const char* const FW_ID = "nano-fw-0.2";
 
 // ---- the core -------------------------------------------------------------------
 class Core {
@@ -153,7 +205,7 @@ class Core {
 
     if (state_ != FAULT) {
       pollTof(striker_, TOF_STRIKER, c_.tof_trigger_mm, c_.tof_debounce, now, "TOF1");
-      pollTof(end_, TOF_END, c_.tof_end_mm, c_.tof_end_debounce, now, "TOF3");
+      if (c_.tof_end_fitted) pollTof(end_, TOF_END, c_.tof_end_mm, c_.tof_end_debounce, now, "TOF3");
       runSequence(now);
     }
 
@@ -173,6 +225,9 @@ class Core {
   bool linkAlive() const { return link_alive_; }
   uint16_t seq() const { return seq_; }
   uint16_t badLines() const { return bad_lines_; }
+  bool manualMode() const { return manual_mode_; }
+  bool retracted() const { return state_ == RETRACTED; }
+  uint16_t retractSeq() const { return retract_seq_; }
 
  private:
   enum { RX_MAX = 40 };
@@ -181,6 +236,7 @@ class Core {
     bool ok = false;          // answered recently (false until the first good read)
     bool present = false;     // debounced "something in range"
     uint8_t fails = 0, streak = 0;
+    uint8_t reads = 0;        // consecutive good readings (capped): "present" means nothing until it reaches the debounce
     uint16_t mm = 0xFFFF;
     uint32_t next = 0;
     uint32_t last_err = 0;
@@ -236,7 +292,7 @@ class Core {
   }
 
   void sendHeartbeat(uint32_t now) {
-    char p[48];
+    char p[56];
     size_t n = putStr(p, 0, "HB ");
     n = putUint(p, n, now);
     p[n++] = ' ';
@@ -245,10 +301,32 @@ class Core {
     p[n++] = striker_.ok ? '1' : '0';
     p[n++] = ' ';
     p[n++] = end_.ok ? '1' : '0';
+    if (sprung()) {  // three more fields only the prototype striker has: mode, retracted, ToF 1 distance
+      p[n++] = ' ';
+      p[n++] = manual_mode_ ? '1' : '0';
+      p[n++] = ' ';
+      p[n++] = (state_ == RETRACTED) ? '1' : '0';
+      p[n++] = ' ';
+      n = putUint(p, n, striker_.ok ? striker_.mm : 0xFFFF);   // 65535 = no reading / nothing in range
+      // ... and what the sequence is doing, so the Pi's GUI can show it instead of guessing:
+      p[n++] = ' ';
+      p[n++] = strike_enabled_ ? '1' : '0';                    // armed (STRIKE 1) -- read back, not assumed
+      p[n++] = ' ';
+      n = putUint(p, n, (uint32_t)state_);                     // nano::State
+      p[n++] = ' ';
+      uint32_t left = 0;                                       // parked, a tile being timed: ms until the strike
+      if (state_ == RETRACTED && parked_ && tile_timing_ && strike_enabled_) {
+        uint32_t el = (uint32_t)(now - tile_since_);
+        left = el >= c_.release_delay_ms ? 0 : c_.release_delay_ms - el;
+      }
+      n = putUint(p, n, left);
+      p[n++] = ' ';
+      p[n++] = tile_must_leave_ ? '1' : '0';                   // the tile under it was struck / was there at power-up
+    }
     send(p, n);
   }
 
-  void sendTap(uint32_t now, bool present, uint16_t mm) {
+  void sendTap(uint32_t now, bool present, uint16_t mm, uint8_t src = SRC_TOF) {
     char p[48];
     size_t n = putStr(p, 0, "TAP ");
     n = putUint(p, n, seq_);
@@ -256,6 +334,21 @@ class Core {
     p[n++] = present ? '1' : '0';
     p[n++] = ' ';
     n = putUint(p, n, mm);
+    p[n++] = ' ';
+    n = putUint(p, n, now);
+    if (sprung()) {
+      p[n++] = ' ';
+      n = putUint(p, n, src);
+    }
+    send(p, n);
+  }
+
+  void sendRetract(uint32_t now, uint8_t src) {
+    char p[40];
+    size_t n = putStr(p, 0, "RET ");
+    n = putUint(p, n, retract_seq_);
+    p[n++] = ' ';
+    n = putUint(p, n, src);
     p[n++] = ' ';
     n = putUint(p, n, now);
     send(p, n);
@@ -318,9 +411,42 @@ class Core {
     } else if (vlen == 6 && memcmp(p, "STRIKE", 6) == 0 && alen == 1 && (arg[0] == '0' || arg[0] == '1')) {
       markValid();
       strike_enabled_ = (arg[0] == '1');
+    } else if (vlen == 4 && memcmp(p, "MODE", 4) == 0 && alen == 1 && (arg[0] == '0' || arg[0] == '1')) {
+      markValid();
+      if (!sprung()) { sendErr("UNSUPPORTED", "MODE needs the sprung striker"); return; }
+      manual_mode_ = (arg[0] == '1');
+      if (manual_mode_ && state_ == SETTLE) enter(WAIT_TILE, h_.nowMs());  // an auto cycle not yet started is cancelled
+      if (state_ == RETRACTED) {
+        entered_ = h_.nowMs();   // the hold-time limit counts from NOW: a striker parked for minutes must not be released by the mode switch itself
+        // Already up when the mode changes. MANUAL: it is now held for an operator RELEASE. AUTO (parking
+        // build): it becomes the parked striker and waits for a tile.
+        if (manual_mode_) { hold_for_release_ = true; parked_ = false; }
+        else if (c_.park_retracted) { hold_for_release_ = false; parked_ = true; tile_timing_ = false; }
+      }
+    } else if (vlen == 7 && memcmp(p, "RETRACT", 7) == 0 && alen == 0) {
+      markValid();
+      manualStart(true);
+    } else if (vlen == 3 && memcmp(p, "TAP", 3) == 0 && alen == 0) {
+      markValid();
+      manualStart(false);
+    } else if (vlen == 7 && memcmp(p, "RELEASE", 7) == 0 && alen == 0) {
+      markValid();
+      if (!sprung()) sendErr("UNSUPPORTED", "RELEASE needs the sprung striker");
+      else if (state_ == RETRACTED && hold_for_release_) releaseNow(h_.nowMs(), SRC_MANUAL);
+      else sendErr("NOTRETRACTED", "nothing is held retracted");
     } else {
       badLine("unknown or malformed command");
     }
+  }
+
+  // RETRACT (hold_for_release = true: wait for RELEASE) and TAP (false: release by itself after the hold).
+  void manualStart(bool hold_for_release) {
+    if (!sprung()) { sendErr("UNSUPPORTED", "needs the sprung striker"); return; }
+    if (state_ == FAULT) { sendErr("FAULT", "e-stop latched"); return; }
+    if (!manual_mode_) { sendErr("NOTMANUAL", "MODE 1 first"); return; }
+    if (!strike_enabled_) { sendErr("INHIBITED", "STRIKE 1 first"); return; }
+    if (state_ != WAIT_TILE) { sendErr("BUSY", "a cycle is already running"); return; }
+    beginRetract(h_.nowMs(), SRC_MANUAL, hold_for_release);
   }
 
   void markValid() {
@@ -342,6 +468,7 @@ class Core {
     uint16_t mm = 0;
     if (h_.readTof(sensor, &mm)) {
       t.fails = 0;
+      if (t.reads < 255) t.reads++;
       t.ok = true;
       t.err_sent = false;
       t.mm = mm;
@@ -353,6 +480,7 @@ class Core {
       t.present = t.streak >= debounce;
     } else {
       if (t.fails < 255) t.fails++;
+      t.reads = 0;
       if (t.fails >= c_.tof_fail_samples) {
         t.ok = false;
         t.present = false;
@@ -376,17 +504,34 @@ class Core {
   void runSequence(uint32_t now) {
     switch (state_) {
       case WAIT_TILE:
+        if (sprung() && c_.park_retracted) {
+          // Rest position is UP: go up whenever it is in AUTO and the sensor answers -- armed or not, even
+          // before the Pi has said a word. ARMING (STRIKE 1) only allows the release. After a strike it
+          // lifts again EVEN THOUGH the tile is still under it (the tile cannot be moved out while the
+          // striker is down on it); that tile is not struck again, it must leave first (tile_must_leave_).
+          if (!manual_mode_ && striker_.ok && striker_.reads >= c_.tof_debounce &&
+              (!striker_.present || tile_must_leave_)) {
+            beginRetract(now, SRC_TOF, false);
+            parked_ = true;
+            tile_timing_ = false;
+          }
+          break;
+        }
         if (!striker_.present) {
           tile_was_absent_ = true;
         } else if (tile_was_absent_) {
-          tile_was_absent_ = false;  // consumed even if inhibited: no strike for a tile that arrived while held
-          if (strike_enabled_ && striker_.ok) enter(SETTLE, now);
+          tile_was_absent_ = false;  // consumed even if inhibited (or in manual mode): no strike for a tile that arrived while held
+          if (strike_enabled_ && striker_.ok && !manual_mode_) enter(SETTLE, now);
         }
         break;
       case SETTLE:
         if (elapsed(now, c_.settle_ms)) {
-          h_.setArm(true);
-          enter(ARM, now);
+          if (sprung()) {
+            beginRetract(now, SRC_TOF, false);
+          } else {
+            h_.setArm(true);
+            enter(ARM, now);
+          }
         }
         break;
       case ARM:
@@ -422,12 +567,85 @@ class Core {
       case COOLDOWN:
         if (elapsed(now, c_.cooldown_ms)) enter(WAIT_TILE, now);
         break;
+      case RETRACTED:
+        if (parked_) {
+          // Waiting up for a tile. It must stay recognised for release_delay_ms; if it leaves first
+          // (a hand-turned belt can hesitate) the countdown is dropped and the striker stays up.
+          // Not armed (or the Pi gone): a tile does NOT release it, and arming later starts a fresh 2 s.
+          if (striker_.reads < c_.tof_debounce) {
+            tile_timing_ = false;           // the sensor has not settled yet: "no tile" is not yet known
+          } else if (!striker_.present) {
+            tile_must_leave_ = false;       // the tile (if there was one) has gone: the next one counts
+            tile_timing_ = false;
+          } else if (tile_must_leave_ || !strike_enabled_) {
+            tile_timing_ = false;           // the same tile as last time, or not armed: do not time it
+          } else if (!tile_timing_) {
+            tile_timing_ = true;
+            tile_since_ = now;
+          } else if ((uint32_t)(now - tile_since_) >= c_.release_delay_ms) {
+            releaseNow(now, SRC_TOF);
+          }
+        } else if (!strike_enabled_) {
+          sendErr("INHIBITED", "released: striker inhibited while retracted");
+          releaseNow(now, SRC_SAFETY);
+        } else if (elapsed(now, c_.retract_max_ms)) {
+          sendErr("RETRACT", "held retracted too long, released");
+          releaseNow(now, SRC_SAFETY);
+        } else if (!hold_for_release_ && elapsed(now, c_.retract_hold_ms)) {
+          releaseNow(now, strike_src_);
+        }
+        break;
+      case STRUCK:
+        if (elapsed(now, c_.strike_ms)) {
+          h_.setTapLed(false);
+          enter(COOLDOWN, now);
+        }
+        break;
       case FAULT:
         break;
     }
   }
 
+  bool sprung() const { return c_.striker_type == STRIKER_SPRUNG; }
+
+  // Energise the coil: the striker goes up. The retraction is a sound of its own, so it is announced.
+  void beginRetract(uint32_t now, uint8_t src, bool hold_for_release) {
+    h_.setArm(true);
+    retract_seq_++;
+    strike_src_ = src;
+    hold_for_release_ = hold_for_release;
+    parked_ = false;                 // the caller sets it for a parking retract
+    sendRetract(now, src);
+    enter(RETRACTED, now);
+  }
+
+  // De-energise the coil: gravity + spring strike. A fresh ToF sample goes with it so
+  // tile_present is not a stale value. A ToF that cannot be read does NOT stop the
+  // strike (the coil must come down) but is reported as such, never as "empty".
+  void releaseNow(uint32_t now, uint8_t src) {
+    uint16_t mm = 0;
+    bool ok = h_.readTof(TOF_STRIKER, &mm);
+    h_.setArm(false);
+    h_.setTapLed(true);
+    seq_++;
+    if (c_.park_retracted) tile_must_leave_ = true;   // whatever is under it now must leave before it can be struck again
+    if (ok) {
+      sendTap(now, mm <= c_.tof_trigger_mm, mm, src);
+    } else {
+      if (src == SRC_TOF) {
+        sendErr("TOF1", "no reading at strike");
+        src = SRC_TOF_BLIND;
+      }
+      sendTap(now, false, 0xFFFF, src);
+    }
+    enter(STRUCK, now);
+  }
+
   void enterFault() {
+    if (state_ == RETRACTED) {  // the coil dropping IS a strike; say so before the fault
+      seq_++;
+      sendTap(h_.nowMs(), false, 0xFFFF, SRC_SAFETY);
+    }
     h_.setArm(false);
     h_.setLock(false);   // fail closed: latch holds, no drop
     h_.setTapLed(false);
@@ -459,6 +677,14 @@ class Core {
   uint8_t belt_cmd_ = 0;
   uint8_t belt_applied_ = 0;
   bool strike_enabled_ = false;
+  bool manual_mode_ = false;        // SPRUNG: the Pi, not the ToF, starts cycles
+  bool hold_for_release_ = false;   // RETRACTED by RETRACT: wait for RELEASE instead of releasing by itself
+  bool parked_ = false;             // RETRACTED as the rest position (AUTO, park_retracted): a tile releases it
+  bool tile_timing_ = false;        // parked: a tile is being timed toward release_delay_ms
+  bool tile_must_leave_ = true;     // parked: the tile under it (struck already, or there at power-up) is not struck (again)
+  uint32_t tile_since_ = 0;
+  uint8_t strike_src_ = SRC_TOF;
+  uint16_t retract_seq_ = 0;
   bool tripped_ = false;  // the watchdog stopped things and no valid line has arrived since
 
   Tof striker_, end_;

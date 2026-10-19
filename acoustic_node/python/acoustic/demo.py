@@ -66,12 +66,18 @@ class SyntheticCapture:
                 sink((rng.normal(0, 0.001, block)).astype(np.float32))
             time.sleep(0.03)
 
-    def notify_tap(self) -> None:
+    def notify_tap(self, token=None) -> None:
         freq = random.choice([2800.0, 2800.0, 2800.0, 1700.0])  # now and then a "dull" one
-        self._q.put(synthetic_strike(self.sample_rate, freq=freq))
+        self._q.put((synthetic_strike(self.sample_rate, freq=freq), token))
 
     def get_clip(self, timeout=None):
+        return self._q.get(timeout=timeout)[0]
+
+    def get_clip_with_token(self, timeout=None):
         return self._q.get(timeout=timeout)
+
+    def pop_dropped_tokens(self) -> list:
+        return []
 
 
 class FakeCameraAndStriker(threading.Thread):

@@ -288,3 +288,12 @@ The coil overheated when the striker was held up all the time, so the Pi now dri
 - **Untested on hardware:** the camera raising it, the automatic arm/disarm on the rig, and the camera-to-sensor transit time that
   `max_wait_s` and the Nano's 30 s request time-out should come from.
 
+
+### Tap events and clips are paired by token (2026-10-19)
+
+`StationCoordinator._on_tap_topic` gives every `station/tap` an id (`_id`) and hands it to `on_external_tap(id)`; the audio capture carries it
+(`AudioCapture.notify_tap(token)` -> `get_clip_with_token()`), so `StationService.handle_clip(clip, event_id)` takes exactly that event with
+`pop_tap_event(event_id)`. Taps the capture refuses are returned by `pop_dropped_tokens()` and handled by `handle_unrecorded()` in event order
+(`StationService.analysis_step`). Without an id (rms mode, `Simulate tap`) the oldest unpaired event is used, as before.
+Default `trigger.mode` is now `hardware`.
+

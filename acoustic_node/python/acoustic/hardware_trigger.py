@@ -54,40 +54,71 @@ class HardwareTapDetector:
 
         self._lock = threading.Lock()
         self._tap_pending = False
+        self._pending_token = None
+        # Which tap event each clip belongs to. A notify that starts a capture hands its token to the clip it
+        # produces; a notify the detector cannot act on (already capturing, in cooldown, or two in one block) is
+        # reported as dropped. Pairing a clip with its event by this token (not by arrival order) is what stops
+        # an event without a clip from stealing the next clip.
+        self._active_token = None
+        self._finished_tokens: deque = deque()
+        self._dropped_tokens: deque = deque()
 
     @property
     def is_capturing(self) -> bool:
         return self._capturing
 
-    def notify_tap(self) -> None:
+    def notify_tap(self, token=None) -> None:
         with self._lock:
+            if self._tap_pending:                     # two taps before the next audio block: only one capture
+                self._dropped_tokens.append(token)
+                return
             self._tap_pending = True
+            self._pending_token = token
 
-    def _consume_tap_pending(self) -> bool:
+    def _consume_tap_pending(self):
         with self._lock:
-            pending = self._tap_pending
-            self._tap_pending = False
-        return pending
+            pending, token = self._tap_pending, self._pending_token
+            self._tap_pending, self._pending_token = False, None
+        return pending, token
+
+    def pop_clip_token(self):
+        """The token of the oldest finished clip not yet claimed (None if it had none). Call once per clip."""
+        return self._finished_tokens.popleft() if self._finished_tokens else None
+
+    def pop_dropped_tokens(self) -> list:
+        """Tokens of taps that produced NO clip (the detector was busy). Draining clears the list."""
+        out = []
+        while self._dropped_tokens:
+            out.append(self._dropped_tokens.popleft())
+        return out
 
     def process_block(self, block: np.ndarray) -> Optional[np.ndarray]:
         if self._cooldown_remaining > 0:
             self._cooldown_remaining -= 1
 
-        tap_pending = self._consume_tap_pending()
+        tap_pending, token = self._consume_tap_pending()
 
         if not self._capturing:
             self._pretrigger.append(block)
-            if tap_pending and self._cooldown_remaining == 0:
-                self._capturing = True
-                self._capture_blocks = list(self._pretrigger)
+            if tap_pending:
+                if self._cooldown_remaining == 0:
+                    self._capturing = True
+                    self._capture_blocks = list(self._pretrigger)
+                    self._active_token = token
+                else:
+                    self._dropped_tokens.append(token)
             return None
 
+        if tap_pending:                                # a tap while a capture is already running: no second clip
+            self._dropped_tokens.append(token)
         self._capture_blocks.append(block)
         total_samples = sum(b.size for b in self._capture_blocks)
         if total_samples < self._capture_samples_target:
             return None
 
         clip = np.concatenate(self._capture_blocks)[: self._capture_samples_target]
+        self._finished_tokens.append(self._active_token)      # BEFORE the clip is returned and queued
+        self._active_token = None
         self._capturing = False
         self._capture_blocks = []
         self._pretrigger.clear()

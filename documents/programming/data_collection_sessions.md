@@ -117,6 +117,7 @@ If the session stops uncleanly (power cut, crash) the next start-up seals the fo
 - **The camera's video** is raw frames as the camera delivered them; it is written by a *separate process* and the two only
   agree through the bus. If the camera service is down the audio and events are still recorded and the manifest says
   `"video": null`.
+- **Trigger mode and clip pairing (2026-10-19).** `trigger.mode` now defaults to `hardware` (a Nano strike event starts every live-analysis capture); each clip is paired with its own strike event by a token, not by arrival order, and a tap the detector had to refuse is counted instead of mislabelling the next clip. This affects the live grading clips only; the session's continuous audio and its cut clips never depended on it. See `striker_sequence.md`.
 - **Microphone gain.** The tap mic (`USB PnP Audio Device`, ALSA card `Device`) was found at maximum gain, clipping, so the first sessions' audio is unusable. It is now **150/496** on the Pi (saved with `alsactl store`; idle rms about 0.008). Re-check with a real strike: peak should sit around 0.1-0.8, never at 1.0 (`amixer -c Device cset numid=3 <value>`, then `sudo alsactl store`). Do not change the gain in the middle of a set of recordings, and note it in the session note if you do.
 - **Auto-arm and the camera trigger** are laptop-tested only; the camera has not yet been seen raising the striker on the rig.
   Strikes caused by a tile in AUTO are tile data; the `rest` lowerings and any `safety` strikes are not, and should be dropped

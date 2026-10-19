@@ -73,6 +73,11 @@ def run_calibrate(capture: AudioCapture) -> None:
 
 
 def run_monitor(capture: AudioCapture, config: dict) -> None:
+    if capture.trigger_mode == "hardware":
+        # This stand-alone tool has no tap source (the Nano's strike events come through the station service), so
+        # in hardware mode it would sit silent forever. Say so instead of looking broken.
+        print("trigger.mode is 'hardware': taps come from the Nano through acoustic.live_station, so this tool "
+              "would never capture. Set trigger.mode to rms (microphone only) or simulated (fake taps) in config.yaml.")
     print(f"Listening (trigger.mode={capture.trigger_mode!r}). Ctrl+C to stop.")
     print("Close each plot window to resume listening.\n")
 

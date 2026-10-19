@@ -14,8 +14,11 @@ audio:
   block_size_ms: 30
 
 trigger:
+  # DEFAULT IS "hardware" (2026-10-19): the Nano's strike events start every capture, so the retract / lift / rest
+  # noises of the sprung striker and the room can never be mistaken for a tap. On a laptop with just a microphone and
+  # no Nano use `python -m acoustic.live_station --trigger-mode rms` (or the Service view's Simulate tap button).
   # "rms"       - trigger on the mic's own RMS crossing (acoustic.capture.TriggerDetector).
-  #               Dev-machine default: works with just a laptop mic, no ToF/solenoid hardware.
+  #               Mic-only dev use: works with just a laptop mic, no ToF/solenoid hardware.
   # "hardware"  - trigger on a real tap event notified via AudioCapture.notify_tap()
   #               (acoustic.hardware_trigger.HardwareTapDetector), driven by
   #               a bridge on the Pi (acoustic/tap_bridge.py: the Nano's serial
@@ -25,7 +28,7 @@ trigger:
   # "simulated" - same HardwareTapDetector, but acoustic.live_monitor drives the taps
   #               itself using tap_mechanism below + a fake periodic tile arrival
   #               (no hardware needed at all) — see live_monitor.py --simulate-taps.
-  mode: rms
+  mode: hardware
 
   # Linear RMS threshold, range 0.0-1.0 (float32 samples). Not dBFS.
   # This is a throwaway starting value for a laptop mic with unknown gain —

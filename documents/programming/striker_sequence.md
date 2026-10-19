@@ -138,6 +138,17 @@ Every raise is a `RET`, every release a `TAP`; each carries a **source**: `tof` 
 `tof_blind` (ToF unreadable at the strike), `rest` (a lowering with nothing to strike). Only `tof` strikes are paired with a camera tile.
 `manual`, `safety` and `rest` strikes are recorded and labelled but use up no tile's tap slot. See `data_collection_sessions.md`.
 
+### How a strike's sound is captured and paired (2026-10-19)
+
+The default trigger mode is now **`hardware`** (`trigger.mode` in `acoustic/config.yaml`; was `rms`): only a Nano strike event starts a
+capture, so the retract, lift, rest and room noises cannot be mistaken for a tap. For a laptop with a microphone and no Nano use
+`--trigger-mode rms`. On each `station/tap` the coordinator gives the event an **id** and the capture carries that id as a **token**
+through the pre-trigger buffer to the finished clip, so a clip is paired with exactly its own event. A tap the detector cannot record
+(a capture already running, the 1.0 s cooldown, or two in one audio block) is reported as **dropped**; a dropped tile strike still uses its
+tile's tap slot (camera grade alone, flagged "no recording"), and a dropped `manual` / `safety` / `rest` strike is just counted. Events are
+handled **in the order they happened**. Before this, events were matched to clips by arrival order, and a refused tap shifted every later
+pairing by one. The continuous session recording is independent of all this.
+
 ## 9. The Service view (`:5001/service`) Striker panel
 
 A phase banner, a countdown bar, a five-step strip and a table (ToF distance and verdict, striker up/down, whether the camera asked,

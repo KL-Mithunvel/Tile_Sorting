@@ -44,6 +44,7 @@ exists so a byte flipped by motor noise on a long USB run can never turn `BELT 0
 | `PING <n>` | keep-alive, every 500 ms (`station.nano.ping_s`) |
 | `BELT <pct>` | belt speed 0–100 (clamped by the Pi) |
 | `STRIKE <0\|1>` | allow / inhibit the striker (e.g. the master pausing tapping) |
+| `TAP` | **Proposed 2026-10-19, not implemented.** Manual trigger: run one strike sequence now, as if the ToF had seen a tile (prototype bench use, hand-placed tiles). Must obey the same inhibits as an automatic strike (e-stop, `STRIKE 0`, watchdog trip, cooldown) and be answered like any tap event. |
 
 ## Requirements on the Nano firmware (not optional)
 

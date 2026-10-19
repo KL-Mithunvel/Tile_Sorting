@@ -407,6 +407,8 @@ Tile reaches acoustic station
 Laser / ToF sensor detects tile in position
     ↓
 UNO Q triggers ball-drop release   <- 2026-10-10 proposal: a Nano does this (see above)
+                                      (prototype, 2026-10-19: single sprung solenoid striker above the tile,
+                                       ToF or manual Pi->Nano TAP trigger, hand-turned belt; see charter §6.2)
     ↓
 Ball strikes tile with repeatable impact energy
     ↓

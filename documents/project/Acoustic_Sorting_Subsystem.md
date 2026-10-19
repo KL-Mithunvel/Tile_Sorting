@@ -81,6 +81,16 @@ The microphone should be fixed in position. The tile must be struck at the same 
 
 ## 3.1 Impact Mechanism
 
+> **Prototype build (2026-10-19):** the prototype does not use the ball drop below. It
+> uses a **single solenoid striker mounted directly above the tile**: energised = striker
+> retracted (held against a spring); released = gravity plus spring force strike the tile.
+> No ARM/LOCK interlock. Trigger is the ToF sensor **or** a manual `TAP` from the Pi to the
+> Nano. The belt is turned by hand. **The retraction also makes noise and must be removed
+> from the analysed clip** (analyse after the release edge, leave a settle gap between
+> retract and release). Striker mass, spring and drop height are not yet measured. Full
+> note: `project_charter.md` §6.2 "Prototype Configuration". The ball-drop text below is
+> the full-system design.
+
 **Decided 2026-08-20**: a ToF-triggered, dual-solenoid ARM+LOCK gravity-drop ball
 impactor. Full pin table, BOM, wiring diagram, and timing sequence are in
 `documents/electrical/schematics/acoustic_station_wiring.md`; state-machine

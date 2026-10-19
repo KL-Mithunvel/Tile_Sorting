@@ -337,6 +337,45 @@ FFT, feature extraction) → the acoustic grade/result is sent to the master.
 > release would be driven by an Arduino Nano and the sound captured and processed by the
 > Raspberry Pi 5, not by "the same UNO Q". See `Automation_Architecture.md` §5.3.
 
+### Prototype Configuration (Decision, 2026-10-19): Hand-Turned Belt, Single Spring Striker
+
+For the **prototype build** two things are simplified. The full-system design in the rest
+of this section (motor-driven belt, dual-solenoid ARM + LOCK ball drop) is unchanged and
+remains the target; it is not what the prototype uses.
+
+* **Conveyor.** The belt is turned **by hand**. There is no belt motor, no PWM and no belt
+  speed control in the prototype. Consequences: tile arrival time and belt speed are not
+  repeatable, so the ledger's `max_wait_s`, the camera trigger-line timing and the acoustic
+  settle time must not be calibrated against hand-turned runs as if they were belt data.
+  The Nano's `BELT` command and belt-end ToF 3 fail-safe have nothing to drive or protect
+  until a motor exists.
+* **Striker.** A **single push-pull solenoid striker mounted directly above the tile**.
+  There is no ARM/LOCK interlock and no ball. When the solenoid is **energised** it
+  **retracts** the striker and holds it up against a spring; when it is **released**,
+  **gravity plus spring force** drive the striker onto the tile. The strike is the
+  de-energise edge, not the energise edge. This is a return to a tile-contacting striker
+  (the "background" mechanism below), now sprung and top-mounted.
+* **Trigger.** Two sources, both ending in the same Nano strike sequence:
+  1. **ToF detect** (automatic): the ToF sensor sees the tile and the Nano runs the sequence
+     itself, as before.
+  2. **Manual trigger** (operator): a command from the Pi to the Nano over the serial link,
+     for hand-placed tiles and bench work. Proposed message `TAP` in
+     `documents/programming/nano_serial_protocol.md` (**not implemented**; the Pi side can
+     expose it as a dashboard button and a `station/tap_now` command). It must obey the same
+     inhibits as an automatic strike: e-stop, `STRIKE 0`, watchdog trip, and cooldown.
+* **Acoustic risk: the retraction is also a sound.** Pulling the striker up against the
+  spring makes its own noise (plunger hitting the solenoid stop, spring), which the
+  microphone will record as well as the strike. It must be **removed from the analysis**
+  and not left in the clip. Options to evaluate: start the capture window and the analysis
+  after the release edge only (so the retraction noise falls in the pre-trigger buffer and
+  is discarded or only used as the noise reference); let the retraction finish and settle
+  before release, with a measured gap; and soften the plunger stop. Not yet tried on the
+  rig. The retraction click may also be usable as a timestamp for the release.
+* **Not measured / undecided:** striker mass, spring rate, drop height, solenoid model and
+  its stroke, and the resulting impact energy; the retraction-to-release hold time. The
+  code (`tap_sequencer.py`, `sketch.ino`, `nano_core.h`) still models the ToF-triggered
+  dual-solenoid sequence and has **not** been changed for this configuration.
+
 ### Release Mechanism (Decision, 2026-08-20): Dual-Solenoid Arm + Lock
 
 The release mechanism is now decided: **two solenoids, ARM and LOCK, driving the
@@ -1877,10 +1916,10 @@ For the best balance between cost, reliability, and development speed, the recom
 
 * Raspberry Pi or mini PC
 * USB camera with fixed LED lighting
-* Ball-drop striker (dual-solenoid ARM + LOCK, §6.2; driven by an Arduino Nano)
+* Ball-drop striker (dual-solenoid ARM + LOCK, §6.2; driven by an Arduino Nano) — *prototype build instead uses a single sprung solenoid striker above the tile, ToF or manual trigger (§6.2 "Prototype Configuration", 2026-10-19)*
 * Measurement-type USB microphone
 * ToF sensors for basic dimensional checks
-* Belt conveyor with position sensors
+* Belt conveyor with position sensors — *prototype build: belt turned by hand, no motor (§6.2)*
 * Pneumatic or servo pusher for reject sorting
 * Python-based software
 * SQLite database

@@ -10,6 +10,16 @@
 > **VL53L1X** — resolve in `documents/electrical/i2c_bus_plan.md`. Nothing below has been
 > rewritten yet.
 
+> **Prototype variant (2026-10-19):** the prototype replaces the two solenoids below with
+> **one** solenoid driving a sprung striker mounted above the tile. Energised = retracted
+> (spring compressed); de-energised = gravity + spring drive the striker into the tile, so
+> a single MOSFET channel is enough and the ARM/LOCK timing sequence does not apply. The
+> flyback diode and the common-ground rule still apply. The retraction is audible and must
+> be removed from the microphone analysis. The belt is hand-turned (no belt motor
+> driver). Trigger: ToF, or a manual `TAP` from the Pi over serial. Pin numbers, solenoid
+> model and striker mass are not yet decided or measured; nothing below was rewritten.
+> Details: `project_charter.md` §6.2 "Prototype Configuration".
+
 Decided 2026-08-20. This resolves `project_charter.md` §6.2's open release-mechanism
 question (electromagnet vs. solenoid gate vs. servo latch): **two solenoids, one ARM +
 one LOCK, driving a gravity-drop impact.** Neither solenoid touches the tile directly —

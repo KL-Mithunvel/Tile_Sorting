@@ -613,6 +613,16 @@ is shown in Figure 4.7; the pure-Python FSM `TapSequencer` mirrors the microcont
 
 *Figure 4.7 — Tap sequencer state machine.*
 
+**Prototype build (decided 2026-10-19).** The prototype simplifies two things. The belt is turned by hand, with no motor, so
+tile timing is not repeatable and nothing from hand-turned runs should be used to calibrate belt timing. The impactor is a
+single solenoid striker mounted directly above the tile: energising the solenoid retracts the striker against a spring, and
+releasing it lets gravity and the spring drive the striker onto the tile. There is no ARM/LOCK interlock and no ball. The
+strike can be started by the ToF sensor or by a manual command sent from the Pi to the Nano. The retraction itself makes a
+noise that the microphone also records; it has to be removed from the analysed clip, for example by analysing only after the
+release edge with a settle gap before it. This is not yet tested on the rig, striker mass, spring rate and drop height are
+not measured, and the code (`TapSequencer`, `sketch.ino`, Nano core) has not been changed for this configuration.
+Source: `documents/project/project_charter.md` §6.2 "Prototype Configuration".
+
 **Measurement.** The clip is captured with a pre-trigger buffer, Hann-windowed, and reduced to peak frequency $f_p$, spectral
 centroid, SNR and decay time $T_{20}$ from the Schroeder integral [18]:
 

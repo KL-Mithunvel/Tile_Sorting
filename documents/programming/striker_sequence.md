@@ -181,6 +181,6 @@ Flashing from the Pi (no internet there) is in `acoustic_node/nano_firmware/READ
 3. The **camera actually raising it** on a real detection, and the automatic arm/disarm on the rig.
 4. The **tile threshold margin** with other tiles (about 9-12 mm either side of 100 mm). Lowering the sensor would widen it.
 5. The **Pi's power supply**: undervoltage warnings appear in its log and once coincided with the ToF dropping out. Use the official 5 A supply.
-6. The **microphone gain** is at its maximum and clips; the audio recorded so far is not usable for acoustics until it is lowered.
+6. The **microphone gain** was at its maximum (496 of 496, +31 dB) and clipped; lowered to **150** on 2026-10-19 (idle level 0.24 -> 0.008 rms). The 2026-10-19 sessions recorded before that are clipped and not usable for acoustics. **Not yet checked: a real strike at the new gain** (it should peak around 0.1-0.8 and not clip; raise or lower with `amixer -c Device cset numid=3 <0-496>`, then `sudo alsactl store`).
 7. The ToF library calls have met the real module only briefly; a sensor that hangs after a brown-out is recovered today only by a reset.
 8. The AVR build's RAM headroom is ~660 bytes.

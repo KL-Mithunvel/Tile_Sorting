@@ -76,7 +76,7 @@ const uint32_t I2C_CLOCK_HZ = 100000;  // plan 3.2: start at 100 kHz, motor nois
 
 // --- Motion ------------------------------------------------------------------
 const long STEPS_PER_REV = 3200;
-const int PULSE_HALF_US = 600;
+const int PULSE_HALF_US = 200;         // was 600 (833 steps/s); now 2500 steps/s, no ramp so stalls are possible
 const int DIR_SETTLE_MS = 3;
 const int CHUNK_STEPS = 64;            // steps between encoder samples
 const unsigned long SETTLE_MS = 500;   // let the rotor stop before reading a leg

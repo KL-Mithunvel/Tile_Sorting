@@ -28,12 +28,16 @@ import threading
 import time
 from typing import Callable, Optional
 
-from acoustic.tap_protocol import encode_belt, encode_ping, encode_strike, parse_line
+from acoustic.tap_protocol import (
+    encode_belt, encode_hold, encode_mode, encode_ping, encode_up, encode_release, encode_retract, encode_strike, encode_tap_cycle, parse_line,
+)
 from fusion.transport import (
     TOPIC_ALARM,
     TOPIC_BELT,
     TOPIC_DIAG_PING,
     TOPIC_NANO_STATUS,
+    TOPIC_RETRACT,
+    TOPIC_STRIKER_CMD,
     TOPIC_STRIKE,
     TOPIC_TAP,
     Bus,
@@ -77,8 +81,12 @@ class TapBridge:
         self._last_cmd_strike: Optional[bool] = None
         self._belt_pct: Optional[int] = None
         self._tof = {"tof1_ok": None, "tof3_ok": None}
+        self._manual: Optional[bool] = None      # sprung striker only: who starts a cycle
+        self._retracted: Optional[bool] = None   # sprung striker only: coil energised (striker up)
+        self._tof_mm: Optional[int] = None       # sprung striker only: the striker ToF's latest distance
+        self._seq_state: dict = {}               # sprung striker only: armed, state, left_ms, must_leave
         self._fw: Optional[str] = None
-        self.counters = {"taps": 0, "lost_taps": 0, "bad_lines": 0, "duplicates": 0, "errors_from_nano": 0}
+        self.counters = {"taps": 0, "lost_taps": 0, "bad_lines": 0, "duplicates": 0, "errors_from_nano": 0, "retracts": 0}
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -103,6 +111,14 @@ class TapBridge:
             elif kind == "hb":
                 self._belt_pct = msg["belt_pct"]
                 self._tof = {"tof1_ok": msg["tof1_ok"], "tof3_ok": msg["tof3_ok"]}
+                if "manual" in msg:
+                    self._manual, self._retracted = msg["manual"], msg["retracted"]
+                if "tof1_mm" in msg:
+                    self._tof_mm = msg["tof1_mm"]
+                if "armed" in msg:
+                    # "nano_state", not "state": the status body already has state = online/offline
+                    self._seq_state = {"hold_pct": msg.get("hold_pct"), "up_wanted": msg.get("up_wanted"), "armed": msg["armed"], "nano_state": msg["state"],
+                                       "left_ms": msg["left_ms"], "must_leave": msg["must_leave"]}
             elif kind == "err":
                 self.counters["errors_from_nano"] += 1
                 self._alarm("nano_error", f"Nano reports {msg['code']}: {msg['text']}")
@@ -110,6 +126,8 @@ class TapBridge:
                     self._resend_last_commands()
             elif kind == "tap":
                 self._on_tap(msg, now)
+            elif kind == "ret":
+                self._on_retract(msg, now)
         return msg
 
     def _on_tap(self, msg: dict, now: float) -> None:
@@ -124,15 +142,28 @@ class TapBridge:
                 self._alarm("tap_gap", f"{lost} strike event(s) from the Nano never arrived (seq {self._last_seq} -> {seq})")
         self._last_seq = seq
         self.counters["taps"] += 1
+        source = msg.get("src") or "tof"
         self._bus.publish(
             TOPIC_TAP,
             {
                 "seq": seq,
-                "tile_present": msg["tile_present"],
+                "tile_present": None if source == "tof_blind" else msg["tile_present"],
                 "tof_mm": msg["tof_mm"],
                 "nano_ms": msg["uptime_ms"],
+                # tof | manual | safety | tof_blind. Only a ToF-started strike belongs to a
+                # tile in the line; the others are labelled data, not sorting events.
+                "source": source,
                 "ts": now,
             },
+            qos=1,
+        )
+
+    def _on_retract(self, msg: dict, now: float) -> None:
+        """The coil was just energised: the striker goes up, and that is a sound of its own."""
+        self.counters["retracts"] += 1
+        self._bus.publish(
+            TOPIC_RETRACT,
+            {"seq": msg["seq"], "source": msg["src"], "nano_ms": msg["uptime_ms"], "ts": now},
             qos=1,
         )
 
@@ -153,6 +184,10 @@ class TapBridge:
                     "fw": self._fw,
                     "belt_pct": self._belt_pct,
                     **self._tof,
+                    "manual": self._manual,
+                    "retracted": self._retracted,
+                    "tof1_mm": self._tof_mm,
+                    **self._seq_state,
                     **self.counters,
                     "ts": now,
                 }
@@ -191,6 +226,30 @@ class TapBridge:
         self._last_cmd_strike = enabled
         self._write(encode_strike(enabled))
 
+    def _on_striker_cmd(self, topic: str, payload: bytes) -> None:
+        """{"action": "mode", "manual": bool} | "retract" | "release" | "cycle". The Nano
+        applies its own rules (manual mode, STRIKE 1, e-stop, busy) and answers a refusal with
+        an ERR, which reaches the alarms as `nano_error`."""
+        try:
+            cmd = json.loads(payload)
+            action = cmd["action"]
+            if action == "mode":
+                self._write(encode_mode(bool(cmd["manual"])))
+            elif action == "retract":
+                self._write(encode_retract())
+            elif action == "release":
+                self._write(encode_release())
+            elif action == "cycle":
+                self._write(encode_tap_cycle())
+            elif action == "up":
+                self._write(encode_up())
+            elif action == "hold":
+                self._write(encode_hold(float(cmd["percent"])))
+            else:
+                raise KeyError(action)
+        except (ValueError, KeyError, TypeError):
+            self._alarm("bad_message", "unreadable station/striker/cmd")
+
     def _on_diag_ping(self, topic: str, payload: bytes) -> None:
         """Answer for the Nano: `ok` only if the serial link is really alive
         (a valid line from the Nano within stale_s), not merely if this bridge
@@ -226,6 +285,7 @@ class TapBridge:
     def start(self) -> None:
         self._bus.subscribe(TOPIC_BELT, self._on_belt)
         self._bus.subscribe(TOPIC_STRIKE, self._on_strike)
+        self._bus.subscribe(TOPIC_STRIKER_CMD, self._on_striker_cmd)
         self._bus.subscribe(TOPIC_DIAG_PING, self._on_diag_ping)
         self._running = True
         self._thread = threading.Thread(target=self._loop, name="nano-bridge", daemon=True)

@@ -267,3 +267,33 @@ The Pi is the system of record; the master is optional and only holds a copy.
 - **Master** (`master/mirror.py`, `sync.py`): pulls events from its cursor, then the touched tile rows, advances the cursor only after those are stored, then fetches missing files and verifies each against its SHA-256. Interrupted passes re-run safely; `reconcile()` compares counts with the Pi's manifest. Page: `/tiles`.
 - **Error finding** (`master/integrity.py`, deterministic): stuck delivery, tiles waiting for a tap, final grade better than its inputs allow, missing tile numbers, unreported tiles, unusable taps, failed placements, held tiles, missing evidence, outages followed by bad outcomes, repeating alarms, sync problems. `llm.py` (local Ollama by default in `master/config.yaml`) only explains these, only on a button press, and receives numbers without tile ids.
 - **Not verified**: a real broker/Pi/mic/camera; Ollama with a real model; large-window performance (`/api/insights` reads each tile's file status one by one).
+
+
+## 9. The striker: camera-raised, armed only while a tile is in the system (2026-10-19)
+
+The coil overheated when the striker was held up all the time, so the Pi now drives it from the tile flow
+(full description: `striker_sequence.md`; code: `acoustic/striker_arming.py`).
+
+- **`CameraArming`** subscribes to `tile/+/camera/result` and publishes `station/striker/cmd {"action": "up"}` once per graded
+  live tile (config `station.striker.arm_on_camera`). The bridge turns it into the Nano's `UP`.
+- **`AutoArm`** (config `station.striker.auto_arm`) publishes `station/strike {"enabled": true}` while a tile is in the system and
+  `false` after `disarm_grace_s` of none. "In the system" = a camera tile awaiting its tap (the **ledger**,
+  `StationCoordinator.awaiting_tiles()`), a pending `UP` (`up_wanted` in `station/nano/status`), or a tile under the ToF
+  (`tof1_mm <= tile_mm`). It runs on the station's 0.25 s tick and reads the Nano's own `armed` back.
+- It interacts with the **line start/stop** commands: `set_line` also publishes `station/strike`, so with auto-arm on a
+  "Start line" arming is corrected within seconds when no tile is in the system. A real line would not want this combination
+  until the belt exists; it is a prototype decision.
+- A strike caused by a ToF-sourced `TAP` is paired with the oldest waiting camera tile as before. `manual`, `safety` and `rest`
+  taps are recorded but never paired (`StationCoordinator.note_manual_strike`).
+- **Untested on hardware:** the camera raising it, the automatic arm/disarm on the rig, and the camera-to-sensor transit time that
+  `max_wait_s` and the Nano's 30 s request time-out should come from.
+
+
+### Tap events and clips are paired by token (2026-10-19)
+
+`StationCoordinator._on_tap_topic` gives every `station/tap` an id (`_id`) and hands it to `on_external_tap(id)`; the audio capture carries it
+(`AudioCapture.notify_tap(token)` -> `get_clip_with_token()`), so `StationService.handle_clip(clip, event_id)` takes exactly that event with
+`pop_tap_event(event_id)`. Taps the capture refuses are returned by `pop_dropped_tokens()` and handled by `handle_unrecorded()` in event order
+(`StationService.analysis_step`). Without an id (rms mode, `Simulate tap`) the oldest unpaired event is used, as before.
+Default `trigger.mode` is now `hardware`.
+

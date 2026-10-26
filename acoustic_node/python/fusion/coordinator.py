@@ -139,7 +139,8 @@ class StationCoordinator:
         self._feed_paused = False
         self._nano_status_ts: Optional[float] = None
         # Strike events (station/tap) waiting to be paired with their clip.
-        self._tap_events: deque = deque(maxlen=16)
+        self._tap_events: dict = {}          # event id -> event, oldest first (a dict keeps insertion order)
+        self._tap_event_seq = 0
         self._unknown_n = 0
         # Camera -> tap times, for choosing ledger.max_wait_s from data.
         self._transits: deque = deque(store.recent_transits(200), maxlen=200)
@@ -324,16 +325,19 @@ class StationCoordinator:
             if self._evidence is not None and data:
                 self._evidence.camera_result(tile_id, data)
 
-    def pop_tap_event(self) -> Optional[dict]:
-        """The oldest strike event not yet paired with a clip (None when the
-        clip did not come from an external event, e.g. rms trigger mode)."""
+    def pop_tap_event(self, event_id: Optional[int] = None) -> Optional[dict]:
+        """The strike event for a clip. With `event_id` (the token the capture carried from notify_tap) it is
+        EXACTLY that event, so an event that never got a clip can not be taken by a later clip. Without one
+        (rms trigger mode, older callers) it is the oldest event not yet paired. None when there is none."""
         now = self._clock()
         with self._lock:
-            # An event whose clip never came (capture refused, cooldown) must
-            # not be paired with some later, unrelated clip.
-            while self._tap_events and now - self._tap_events[0].get("_rx", now) > self._TAP_EVENT_MAX_AGE_S:
-                self._tap_events.popleft()
-            return self._tap_events.popleft() if self._tap_events else None
+            for k in [k for k, e in self._tap_events.items() if now - e.get("_rx", now) > self._TAP_EVENT_MAX_AGE_S]:
+                del self._tap_events[k]                   # stale: its clip never came
+            if event_id is not None:
+                return self._tap_events.pop(event_id, None)
+            if not self._tap_events:
+                return None
+            return self._tap_events.pop(next(iter(self._tap_events)))
 
     def on_tap(
         self, acoustic: dict, now: Optional[float] = None, tile_present: Optional[bool] = None
@@ -414,6 +418,18 @@ class StationCoordinator:
         self._store.upsert(tile_id, now, state="awaiting_tap", camera_grade=None, camera_json={})
         self._finalize(entry, decision, now, timed_out=False)
         return tile_id
+
+    def awaiting_tiles(self) -> int:
+        """How many camera-graded tiles are still waiting for their tap."""
+        with self._lock:
+            return len(self.ledger.awaiting())
+
+    def note_manual_strike(self, source: str) -> None:
+        """A strike an operator asked for (or a safety release): counted and shown, never paired with a tile."""
+        with self._lock:
+            key = "manual_strikes" if source == "manual" else "safety_strikes"
+            self._counters[key] = self._counters.get(key, 0) + 1
+            self._event(f"{source} strike recorded (not paired with a tile)")
 
     def note_ignored_tap(self, reason: str) -> None:
         """A sound that triggered a capture but was not a plausible strike. It
@@ -771,10 +787,18 @@ class StationCoordinator:
             event = {}
         event["_rx"] = self._clock()
         with self._lock:
-            self._tap_events.append(event)
+            self._tap_event_seq += 1
+            event_id = self._tap_event_seq
+            event["_id"] = event_id
+            self._tap_events[event_id] = event
+            while len(self._tap_events) > 32:
+                del self._tap_events[next(iter(self._tap_events))]
         if self._on_external_tap is not None:
             try:
-                self._on_external_tap()
+                try:
+                    self._on_external_tap(event_id)       # lets the capture tag the clip with this event
+                except TypeError:
+                    self._on_external_tap()               # a callback that takes no argument
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
                     self._alarm("tap_input", f"station/tap could not start a capture: {exc}", None)

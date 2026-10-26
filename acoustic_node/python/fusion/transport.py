@@ -48,6 +48,10 @@ TOPIC_GANTRY_CMD_RESULT = "station/gantry/cmd/result"
 TOPIC_NANO_STATUS = "station/nano/status"  # the serial bridge: Nano link alive, belt %, ToF ok
 TOPIC_BELT = "station/belt"  # {"percent": 0-100} -> bridge -> Nano (master or operator)
 TOPIC_STRIKE = "station/strike"  # {"enabled": bool} -> bridge -> Nano: allow / inhibit the striker
+TOPIC_RETRACT = "station/retract"  # bridge: the sprung striker was just energised (retracted) - its own sound
+TOPIC_STRIKER_CMD = "station/striker/cmd"  # {"action": mode|retract|release|cycle, ...} -> bridge -> Nano
+TOPIC_SESSION_CMD = "station/session/cmd"  # {"action": start|stop, ...} -> every recorder (camera, audio)
+TOPIC_SESSION_STATUS = "station/session/status"  # retained: the one session being recorded, or {"active": false}
 
 
 def tile_topic(tile_id: str, leaf: str) -> str:

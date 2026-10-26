@@ -21,7 +21,7 @@ set PI_HOSTKEY=SHA256:5xktU4J2su8byYwyFrbv7eSupcToWs2FTdey/QExjvE
 rem Where pushed code lands on the Pi (relative to the user's home) and the systemd
 rem unit camera_node/deploy/install_pi.sh creates. The unit does not exist until
 rem install.bat has been run once.
-set PI_REMOTE_DIR=tile_sorting
+set PI_REMOTE_DIR=Tile_Sorting
 set PI_SERVICE=tile-camera
 
 rem VNC: the Pi's built-in VNC server listens on the LAN directly (no SSH tunnel,

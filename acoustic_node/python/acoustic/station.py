@@ -54,6 +54,8 @@ class StationService:
         clock: Callable[[], float] = time.time,
         monotonic: Callable[[], float] = time.monotonic,
         blobs: Optional[BlobStore] = None,
+        session=None,
+        auto_arm=None,
     ):
         self._config = config
         self._station_cfg = config.get("station") or {}
@@ -77,6 +79,13 @@ class StationService:
             evidence=self._evidence,
         )
 
+        # Optional data-collection sessions (acoustic.session_control.SessionController).
+        self.session = session
+        self._dropped_pending: list = []        # tap events the microphone could not record, waiting their turn
+        # Optional: arms the striker only while a tile is in the system (acoustic.striker_arming.AutoArm).
+        self.auto_arm = auto_arm
+        if auto_arm is not None and getattr(auto_arm, "awaiting", None) is not None:
+            auto_arm.awaiting = self.coordinator_awaiting
         self._capture = None
         self._mic_error: Optional[str] = "not started"
         self._next_mic_attempt = 0.0
@@ -89,6 +98,10 @@ class StationService:
 
     def start(self) -> None:
         self.coordinator.start()
+        if self.auto_arm is not None:
+            self.auto_arm.attach()
+        if self.session is not None:
+            self.session.attach()
         self.coordinator.set_health("mic", FAIL, "not started")
         self._bus.start()
         self._open_capture()
@@ -120,6 +133,8 @@ class StationService:
             self.coordinator.set_health("mic", FAIL, self._mic_error)
             log.error("microphone could not be opened: %s", self._mic_error)
             return False
+        if self.session is not None:
+            cap.block_sink = self.session.audio_sink   # the session's continuous recording
         with self._lock:
             self._capture = cap
         self._mic_error = None
@@ -154,11 +169,14 @@ class StationService:
 
     # ---- tap input -------------------------------------------------------
 
-    def _external_tap(self) -> None:
+    def _external_tap(self, event_id=None) -> None:
         cap = self._capture
         if cap is None:
             raise RuntimeError("the microphone is not open")
-        cap.notify_tap()
+        try:
+            cap.notify_tap(event_id)
+        except TypeError:
+            cap.notify_tap()                     # a capture that does not take a token
 
     def simulate_tap(self) -> None:
         """Start a capture as if the striker had just fired. Only meaningful in
@@ -176,22 +194,71 @@ class StationService:
             if cap is None:
                 time.sleep(0.2)
                 continue
-            try:
-                clip = cap.get_clip(timeout=0.5)
-            except queue.Empty:
-                continue
-            except Exception:  # noqa: BLE001
-                log.exception("audio capture failed while waiting for a clip")
-                time.sleep(0.5)
-                continue
-            try:
-                self.handle_clip(clip)
-            except Exception:  # noqa: BLE001 - one bad clip must not stop the station
-                log.exception("tap analysis failed")
+            self.analysis_step(cap, timeout=0.5)
 
-    def handle_clip(self, clip) -> Optional[str]:
+    def analysis_step(self, cap, timeout: float = 0.5) -> list:
+        """One pass of the analysis thread; returns the tile ids bound in it. Strike events are dealt with in the
+        ORDER THEY HAPPENED: a tap the microphone could not record (it was busy) is handled after the clip of an
+        earlier strike and before the clip of a later one, otherwise the later strike would take the earlier tile."""
+        if hasattr(cap, "pop_dropped_tokens"):
+            try:
+                self._dropped_pending.extend(t for t in cap.pop_dropped_tokens() if t is not None)
+            except Exception:  # noqa: BLE001
+                pass
+        bound: list = []
+        try:
+            if hasattr(cap, "get_clip_with_token"):
+                clip, event_id = cap.get_clip_with_token(timeout=timeout)
+            else:
+                clip, event_id = cap.get_clip(timeout=timeout), None
+        except queue.Empty:
+            bound += self._handle_dropped_before(None)         # no clip waiting: nothing earlier can still arrive
+            return bound
+        except Exception:  # noqa: BLE001
+            log.exception("audio capture failed while waiting for a clip")
+            time.sleep(0.5)
+            return bound
+        bound += self._handle_dropped_before(event_id)
+        try:
+            bound.append(self.handle_clip(clip, event_id=event_id))
+        except Exception:  # noqa: BLE001 - one bad clip must not stop the station
+            log.exception("tap analysis failed")
+        return bound
+
+    def _handle_dropped_before(self, event_id) -> list:
+        """Handle the pending no-recording taps that happened before `event_id` (all of them when None)."""
+        due = sorted(t for t in self._dropped_pending if event_id is None or t < event_id)
+        out = []
+        for token in due:
+            self._dropped_pending.remove(token)
+            try:
+                out.append(self.handle_unrecorded(token))
+            except Exception:  # noqa: BLE001
+                log.exception("could not handle a tap with no recording")
+        return out
+
+    def handle_unrecorded(self, event_id) -> Optional[str]:
+        """A strike happened but the microphone could not make a clip for it (a capture was already running or
+        cooling down). A tile's strike still uses its tap slot -- it goes on camera grade alone, flagged as having
+        no sound -- exactly like an unusable recording; manual / safety / rest strikes are only counted."""
+        event = self.coordinator.pop_tap_event(event_id)
+        if event is None:
+            return None
+        source = event.get("source") or "tof"
+        if source in ("manual", "safety", "rest"):
+            self.coordinator.note_manual_strike(source)
+            return None
+        result = {"valid": False, "reason_invalid": "no recording: the microphone was busy with a previous strike",
+                  "grade": None, "confidence": None}
+        tile_id = self.coordinator.on_tap(result, tile_present=event.get("tile_present"))
+        if self.session is not None:
+            self.session.bind_tile(tile_id)
+        return tile_id
+
+    def handle_clip(self, clip, event_id=None) -> Optional[str]:
         """Measure one clip and give it to the coordinator. Returns the tile id
-        it was bound to (None: orphan, or ignored as not a strike)."""
+        it was bound to (None: orphan, or ignored as not a strike). `event_id` is the token the capture carried
+        from notify_tap(): the clip is paired with exactly that strike event (without it, the oldest unpaired one)."""
         features = analyze_clip(
             clip,
             self._sample_rate,
@@ -219,9 +286,21 @@ class StationService:
             with self._lock:
                 self._last_tap = preview
             return None
-        event = self.coordinator.pop_tap_event()
+        event = self.coordinator.pop_tap_event(event_id)
+        source = (event or {}).get("source") or "tof"
+        if source in ("manual", "safety", "rest"):
+            # A strike somebody asked for (or a safety release): data to keep, not a tile in the line.
+            # It must not use up a tile's tap slot, or every later tile is paired with the wrong sound.
+            self.coordinator.note_manual_strike(source)
+            preview["tile_id"] = None
+            preview["source"] = source
+            with self._lock:
+                self._last_tap = preview
+            return None
         tile_present = event.get("tile_present") if event else None
         tile_id = self.coordinator.on_tap(result, tile_present=tile_present)
+        if self.session is not None:
+            self.session.bind_tile(tile_id)
         preview["tile_id"] = tile_id
         with self._lock:
             self._last_tap = preview
@@ -234,6 +313,8 @@ class StationService:
             try:
                 self._check_mic()
                 self.coordinator.tick()
+                if self.auto_arm is not None:
+                    self.auto_arm.tick()
             except Exception:  # noqa: BLE001
                 log.exception("station tick failed")
             time.sleep(0.25)
@@ -267,6 +348,9 @@ class StationService:
             "error": self._mic_error,
         }
 
+    def coordinator_awaiting(self) -> int:
+        return self.coordinator.awaiting_tiles()
+
     @property
     def store(self) -> TileStore:
         return self._store
@@ -282,6 +366,8 @@ class StationService:
     def status(self, recent: int = 15) -> dict:
         snap = self.coordinator.snapshot(recent=recent)
         snap["mic"] = self.level()
+        if self.session is not None:
+            snap["session"] = self.session.status()
         tap = self.last_tap()
         snap["last_tap"] = (
             {"ts": tap["ts"], "tile_id": tap["tile_id"], "valid": tap["features"].get("valid"),

@@ -32,6 +32,7 @@ struct SimHal : nano::Hal {
   bool tof_ok[4] = {false, true, false, true};
   uint16_t tof_mm[4] = {0, 65535, 0, 65535};
   int arm_rises = 0, lock_rises = 0;
+  int hold = 0;
   std::string out;
 
   uint32_t nowMs() override { return now; }
@@ -39,6 +40,7 @@ struct SimHal : nano::Hal {
   void setArm(bool on) override { if (on && !arm) arm_rises++; arm = on; }
   void setLock(bool on) override { if (on && !lock) lock_rises++; lock = on; }
   void setTapLed(bool on) override { tap_led = on; }
+  void setHoldPercent(uint8_t p) override { hold = p; }
   void setStatusLed(bool on) override { status_led = on; }
   bool estopAsserted() override { return estop; }
   bool readTof(int s, uint16_t* mm) override {
@@ -68,6 +70,12 @@ int main(int argc, char** argv) {
     std::string a = argv[i];
     if (a == "--no-tof-end") cfg.require_tof_end = false;
     else if (a == "--watchdog" && i + 1 < argc) cfg.watchdog_ms = (uint16_t)std::atol(argv[++i]);
+    else if (a == "--prototype") cfg = nano::prototypeConfig();   // exactly what the board glue runs
+    else if (a == "--request-only") cfg.request_only = true;      // after --prototype: rest DOWN until the camera asks
+    else if (a == "--no-tof3") cfg.tof_end_fitted = false;
+    else if (a == "--sprung") cfg.striker_type = nano::STRIKER_SPRUNG;   // the single sprung striker (prototype)
+    else if (a == "--retract-hold" && i + 1 < argc) cfg.retract_hold_ms = (uint16_t)std::atol(argv[++i]);
+    else if (a == "--retract-max" && i + 1 < argc) cfg.retract_max_ms = (uint16_t)std::atol(argv[++i]);
   }
   nano::Core core(hal, cfg);
   core.begin();
@@ -76,10 +84,10 @@ int main(int argc, char** argv) {
     std::fputs(hal.out.c_str(), stdout);
     hal.out.clear();
     std::printf("# belt=%u cmd=%u arm=%d lock=%d tapled=%d status=%d state=%d seq=%u strike=%d link=%d bad=%u "
-                "arm_rises=%d lock_rises=%d now=%u\n",
+                "arm_rises=%d lock_rises=%d now=%u manual=%d retracted=%d rseq=%u hold=%d\n",
                 hal.belt, core.beltCommanded(), hal.arm, hal.lock, hal.tap_led, hal.status_led,
                 (int)core.state(), core.seq(), core.strikeEnabled(), core.linkAlive(), core.badLines(),
-                hal.arm_rises, hal.lock_rises, hal.now);
+                hal.arm_rises, hal.lock_rises, hal.now, core.manualMode(), core.retracted(), core.retractSeq(), hal.hold);
     std::puts(".");
     std::fflush(stdout);
   };

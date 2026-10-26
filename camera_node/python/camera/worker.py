@@ -13,6 +13,7 @@ import logging
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -572,7 +573,8 @@ class CameraWorker:
         rec = self._recorder
         return rec is not None and rec.active
 
-    def start_recording(self) -> dict:
+    def start_recording(self, folder: Optional[Path] = None, frame_log: bool = False) -> dict:
+        """`folder`: record into exactly that folder (a data-collection session's video/)."""
         with self._control_lock:
             if self.recording:
                 raise RuntimeError("already recording")
@@ -584,13 +586,14 @@ class CameraWorker:
                 source_label=self._source.get("label", "camera"),
                 warmup_frames=int(rec_cfg.get("warmup_frames", 10)),
                 fallback_fps=float(rec_cfg.get("fallback_fps", 15)),
+                folder=folder, frame_log=frame_log,
             )
-            folder = rec.start()
+            started = rec.start()
             with self._rec_lock:
                 self._recorder = rec
             self._state.set_last_recording(None)
             self._publish(force=True)
-            return {"folder": folder.name}
+            return {"folder": started.name}
 
     def stop_recording(self) -> dict:
         """Finish the recording and return its metadata (also saved as

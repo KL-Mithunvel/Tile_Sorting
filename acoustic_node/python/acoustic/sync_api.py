@@ -7,6 +7,13 @@ Mounted on the station GUI's Flask app (port 5001). Four GET endpoints:
 - /api/sync/tiles?ids=a,b,c               full current rows for those tile ids
 - /api/sync/blob/<tile_id>/<name>         one evidence file (picture, WAV, preview)
 
+and, when sessions are recorded (acoustic/session_control.py), three more:
+
+- /api/sync/sessions                      every recorded session: id, status, size, counts
+- /api/sync/session/<id>/manifest         its manifest: labels, config, every file with size + SHA-256
+- /api/sync/session/<id>/file/<path>      one file of it (X-Blob-Sha256 = the manifest's hash).
+                                          Refused (409) while that session is still recording.
+
 It never writes anything and cannot change how the line behaves. The master
 keeps its own cursor, so a master that was off for a day just asks again from
 where it stopped. If `station.sync.token` is set, every request must carry it
@@ -21,14 +28,19 @@ from typing import Optional
 
 from flask import Blueprint, abort, jsonify, request, send_file
 
+import json
+from pathlib import Path
+
 from fusion.blobs import BlobStore
+from fusion.session import MANIFEST, list_sessions, session_file
 from fusion.store import TileStore
 
 MAX_EVENTS = 2000
 MAX_IDS = 500
 
 
-def make_blueprint(store: TileStore, blobs: Optional[BlobStore], token: Optional[str] = None) -> Blueprint:
+def make_blueprint(store: TileStore, blobs: Optional[BlobStore], token: Optional[str] = None,
+                   sessions_root: Optional[Path] = None) -> Blueprint:
     bp = Blueprint("sync", __name__, url_prefix="/api/sync")
 
     @bp.before_request
@@ -83,6 +95,34 @@ def make_blueprint(store: TileStore, blobs: Optional[BlobStore], token: Optional
             abort(404)
         resp = send_file(path, mimetype=row.get("mime") or "application/octet-stream", max_age=0)
         resp.headers["X-Blob-Sha256"] = row["sha256"]
+        return resp
+
+    @bp.route("/sessions")
+    def sessions():
+        if sessions_root is None:
+            return jsonify(sessions=[], enabled=False)
+        return jsonify(sessions=list_sessions(sessions_root), enabled=True)
+
+    @bp.route("/session/<session_id>/manifest")
+    def session_manifest(session_id: str):
+        p = session_file(sessions_root, session_id, MANIFEST) if sessions_root else None
+        if p is None:
+            abort(404)
+        return send_file(p, mimetype="application/json", max_age=0)
+
+    @bp.route("/session/<session_id>/file/<path:rel>")
+    def session_blob(session_id: str, rel: str):
+        mp = session_file(sessions_root, session_id, MANIFEST) if sessions_root else None
+        p = session_file(sessions_root, session_id, rel) if sessions_root else None
+        if mp is None or p is None:
+            abort(404)
+        manifest = json.loads(mp.read_text(encoding="utf-8"))
+        if manifest.get("status") == "recording":
+            return jsonify(ok=False, error="recording", detail="that session is still being recorded"), 409
+        resp = send_file(p, max_age=0, conditional=True)        # honours Range, so a big video can resume
+        listed = next((f for f in manifest.get("files", []) if f["path"] == rel), None)
+        if listed:
+            resp.headers["X-Blob-Sha256"] = listed["sha256"]
         return resp
 
     return bp

@@ -146,8 +146,8 @@ class StationController:
 
     # ---- recording -------------------------------------------------------
 
-    def start_recording(self) -> dict:
-        return self.worker.start_recording()
+    def start_recording(self, folder=None, frame_log: bool = False) -> dict:
+        return self.worker.start_recording(folder=folder, frame_log=frame_log)
 
     def stop_recording(self) -> dict:
         return self.worker.stop_recording()

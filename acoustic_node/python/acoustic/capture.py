@@ -148,6 +148,9 @@ class AudioCapture:
         # When the audio callback last ran (time.monotonic()). The station uses
         # it to tell a live microphone from one that has gone silent/unplugged.
         self.last_block_monotonic: Optional[float] = None
+        # Optional: called with every raw mono block, on the audio thread, before any
+        # triggering -- the session recorder's continuous recording. Must be quick.
+        self.block_sink = None
 
     def _callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         if status:
@@ -156,6 +159,12 @@ class AudioCapture:
         block = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
         self.last_rms = compute_rms(block)
         self.last_block_monotonic = time.monotonic()
+        sink = self.block_sink
+        if sink is not None:
+            try:
+                sink(block)
+            except Exception:  # noqa: BLE001 - recording must never cost the station its trigger
+                pass
 
         clip = self._detector.process_block(block)
         if clip is not None:
@@ -182,14 +191,26 @@ class AudioCapture:
         """Block until a triggered clip is available."""
         return self.clip_queue.get(timeout=timeout)
 
-    def notify_tap(self) -> None:
+    def get_clip_with_token(self, timeout: Optional[float] = None):
+        """(clip, token): the clip and the token given to notify_tap() for the tap that produced it (None in
+        rms mode, or when notify_tap() had no token). Use this to pair a clip with its tap event exactly."""
+        clip = self.clip_queue.get(timeout=timeout)
+        token = self._detector.pop_clip_token() if isinstance(self._detector, HardwareTapDetector) else None
+        return clip, token
+
+    def pop_dropped_tokens(self) -> list:
+        """Tokens of taps that produced no clip (the detector was capturing or cooling down)."""
+        return self._detector.pop_dropped_tokens() if isinstance(self._detector, HardwareTapDetector) else []
+
+    def notify_tap(self, token=None) -> None:
         """Signal that a hardware tap event just fired. Only valid when
-        trigger.mode is "hardware" or "simulated" — see HardwareTapDetector."""
+        trigger.mode is "hardware" or "simulated" — see HardwareTapDetector. `token` identifies the event so the
+        clip it produces can be paired with it (get_clip_with_token)."""
         if not isinstance(self._detector, HardwareTapDetector):
             raise RuntimeError(
                 f"notify_tap() called but trigger.mode is {self.trigger_mode!r}, not 'hardware'/'simulated'"
             )
-        self._detector.notify_tap()
+        self._detector.notify_tap(token)
 
     def __enter__(self) -> "AudioCapture":
         self.start()

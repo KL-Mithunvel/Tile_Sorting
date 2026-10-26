@@ -14,8 +14,11 @@ audio:
   block_size_ms: 30
 
 trigger:
+  # DEFAULT IS "hardware" (2026-10-19): the Nano's strike events start every capture, so the retract / lift / rest
+  # noises of the sprung striker and the room can never be mistaken for a tap. On a laptop with just a microphone and
+  # no Nano use `python -m acoustic.live_station --trigger-mode rms` (or the Service view's Simulate tap button).
   # "rms"       - trigger on the mic's own RMS crossing (acoustic.capture.TriggerDetector).
-  #               Dev-machine default: works with just a laptop mic, no ToF/solenoid hardware.
+  #               Mic-only dev use: works with just a laptop mic, no ToF/solenoid hardware.
   # "hardware"  - trigger on a real tap event notified via AudioCapture.notify_tap()
   #               (acoustic.hardware_trigger.HardwareTapDetector), driven by
   #               a bridge on the Pi (acoustic/tap_bridge.py: the Nano's serial
@@ -25,7 +28,7 @@ trigger:
   # "simulated" - same HardwareTapDetector, but acoustic.live_monitor drives the taps
   #               itself using tap_mechanism below + a fake periodic tile arrival
   #               (no hardware needed at all) — see live_monitor.py --simulate-taps.
-  mode: rms
+  mode: hardware
 
   # Linear RMS threshold, range 0.0-1.0 (float32 samples). Not dBFS.
   # This is a throwaway starting value for a laptop mic with unknown gain —
@@ -151,6 +154,32 @@ station:
                           # cross-node time). Fix by syncing the peer to the Pi (network_plan.md §6).
 
   heartbeat_s: 2.0
+
+  # Data-collection sessions ("the bag"): the Service view's Session panel records ONE run into
+  # data/sessions/<date_time>/ -- the continuous microphone, the camera's raw video, every bus
+  # message with a timestamp, the labelled retract/strike events and a labelled WAV clip of each.
+  # Layout and rules: fusion/session.py. Nothing is recorded unless someone presses Start.
+  session:
+    enabled: true
+    root: "data/sessions"      # relative to the repo root; gitignored with data/
+    chunk_s: 30                # the microphone is written in files this long (a crash loses one)
+    min_free_gb: 2             # a session will not start with less free disk than this
+    stop_free_gb: 0.5          # below this the Service view shows LOW DISK (it does not stop by itself)
+    clip_pre_s: 0.3            # each event's clip: this much before it ...
+    clip_post_s: 1.2           # ... and this much after (the decay of a tile can be long)
+
+  # The striker RESTS DOWN (the coil overheated when it was held up all the time). When the camera grades a
+  # live tile this station sends the Nano `UP`; the Nano raises the striker, waits for the ToF to see the tile,
+  # strikes 2 s later and lowers itself when nothing more is coming. Needs the request-only firmware
+  # (nano_core.h prototypeConfig); on older firmware the Nano answers ERR UNSUPPORTED to every UP.
+  striker:
+    arm_on_camera: true
+    # ARMED (STRIKE 1) only while a tile is in the system (owner, 2026-10-19). The Pi arms the striker when a tile is
+    # graded / under the sensor / mid-strike and disarms it `disarm_grace_s` after the last one is dealt with; the
+    # Nano then lowers itself. false = the Armed button on the Service view is in control instead.
+    auto_arm: true
+    tile_mm: 100          # a ToF reading at or under this counts as a tile (keep equal to the Nano's tof_trigger_mm)
+    disarm_grace_s: 2.0
 
   # The Arduino Nano (striker + belt PWM) on USB serial, through
   # acoustic/tap_bridge.py. Protocol: documents/programming/nano_serial_protocol.md.

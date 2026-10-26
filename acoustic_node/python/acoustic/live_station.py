@@ -7,6 +7,8 @@ Usage (from acoustic_node/python/, venv active):
                                                     #   fake tap, fake UNO Q ack — to look at the GUI
     python -m acoustic.live_station --no-mqtt       # real microphone, in-process bus only
     python -m acoustic.live_station --list-devices  # which microphones exist
+    python -m acoustic.live_station --collect       # data-collection setup: Nano + hardware trigger,
+                                                    #   no UNO Q needed, controls on (see Sessions in /service)
 
 Then open http://<this machine>:5001/ (run view) or /service. On the Pi it is
 started by systemd (acoustic_node/deploy/tile-acoustic.service) through
@@ -25,7 +27,10 @@ import tempfile
 from pathlib import Path
 
 from acoustic.dashboard import create_app
+from acoustic.session_control import SessionController
 from acoustic.station import StationService
+from acoustic.striker_arming import AutoArm, CameraArming
+from fusion.session import SessionRecorder
 from fusion.blobs import BlobStore
 from fusion.store import TileStore
 from fusion.transport import InMemoryBus, MqttBus, TOPIC_STATUS
@@ -46,6 +51,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--no-mqtt", action="store_true", help="Use an in-process bus instead of the MQTT broker.")
     p.add_argument("--no-dashboard", action="store_true", help="Run without serving the GUI.")
     p.add_argument("--controls", action="store_true", help="Enable the GUI's controls for this run.")
+    p.add_argument("--collect", action="store_true",
+                   help="Data-collection run: hardware trigger (the Nano's strikes start the clips), no UNO Q "
+                        "needed (finals are not held back waiting for an acknowledgement and Hold tiles do not "
+                        "stop the feed), GUI controls on.")
     p.add_argument("--trigger-mode", choices=["rms", "hardware", "simulated"], default=None,
                    help="Override config.yaml's trigger.mode for this run.")
     p.add_argument("--synthetic-mic", action="store_true",
@@ -71,6 +80,14 @@ def main(argv=None) -> None:
     if args.synthetic_mic:
         config.setdefault("trigger", {})["mode"] = "simulated"
     st_cfg = config.setdefault("station", {})
+    if args.collect:
+        # Nothing here touches the line's safety rules; it only stops a bench with no gantry from
+        # raising "UNO Q down" alarms and pausing a feed that does not exist.
+        config.setdefault("trigger", {})["mode"] = args.trigger_mode or "hardware"
+        st_cfg.setdefault("unoq", {})["require_ack"] = False
+        st_cfg.setdefault("final", {})["hold_to_gantry"] = False
+        st_cfg["final"]["hold_pauses_feed"] = False
+        st_cfg.setdefault("dashboard", {})["controls_enabled"] = True
     dash_cfg = st_cfg.get("dashboard") or {}
 
     capture_factory = None
@@ -112,11 +129,45 @@ def main(argv=None) -> None:
 
     budget = float((st_cfg.get("store") or {}).get("blob_budget_gb", 20.0))
     blobs = BlobStore(blob_root, store, budget_bytes=int(budget * 1024 ** 3))
+
+    # The striker rests down (the coil overheated held up all the time); the camera's detection raises it.
+    striker_cfg = st_cfg.get("striker") or {}
+    if striker_cfg.get("arm_on_camera", True):
+        CameraArming(bus).attach()
+    # ... and it is ARMED only while a tile is in the system (the coil is energised when armed and wanted).
+    auto_arm = AutoArm(bus, enabled=bool(striker_cfg.get("auto_arm", True)),
+                       tile_mm=int(striker_cfg.get("tile_mm", 100)),
+                       grace_s=float(striker_cfg.get("disarm_grace_s", 2.0)))
+
+    session = None
+    sess_cfg = st_cfg.get("session") or {}
+    if sess_cfg.get("enabled", True):
+        sess_root = Path(sess_cfg.get("root", "data/sessions"))
+        if args.demo:
+            sess_root = Path(tempfile.mkdtemp(prefix="tile_demo_sessions_"))
+        elif args.synthetic_mic:
+            sess_root = Path("data/station/selftest_sessions")
+        if not sess_root.is_absolute():
+            sess_root = REPO_ROOT / sess_root
+        recorder = SessionRecorder(
+            sess_root, repo_root=REPO_ROOT,
+            chunk_s=float(sess_cfg.get("chunk_s", 30.0)),
+            min_free_gb=float(sess_cfg.get("min_free_gb", 2.0)),
+            stop_free_gb=float(sess_cfg.get("stop_free_gb", 0.5)),
+            clip_pre_s=float(sess_cfg.get("clip_pre_s", 0.3)),
+            clip_post_s=float(sess_cfg.get("clip_post_s", 1.2)),
+        )
+        session = SessionController(
+            bus, recorder, data_root=REPO_ROOT / "data",
+            sample_rate=int((config.get("audio") or {}).get("sample_rate", 44100)),
+            config_snapshot=lambda: {"acoustic": config},
+        )
     try:
         service = (
-            StationService(config, bus, store, capture_factory=capture_factory, blobs=blobs)
+            StationService(config, bus, store, capture_factory=capture_factory, blobs=blobs, session=session,
+                           auto_arm=auto_arm)
             if capture_factory
-            else StationService(config, bus, store, blobs=blobs)
+            else StationService(config, bus, store, blobs=blobs, session=session, auto_arm=auto_arm)
         )
         service.start()
     except Exception as exc:  # noqa: BLE001
@@ -143,6 +194,7 @@ def main(argv=None) -> None:
                 ser, bus,
                 ping_s=float(nano_cfg.get("ping_s", 0.5)),
                 stale_s=float(nano_cfg.get("stale_s", 3.0)),
+                status_s=float(nano_cfg.get("status_s", 0.5)),   # the striker panel shows a live countdown
                 resend_on_recover=bool(nano_cfg.get("resend_on_recover", False)),
             )
             bridge.start()
